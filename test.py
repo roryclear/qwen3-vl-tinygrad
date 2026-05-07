@@ -22,6 +22,22 @@ class ModelOutput(OrderedDict):
 
     def to_tuple(self) -> tuple: return tuple(self[k] for k in self.keys())
 
+def get_image_features(
+    model,
+    pixel_values: torch.FloatTensor,
+    image_grid_thw: torch.LongTensor | None = None,
+    **kwargs):
+    pixel_values = pixel_values.type(model.visual.dtype)
+    vision_output = model.visual(
+        pixel_values, grid_thw=image_grid_thw, return_dict=True, **kwargs
+    )
+    image_embeds = vision_output.pooler_output
+    split_sizes = (image_grid_thw.prod(-1) // model.visual.spatial_merge_size**2).tolist()
+    print(split_sizes)
+    image_embeds = torch.split(image_embeds, split_sizes)
+    vision_output.pooler_output = image_embeds
+    return vision_output
+
 class Qwen2VLModelOutputWithPast(ModelOutput):
     last_hidden_state: torch.FloatTensor | None = None
     past_key_values = None
@@ -46,7 +62,7 @@ def forward_viz(
     **kwargs):
     
     inputs_embeds = model.get_input_embeddings()(input_ids)
-    image_outputs = model.get_image_features(pixel_values, image_grid_thw, return_dict=True)
+    image_outputs = get_image_features(model, pixel_values=pixel_values, image_grid_thw=image_grid_thw)
     image_embeds = image_outputs.pooler_output
     deepstack_image_embeds = image_outputs.deepstack_features
     image_embeds = image_embeds[0]
@@ -88,7 +104,6 @@ def forward(
         **kwargs,
         ):
 
-        print(model.model)
         outputs = forward_viz(
             model.model,
             input_ids=input_ids,
@@ -308,6 +323,7 @@ processor = AutoProcessor.from_pretrained("Qwen/Qwen3-VL-2B-Instruct")
 model = AutoModelForImageTextToText.from_pretrained("Qwen/Qwen3-VL-2B-Instruct")
 
 url = "https://img.wort.lu/public/luxemburg/vfka4n-picture-title-binary/alternates/ONE_ONE_256/Picture%20title%20binary"
+#url = "https://www.cartell.ie/car_check/wp-content/uploads/2012/03/Nissan-Micra-_4b.jpg"
 image = Image.open(BytesIO(requests.get(url).content)).convert("RGB")
 text = "<|im_start|>user\n<|vision_start|><|image_pad|><|vision_end|>\nWhat car is this?<|im_end|>\n<|im_start|>assistant\n"
 text_inputs = processor.tokenizer(text, return_tensors="pt", add_special_tokens=False)
