@@ -186,17 +186,10 @@ for pos in reversed(image_token_positions):  # reversed to maintain indices
 mm_token_type_ids = [0] * len(input_ids)
 for pos in image_token_positions: mm_token_type_ids[pos:pos + int(num_image_tokens)] = [1] * int(num_image_tokens)
 
-inputs = {
-    'input_ids': torch.tensor([input_ids]),
-    'pixel_values': image_inputs['pixel_values'],
-    'image_grid_thw': image_inputs['image_grid_thw']
-}
 
-print("inputs =", {k: v.shape if isinstance(v, torch.Tensor) else v for k, v in inputs.items()})
-
-outputs = generate(**inputs, model=model, max_new_tokens=128)
+outputs = generate(input_ids=torch.tensor([input_ids]), pixel_values=image_inputs['pixel_values'], image_grid_thw=image_inputs['image_grid_thw'], model=model, max_new_tokens=128)
 #outputs = model.generate(**inputs, max_new_tokens=128)
-generated_ids = outputs[0][inputs["input_ids"].shape[-1]:]
+generated_ids = outputs[0][len(input_ids):]
 output = processor.decode(generated_ids, skip_special_tokens=True)
 print(output)
 assert output == "This is a Ferrari F40, a legendary sports car produced by Ferrari from 1987 to 1992. It is renowned for its sleek design and powerful performance, making it one of the most iconic cars in automotive history."
