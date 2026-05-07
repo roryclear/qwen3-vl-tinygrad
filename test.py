@@ -23,6 +23,7 @@ def _sample(
     logits_processor,
     stopping_criteria,
     generation_config,
+    pixel_values,
     **model_kwargs,
 ):
     pad_token_id = generation_config._pad_token_tensor
@@ -34,12 +35,14 @@ def _sample(
     unfinished_sequences = torch.ones(batch_size, dtype=torch.long, device=input_ids.device)
 
     prefill_consumed = False
+    model_kwargs["pixel_values"] = pixel_values
     outputs = model._prefill(
         input_ids,
         generation_config,
         model_kwargs,
         is_first_iteration=not generation_config.is_assistant,
     )
+    del model_kwargs["pixel_values"]
 
     while not this_peer_finished:
         if prefill_consumed:
@@ -92,9 +95,9 @@ def generate(
     image_grid_thw=None,
     max_new_tokens=128
 ):
-    generation_config, _ = model._prepare_generation_config(generation_config, input_ids=input_ids, pixel_values=pixel_values, image_grid_thw=image_grid_thw, max_new_tokens=max_new_tokens)
+    generation_config, _ = model._prepare_generation_config(generation_config, input_ids=input_ids, image_grid_thw=image_grid_thw, max_new_tokens=max_new_tokens)
     
-    model_kwargs = {"input_ids": input_ids, "pixel_values": pixel_values, "image_grid_thw": image_grid_thw}
+    model_kwargs = {"input_ids": input_ids, "image_grid_thw": image_grid_thw}
 
     generation_mode = generation_config.get_generation_mode(assistant_model)
     kwargs_has_attention_mask = model_kwargs.get("attention_mask", None) is not None
@@ -104,13 +107,13 @@ def generate(
         inputs, generation_config.bos_token_id, model_kwargs
     )
 
+
     batch_size = inputs_tensor.shape[0]
 
     device = inputs_tensor.device
     model._prepare_special_tokens(generation_config, kwargs_has_attention_mask, device=device)
 
     model_kwargs["position_ids"] = model._prepare_position_ids_for_generation(inputs_tensor, model_kwargs)
-
 
     input_ids = inputs_tensor if model_input_name == "input_ids" else model_kwargs.pop("input_ids")
 
@@ -162,13 +165,13 @@ def generate(
     )
 
     model_kwargs["use_cache"] = generation_config.use_cache
-
     result = _sample(
         model,
         input_ids,
         logits_processor=prepared_logits_processor,
         stopping_criteria=prepared_stopping_criteria,
         generation_config=generation_config,
+        pixel_values=pixel_values,
         synced_gpus=False,
         **model_kwargs,
     )
