@@ -42,31 +42,19 @@ def forward_viz(
     past_key_values= None,
     inputs_embeds: torch.FloatTensor | None = None,
     pixel_values: torch.Tensor | None = None,
-    pixel_values_videos: torch.FloatTensor | None = None,
     image_grid_thw: torch.LongTensor | None = None,
-    video_grid_thw: torch.LongTensor | None = None,
-    mm_token_type_ids: torch.IntTensor | None = None,
     **kwargs):
     
     inputs_embeds = model.get_input_embeddings()(input_ids)
-
-
     image_outputs = model.get_image_features(pixel_values, image_grid_thw, return_dict=True)
     image_embeds = image_outputs.pooler_output
     deepstack_image_embeds = image_outputs.deepstack_features
     image_embeds = image_embeds[0]
     image_mask, _ = model.get_placeholder_mask(input_ids, inputs_embeds=inputs_embeds, image_features=image_embeds)
-    
+
     inputs_embeds[image_mask] = image_embeds.view(-1)
 
-    visual_pos_masks = None
-    deepstack_visual_embeds = None
-
     image_mask = image_mask[..., 0]
-    visual_pos_masks = image_mask
-    deepstack_visual_embeds = deepstack_image_embeds
-
-
 
     outputs = model.language_model(
         input_ids=None,
@@ -74,8 +62,8 @@ def forward_viz(
         attention_mask=attention_mask,
         past_key_values=past_key_values,
         inputs_embeds=inputs_embeds,
-        visual_pos_masks=visual_pos_masks,
-        deepstack_visual_embeds=deepstack_visual_embeds,
+        visual_pos_masks=image_mask,
+        deepstack_visual_embeds=deepstack_image_embeds,
         **kwargs,
     )
 
