@@ -13,8 +13,6 @@ def generate(
     inputs: torch.Tensor | None = None,
     model=None,
     generation_config=None,
-    logits_processor= None,
-    stopping_criteria= None,
     prefix_allowed_tokens_fn=None,
     synced_gpus: bool | None = None,
     assistant_model= None,
@@ -24,7 +22,6 @@ def generate(
     custom_generate= None,
     **kwargs,
 ):
-    trust_remote_code = kwargs.pop("trust_remote_code", None)
     generation_mode_kwargs = model._extract_generation_mode_kwargs(
         custom_generate,
         kwargs,
@@ -46,35 +43,19 @@ def generate(
     generation_config, model_kwargs = model._prepare_generation_config(generation_config, **kwargs)
 
     generation_mode = generation_config.get_generation_mode(assistant_model)
-
-    decoding_method = getattr(type(model), "_sample")
-
-    logits_processor = []
-    stopping_criteria = []
-
     kwargs_has_attention_mask = model_kwargs.get("attention_mask", None) is not None
 
     # 3. Define model inputs
     inputs_tensor, model_input_name, model_kwargs = model._prepare_model_inputs(
         inputs, generation_config.bos_token_id, model_kwargs
     )
-    # Some generation modes (e.g. assisted) need `inputs_tensor` to rerun encoder.forward()
-    if "inputs_tensor" in inspect.signature(decoding_method).parameters.keys():
-        generation_mode_kwargs["inputs_tensor"] = inputs_tensor
+
     batch_size = inputs_tensor.shape[0]
 
     device = inputs_tensor.device
     model._prepare_special_tokens(generation_config, kwargs_has_attention_mask, device=device)
 
-
-    if not model.config.is_encoder_decoder and model_input_name == "inputs_embeds":
-        generation_config.use_cache = True
-
-
-    kwargs_has_position_ids = model_kwargs.get("position_ids", None) is not None
-    accepts_position_ids = "position_ids" in set(inspect.signature(model.forward).parameters.keys())
-    if not kwargs_has_position_ids and accepts_position_ids and not model.config.is_encoder_decoder:
-        model_kwargs["position_ids"] = model._prepare_position_ids_for_generation(inputs_tensor, model_kwargs)
+    model_kwargs["position_ids"] = model._prepare_position_ids_for_generation(inputs_tensor, model_kwargs)
 
 
     input_ids = inputs_tensor if model_input_name == "input_ids" else model_kwargs.pop("input_ids")
@@ -87,8 +68,6 @@ def generate(
         **model_kwargs,
     )
 
-    if streamer is not None:
-        streamer.put(input_ids.cpu())
 
     # 6. Prepare `max_length` depending on other stopping criteria.
     input_ids_length = input_ids.shape[1]
@@ -104,8 +83,7 @@ def generate(
     # If the model supports `logits_to_keep` in forward(), set it to 1 to avoid computing the whole
     # logit matrix. This can save a lot of memory during the first forward pass. Note that assisted decoding
     # dynamically overrides this value as it can need more than the last token logits
-    if model._supports_logits_to_keep() and "logits_to_keep" not in model_kwargs:
-        model_kwargs["logits_to_keep"] = 1
+    model_kwargs["logits_to_keep"] = 1
 
     max_cache_length = generation_config.max_length - 1
     model._prepare_cache_for_generation(
@@ -117,7 +95,7 @@ def generate(
         input_ids_seq_length=input_ids_length,
         encoder_input_ids=inputs_tensor,
         prefix_allowed_tokens_fn=prefix_allowed_tokens_fn,
-        logits_processor=logits_processor,
+        logits_processor=[],
         device=inputs_tensor.device,
         model_kwargs=model_kwargs,
         negative_prompt_ids=negative_prompt_ids,
@@ -125,14 +103,13 @@ def generate(
     )
     prepared_stopping_criteria = model._get_stopping_criteria(
         generation_config=generation_config,
-        stopping_criteria=stopping_criteria,
+        stopping_criteria=[],
         tokenizer=generation_mode_kwargs.get("tokenizer"),
     )
 
     model_kwargs["use_cache"] = generation_config.use_cache
 
-    result = decoding_method(
-        model,
+    result = model._sample(
         input_ids,
         logits_processor=prepared_logits_processor,
         stopping_criteria=prepared_stopping_criteria,
