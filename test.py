@@ -92,7 +92,9 @@ def generate(
     image_grid_thw=None,
     max_new_tokens=128
 ):
-    generation_config, model_kwargs = model._prepare_generation_config(generation_config, input_ids=input_ids, pixel_values=pixel_values, image_grid_thw=image_grid_thw, max_new_tokens=max_new_tokens)
+    generation_config, _ = model._prepare_generation_config(generation_config, input_ids=input_ids, pixel_values=pixel_values, image_grid_thw=image_grid_thw, max_new_tokens=max_new_tokens)
+    
+    model_kwargs = {"input_ids": input_ids, "pixel_values": pixel_values, "image_grid_thw": image_grid_thw}
 
     generation_mode = generation_config.get_generation_mode(assistant_model)
     kwargs_has_attention_mask = model_kwargs.get("attention_mask", None) is not None
