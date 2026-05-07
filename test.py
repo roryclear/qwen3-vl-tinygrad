@@ -3,8 +3,6 @@ from PIL import Image
 import requests
 from io import BytesIO
 import torch
-from typing import Callable
-import inspect
 
 set_seed(42)
 
@@ -14,32 +12,11 @@ def generate(
     model=None,
     generation_config=None,
     prefix_allowed_tokens_fn=None,
-    synced_gpus: bool | None = None,
     assistant_model= None,
-    streamer=None,
     negative_prompt_ids: torch.Tensor | None = None,
     negative_prompt_attention_mask: torch.Tensor | None = None,
-    custom_generate= None,
     **kwargs,
 ):
-    generation_mode_kwargs = model._extract_generation_mode_kwargs(
-        custom_generate,
-        kwargs,
-        synced_gpus,
-        assistant_model,
-        streamer,
-    )
-
-    has_default_max_length = (
-        kwargs.get("max_length") is None
-        and (generation_config is None or generation_config.max_length is None)
-        and model.generation_config.max_length is None
-    )
-    has_default_min_length = (
-        kwargs.get("min_length") is None
-        and (generation_config is None or generation_config.min_length is None)
-        and model.generation_config.min_length is None
-    )
     generation_config, model_kwargs = model._prepare_generation_config(generation_config, **kwargs)
 
     generation_mode = generation_config.get_generation_mode(assistant_model)
@@ -73,8 +50,8 @@ def generate(
     input_ids_length = input_ids.shape[1]
     generation_config = model._prepare_generated_length(
         generation_config=generation_config,
-        has_default_max_length=has_default_max_length,
-        has_default_min_length=has_default_min_length,
+        has_default_max_length=True,
+        has_default_min_length=True,
         model_input_name=model_input_name,
         inputs_tensor=inputs_tensor,
         input_ids_length=input_ids_length,
@@ -104,7 +81,7 @@ def generate(
     prepared_stopping_criteria = model._get_stopping_criteria(
         generation_config=generation_config,
         stopping_criteria=[],
-        tokenizer=generation_mode_kwargs.get("tokenizer"),
+        tokenizer=None,
     )
 
     model_kwargs["use_cache"] = generation_config.use_cache
@@ -114,7 +91,7 @@ def generate(
         logits_processor=prepared_logits_processor,
         stopping_criteria=prepared_stopping_criteria,
         generation_config=generation_config,
-        **generation_mode_kwargs,
+        synced_gpus=False,
         **model_kwargs,
     )
 
