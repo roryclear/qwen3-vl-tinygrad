@@ -188,8 +188,6 @@ for pos in image_token_positions: mm_token_type_ids[pos:pos + int(num_image_toke
 
 inputs = {
     'input_ids': torch.tensor([input_ids]),
-    'attention_mask': torch.ones(1, len(input_ids), dtype=torch.long),
-    'mm_token_type_ids': torch.tensor([mm_token_type_ids]),
     'pixel_values': image_inputs['pixel_values'],
     'image_grid_thw': image_inputs['image_grid_thw']
 }
