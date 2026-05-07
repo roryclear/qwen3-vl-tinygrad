@@ -8,19 +8,14 @@ from torch import nn
 set_seed(42)
 
 def _update_model_kwargs_for_generation(
-    model_kwargs,
+    position_ids,
     num_new_tokens=1):
-    position_ids = model_kwargs.get("position_ids")
     required_dim = [1] * (position_ids.dim() - 1) + [-1]
-    next_position_ids = (
+    return (
         torch.arange(num_new_tokens, dtype=position_ids.dtype, device=position_ids.device).view(*required_dim)
         + position_ids[..., -1:]
         + 1
     )
-    next_position_ids = torch.cat([position_ids, next_position_ids], dim=-1)
-    model_kwargs["position_ids"] = next_position_ids
-
-    return model_kwargs
 
 def _sample(
     model,
@@ -55,8 +50,8 @@ def _sample(
             with model._optimize_model_for_decode():
                 outputs = model(**model_inputs, return_dict=True)
         prefill_consumed = True
-        model_kwargs = _update_model_kwargs_for_generation(
-            model_kwargs,
+        model_kwargs["position_ids"] = _update_model_kwargs_for_generation(
+            model_kwargs["position_ids"],
         )
         # Copy is needed to avoid keeping a hanging ref to outputs.logits which may be very large for first iteration
         # (the clone itself is always small)
