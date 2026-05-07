@@ -50,15 +50,12 @@ def forward_viz(
     
     inputs_embeds = model.get_input_embeddings()(input_ids)
 
-    image_mask = None
 
     image_outputs = model.get_image_features(pixel_values, image_grid_thw, return_dict=True)
     image_embeds = image_outputs.pooler_output
     deepstack_image_embeds = image_outputs.deepstack_features
-    image_embeds = torch.cat(image_embeds, dim=0).to(inputs_embeds.device, inputs_embeds.dtype)
-    image_mask, _ = model.get_placeholder_mask(
-        input_ids, inputs_embeds=inputs_embeds, image_features=image_embeds
-    )
+    image_embeds = image_embeds[0]
+    image_mask, _ = model.get_placeholder_mask(input_ids, inputs_embeds=inputs_embeds, image_features=image_embeds)
     inputs_embeds = inputs_embeds.masked_scatter(image_mask, image_embeds)
 
 
