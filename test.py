@@ -7,6 +7,22 @@ from torch import nn
 
 set_seed(42)
 
+def _prefill(
+    model,
+    input_ids,
+    pixel_values,
+    model_kwargs: dict,
+    is_first_iteration: bool = True):
+
+    model_inputs = model.prepare_inputs_for_generation(
+        input_ids,
+        next_sequence_length=None,
+        is_first_iteration=is_first_iteration,
+        **model_kwargs,
+    )
+    model_inputs["pixel_values"] = pixel_values
+    return model(**model_inputs, return_dict=True)
+
 def _update_model_kwargs_for_generation(
     position_ids,
     num_new_tokens=1):
@@ -35,14 +51,13 @@ def _sample(
     unfinished_sequences = torch.ones(batch_size, dtype=torch.long, device=input_ids.device)
 
     prefill_consumed = False
-    model_kwargs["pixel_values"] = pixel_values
-    outputs = model._prefill(
+    outputs = _prefill(
+        model,
         input_ids,
-        generation_config,
+        pixel_values,
         model_kwargs,
         is_first_iteration=not generation_config.is_assistant,
     )
-    del model_kwargs["pixel_values"]
 
     while not this_peer_finished:
         if prefill_consumed:
