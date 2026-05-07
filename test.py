@@ -56,8 +56,8 @@ def forward_viz(
     deepstack_image_embeds = image_outputs.deepstack_features
     image_embeds = image_embeds[0]
     image_mask, _ = model.get_placeholder_mask(input_ids, inputs_embeds=inputs_embeds, image_features=image_embeds)
-    inputs_embeds = inputs_embeds.masked_scatter(image_mask, image_embeds)
-
+    
+    inputs_embeds[image_mask] = image_embeds.view(-1)
 
     visual_pos_masks = None
     deepstack_visual_embeds = None
