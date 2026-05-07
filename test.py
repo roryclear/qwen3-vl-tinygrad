@@ -7,6 +7,55 @@ from torch import nn
 
 set_seed(42)
 
+class output_class():
+    def __init__(self, **kwargs):
+        self.__dict__.update(kwargs)
+    
+
+def forward(
+        model,
+        input_ids: torch.LongTensor = None,
+        attention_mask: torch.Tensor | None = None,
+        position_ids: torch.LongTensor | None = None,
+        past_key_values= None,
+        inputs_embeds: torch.FloatTensor | None = None,
+        pixel_values: torch.Tensor | None = None,
+        pixel_values_videos: torch.FloatTensor | None = None,
+        image_grid_thw: torch.LongTensor | None = None,
+        video_grid_thw: torch.LongTensor | None = None,
+        mm_token_type_ids: torch.IntTensor | None = None,
+        logits_to_keep: int | torch.Tensor = 0,
+        **kwargs,
+        ):
+
+        outputs = model.model(
+            input_ids=input_ids,
+            pixel_values=pixel_values,
+            pixel_values_videos=pixel_values_videos,
+            image_grid_thw=image_grid_thw,
+            video_grid_thw=video_grid_thw,
+            position_ids=position_ids,
+            attention_mask=attention_mask,
+            past_key_values=past_key_values,
+            inputs_embeds=inputs_embeds,
+            mm_token_type_ids=mm_token_type_ids,
+            **kwargs,
+        )
+
+        hidden_states = outputs[0]
+        slice_indices = slice(-logits_to_keep, None) if isinstance(logits_to_keep, int) else logits_to_keep
+        logits = model.lm_head(hidden_states[:, slice_indices, :])
+
+
+        return output_class(
+            loss=None,
+            logits=logits,
+            past_key_values=outputs.past_key_values,
+            hidden_states=outputs.hidden_states,
+            attentions=outputs.attentions,
+            rope_deltas=outputs.rope_deltas,
+        )
+
 def _prefill(
     model,
     input_ids,
@@ -21,7 +70,9 @@ def _prefill(
         **model_kwargs,
     )
     model_inputs["pixel_values"] = pixel_values
-    return model(**model_inputs, return_dict=True)
+    #print(model)
+    #print(model.model)
+    return forward(model, **model_inputs, return_dict=True)
 
 def _update_model_kwargs_for_generation(
     position_ids,
