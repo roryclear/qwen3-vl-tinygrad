@@ -72,7 +72,7 @@ def forward_language_model(
 
     hidden_states = model.norm(hidden_states)
 
-    return {"last_hidden_state":hidden_states}
+    return hidden_states
 
 def forward_visual_model(model, hidden_states: torch.Tensor, grid_thw: torch.Tensor, **kwargs):
         hidden_states = model.patch_embed(hidden_states)
@@ -125,19 +125,6 @@ def get_image_features(
     vision_output[0] = image_embeds
     return vision_output
 
-class Qwen2VLModelOutputWithPast:
-    def __init__(self, outputs):
-        self.last_hidden_state = outputs.get('last_hidden_state')
-        self.past_key_values = outputs.get('past_key_values')
-        self.hidden_states = outputs.get('hidden_states')
-        self.attentions = outputs.get('attentions')
-        self.rope_deltas = outputs.get('rope_deltas')
-    
-    def __getitem__(self, k):
-        if isinstance(k, str):
-            return getattr(self, k)
-        else:
-            return tuple(self.__dict__.values())[k]
 
 class output_class():
     def __init__(self, **kwargs):
@@ -176,8 +163,7 @@ def forward_viz(
         deepstack_visual_embeds=deepstack_image_embeds,
         **kwargs,
     )
-    
-    return Qwen2VLModelOutputWithPast(outputs)
+    return outputs
 
 def forward(
         model,
@@ -195,7 +181,7 @@ def forward(
         **kwargs,
         ):
 
-        outputs = forward_viz(
+        hidden_states = forward_viz(
             model.model,
             input_ids=input_ids,
             pixel_values=pixel_values,
@@ -210,18 +196,16 @@ def forward(
             **kwargs,
         )
 
-        hidden_states = outputs["last_hidden_state"]
         slice_indices = slice(-logits_to_keep, None) if isinstance(logits_to_keep, int) else logits_to_keep
         logits = model.lm_head(hidden_states[:, slice_indices, :])
-
 
         return output_class(
             loss=None,
             logits=logits,
-            past_key_values=outputs.past_key_values,
-            hidden_states=outputs.hidden_states,
-            attentions=outputs.attentions,
-            rope_deltas=outputs.rope_deltas,
+            past_key_values=None,
+            hidden_states=hidden_states,
+            attentions=None,
+            rope_deltas=None,
         )
 
 def _prefill(
