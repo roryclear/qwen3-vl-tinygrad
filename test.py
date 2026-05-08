@@ -1,4 +1,5 @@
 from transformers import AutoModelForImageTextToText
+from transformers.masking_utils import create_causal_mask
 from PIL import Image
 import requests
 from io import BytesIO
@@ -9,6 +10,7 @@ import torch.nn.functional as F
 import importlib
 import random
 import numpy as np
+from tinygrad import Tensor
 
 
 def set_seed(seed: int, deterministic: bool = False):
@@ -34,6 +36,69 @@ class ModelOutput(OrderedDict):
 
 
     def to_tuple(self) -> tuple: return tuple(self[k] for k in self.keys())
+
+def forward_language_model(
+    model,
+    input_ids: torch.LongTensor | None = None,
+    attention_mask: torch.Tensor | None = None,
+    position_ids: torch.LongTensor | None = None,
+    past_key_values= None,
+    inputs_embeds: torch.FloatTensor | None = None,
+    # args for deepstack
+    visual_pos_masks: torch.Tensor | None = None,
+    deepstack_visual_embeds: list[torch.Tensor] | None = None,
+    **kwargs,
+):
+    # the hard coded `4` is for text, temporal, height and width.
+    if position_ids is None:
+        past_seen_tokens = past_key_values.get_seq_length() if past_key_values is not None else 0
+        position_ids = torch.arange(inputs_embeds.shape[1], device=inputs_embeds.device) + past_seen_tokens
+        position_ids = position_ids.view(1, 1, -1).expand(4, inputs_embeds.shape[0], -1)
+    elif position_ids.ndim == 2:
+        position_ids = position_ids[None, ...].expand(4, position_ids.shape[0], -1)
+
+    if position_ids.ndim == 3 and position_ids.shape[0] == 4:
+        text_position_ids = position_ids[0]
+        position_ids = position_ids[1:]
+    else:
+        text_position_ids = None
+
+    attention_mask = create_causal_mask(
+        config=model.config,
+        inputs_embeds=inputs_embeds,
+        attention_mask=attention_mask,
+        past_key_values=past_key_values,
+        position_ids=text_position_ids,
+    )
+
+    hidden_states = inputs_embeds
+
+    # create position embeddings to be shared across the decoder layers
+    position_embeddings = model.rotary_emb(hidden_states, position_ids)
+
+    # decoder layers
+    for layer_idx, decoder_layer in enumerate(model.layers):
+        layer_outputs = decoder_layer(
+            hidden_states,
+            attention_mask=attention_mask,
+            position_ids=text_position_ids,
+            past_key_values=past_key_values,
+            position_embeddings=position_embeddings,
+            **kwargs,
+        )
+        hidden_states = layer_outputs
+
+        # add visual features to the hidden states of first several layers
+        if deepstack_visual_embeds is not None and layer_idx in range(len(deepstack_visual_embeds)):
+            hidden_states = model._deepstack_process(
+                hidden_states,
+                visual_pos_masks,
+                deepstack_visual_embeds[layer_idx],
+            )
+
+    hidden_states = model.norm(hidden_states)
+
+    return {"last_hidden_state":hidden_states}
 
 def forward_visual_model(model, hidden_states: torch.Tensor, grid_thw: torch.Tensor, **kwargs):
         hidden_states = model.patch_embed(hidden_states)
@@ -120,7 +185,9 @@ def forward_viz(
 
     image_mask = image_mask[..., 0]
 
-    outputs = model.language_model(
+
+    outputs = forward_language_model(
+        model.language_model,
         input_ids=None,
         position_ids=position_ids,
         attention_mask=attention_mask,
@@ -371,6 +438,10 @@ from transformers.models.qwen3_vl import Qwen3VLProcessor
 processor = Qwen3VLProcessor.from_pretrained("Qwen/Qwen3-VL-2B-Instruct")
 
 model = AutoModelForImageTextToText.from_pretrained("Qwen/Qwen3-VL-2B-Instruct")
+
+# model visual in tiny to start?
+#print(model.model)
+#print(model.model.visual.patch_embed, type(model.model.visual.patch_embed.proj))
 
 urls = ["https://img.wort.lu/public/luxemburg/vfka4n-picture-title-binary/alternates/ONE_ONE_256/Picture%20title%20binary",
         "https://www.cartell.ie/car_check/wp-content/uploads/2012/03/Nissan-Micra-_4b.jpg"]
