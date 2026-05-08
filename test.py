@@ -118,7 +118,7 @@ def get_image_features(
     image_grid_thw: torch.LongTensor | None = None,
     **kwargs):
     pixel_values = pixel_values.type(model.visual.dtype)
-    vision_output = forward_visual_model(model.visual, pixel_values, grid_thw=image_grid_thw, return_dict=True, **kwargs)
+    vision_output = forward_visual_model(model.visual, pixel_values, grid_thw=image_grid_thw, **kwargs)
     image_embeds = vision_output[0]
     split_sizes = (image_grid_thw.prod(-1) // model.visual.spatial_merge_size**2).tolist()
     image_embeds = torch.split(image_embeds, split_sizes)
@@ -214,7 +214,7 @@ def _prefill(
         **model_kwargs,
     )
     model_inputs["pixel_values"] = pixel_values
-    return forward(model, **model_inputs, return_dict=True)
+    return forward(model, **model_inputs)
 
 def _update_model_kwargs_for_generation(
     position_ids,
@@ -259,7 +259,7 @@ def _sample(
                 input_ids, next_sequence_length=next_sequence_length, **model_kwargs
             )
             with model._optimize_model_for_decode():
-                outputs = model(**model_inputs, return_dict=True)
+                outputs = model(**model_inputs)
         prefill_consumed = True
         model_kwargs["position_ids"] = _update_model_kwargs_for_generation(
             model_kwargs["position_ids"],
