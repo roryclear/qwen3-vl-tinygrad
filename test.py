@@ -356,8 +356,8 @@ def generate(
 
     return result
 
-from transformers_local.src.transformers import models
-processor = models.qwen3_vl.Qwen3VLProcessor.from_pretrained("Qwen/Qwen3-VL-2B-Instruct")
+from transformers_local.src.transformers.models.qwen3_vl import Qwen3VLProcessor
+processor = Qwen3VLProcessor.from_pretrained("Qwen/Qwen3-VL-2B-Instruct")
 
 model = AutoModelForImageTextToText.from_pretrained("Qwen/Qwen3-VL-2B-Instruct")
 
