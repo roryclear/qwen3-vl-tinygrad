@@ -258,15 +258,15 @@ def _sample(
             model_inputs = model.prepare_inputs_for_generation(
                 input_ids, next_sequence_length=next_sequence_length, **model_kwargs
             )
-            with model._optimize_model_for_decode():
-                outputs = model(**model_inputs)
+            outputs = model(**model_inputs)
         prefill_consumed = True
         model_kwargs["position_ids"] = _update_model_kwargs_for_generation(
             model_kwargs["position_ids"],
         )
         # Copy is needed to avoid keeping a hanging ref to outputs.logits which may be very large for first iteration
         # (the clone itself is always small)
-        next_token_logits = outputs["logits"][:, -1, :].to(copy=True, dtype=torch.float32, device=input_ids.device)
+        outputs = outputs["logits"]
+        next_token_logits = outputs[:, -1, :].to(copy=True, dtype=torch.float32, device=input_ids.device)
 
         # pre-process distribution
         next_token_scores = logits_processor(input_ids, next_token_logits)
