@@ -1,4 +1,4 @@
-from transformers import AutoProcessor, AutoModelForImageTextToText, set_seed
+from transformers_local import AutoProcessor, AutoModelForImageTextToText, set_seed
 from PIL import Image
 import requests
 from io import BytesIO
