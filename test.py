@@ -39,29 +39,16 @@ class ModelOutput(OrderedDict):
 
 def forward_language_model(
     model,
-    input_ids: torch.LongTensor | None = None,
-    attention_mask: torch.Tensor | None = None,
-    position_ids: torch.LongTensor | None = None,
-    past_key_values= None,
-    inputs_embeds: torch.FloatTensor | None = None,
-    # args for deepstack
-    visual_pos_masks: torch.Tensor | None = None,
-    deepstack_visual_embeds: list[torch.Tensor] | None = None,
+    attention_mask=None,
+    position_ids=None,
+    past_key_values=None,
+    inputs_embeds=None,
+    visual_pos_masks=None,
+    deepstack_visual_embeds=None,
     **kwargs,
 ):
-    # the hard coded `4` is for text, temporal, height and width.
-    if position_ids is None:
-        past_seen_tokens = past_key_values.get_seq_length() if past_key_values is not None else 0
-        position_ids = torch.arange(inputs_embeds.shape[1], device=inputs_embeds.device) + past_seen_tokens
-        position_ids = position_ids.view(1, 1, -1).expand(4, inputs_embeds.shape[0], -1)
-    elif position_ids.ndim == 2:
-        position_ids = position_ids[None, ...].expand(4, position_ids.shape[0], -1)
-
-    if position_ids.ndim == 3 and position_ids.shape[0] == 4:
-        text_position_ids = position_ids[0]
-        position_ids = position_ids[1:]
-    else:
-        text_position_ids = None
+    text_position_ids = position_ids[0]
+    position_ids = position_ids[1:]
 
     attention_mask = create_causal_mask(
         config=model.config,
@@ -188,7 +175,6 @@ def forward_viz(
 
     outputs = forward_language_model(
         model.language_model,
-        input_ids=None,
         position_ids=position_ids,
         attention_mask=attention_mask,
         past_key_values=past_key_values,
