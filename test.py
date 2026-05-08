@@ -1,4 +1,4 @@
-from transformers_local import AutoProcessor, AutoModelForImageTextToText, set_seed
+from transformers_local import AutoModelForImageTextToText, set_seed
 from PIL import Image
 import requests
 from io import BytesIO
@@ -6,6 +6,7 @@ import torch
 from torch import nn
 from collections import OrderedDict
 import torch.nn.functional as F
+import importlib
 
 set_seed(42)
 
@@ -355,7 +356,7 @@ def generate(
 
     return result
 
-processor = AutoProcessor.from_pretrained("Qwen/Qwen3-VL-2B-Instruct")
+processor = getattr(importlib.import_module(f".qwen3_vl", "transformers.models"), "Qwen3VLProcessor").from_pretrained("Qwen/Qwen3-VL-2B-Instruct")
 model = AutoModelForImageTextToText.from_pretrained("Qwen/Qwen3-VL-2B-Instruct")
 
 urls = ["https://img.wort.lu/public/luxemburg/vfka4n-picture-title-binary/alternates/ONE_ONE_256/Picture%20title%20binary",
