@@ -1,4 +1,4 @@
-from transformers_local.src.transformers import AutoModelForImageTextToText, set_seed
+from transformers_local.src.transformers import AutoModelForImageTextToText
 from PIL import Image
 import requests
 from io import BytesIO
@@ -7,6 +7,17 @@ from torch import nn
 from collections import OrderedDict
 import torch.nn.functional as F
 import importlib
+import random
+import numpy as np
+
+
+def set_seed(seed: int, deterministic: bool = False):
+    random.seed(seed)
+    np.random.seed(seed)
+
+    torch.manual_seed(seed)
+
+
 
 set_seed(42)
 
