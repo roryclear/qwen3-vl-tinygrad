@@ -198,15 +198,7 @@ def forward(
 
         slice_indices = slice(-logits_to_keep, None) if isinstance(logits_to_keep, int) else logits_to_keep
         logits = model.lm_head(hidden_states[:, slice_indices, :])
-
-        return output_class(
-            loss=None,
-            logits=logits,
-            past_key_values=None,
-            hidden_states=hidden_states,
-            attentions=None,
-            rope_deltas=None,
-        )
+        return {"logits":logits}
 
 def _prefill(
     model,
@@ -274,7 +266,7 @@ def _sample(
         )
         # Copy is needed to avoid keeping a hanging ref to outputs.logits which may be very large for first iteration
         # (the clone itself is always small)
-        next_token_logits = outputs.logits[:, -1, :].to(copy=True, dtype=torch.float32, device=input_ids.device)
+        next_token_logits = outputs["logits"][:, -1, :].to(copy=True, dtype=torch.float32, device=input_ids.device)
 
         # pre-process distribution
         next_token_scores = logits_processor(input_ids, next_token_logits)
