@@ -358,32 +358,38 @@ def generate(
 processor = AutoProcessor.from_pretrained("Qwen/Qwen3-VL-2B-Instruct")
 model = AutoModelForImageTextToText.from_pretrained("Qwen/Qwen3-VL-2B-Instruct")
 
-url = "https://img.wort.lu/public/luxemburg/vfka4n-picture-title-binary/alternates/ONE_ONE_256/Picture%20title%20binary"
-#url = "https://www.cartell.ie/car_check/wp-content/uploads/2012/03/Nissan-Micra-_4b.jpg"
-image = Image.open(BytesIO(requests.get(url).content)).convert("RGB")
-text = "<|im_start|>user\n<|vision_start|><|image_pad|><|vision_end|>\nWhat car is this?<|im_end|>\n<|im_start|>assistant\n"
-text_inputs = processor.tokenizer(text, return_tensors="pt", add_special_tokens=False)
 
-image_inputs = processor.image_processor(images=image, return_tensors="pt")
+urls = ["https://img.wort.lu/public/luxemburg/vfka4n-picture-title-binary/alternates/ONE_ONE_256/Picture%20title%20binary",
+        "https://www.cartell.ie/car_check/wp-content/uploads/2012/03/Nissan-Micra-_4b.jpg"]
 
-merge_size = processor.image_processor.merge_size  # usually 2
-image_grid_thw = image_inputs["image_grid_thw"]  # [batch, 3] -> [t, h, w]
-num_image_tokens = (image_grid_thw.prod(dim=-1) / (merge_size ** 2)).item()
+expected_outputs = ["This is a Ferrari F40, a legendary sports car produced by Ferrari from 1987 to 1992. It is renowned for its sleek design and powerful performance, making it one of the most iconic cars in automotive history.",
+                    "This is a Nissan Micra, a compact car produced by the Japanese automaker Nissan. It's known for its affordability and practicality, making it a popular choice for urban drivers."]
 
-image_token_id = processor.tokenizer.convert_tokens_to_ids("<|image_pad|>")
-input_ids = text_inputs["input_ids"][0].tolist()
-image_token_positions = [i for i, tid in enumerate(input_ids) if tid == image_token_id]
+for url, expected_output in zip(urls, expected_outputs):
+    image = Image.open(BytesIO(requests.get(url).content)).convert("RGB")
+    text = "<|im_start|>user\n<|vision_start|><|image_pad|><|vision_end|>\nWhat car is this?<|im_end|>\n<|im_start|>assistant\n"
+    text_inputs = processor.tokenizer(text, return_tensors="pt", add_special_tokens=False)
 
-for pos in reversed(image_token_positions):  # reversed to maintain indices
-    input_ids[pos:pos+1] = [image_token_id] * int(num_image_tokens)
+    image_inputs = processor.image_processor(images=image, return_tensors="pt")
 
-mm_token_type_ids = [0] * len(input_ids)
-for pos in image_token_positions: mm_token_type_ids[pos:pos + int(num_image_tokens)] = [1] * int(num_image_tokens)
+    merge_size = processor.image_processor.merge_size  # usually 2
+    image_grid_thw = image_inputs["image_grid_thw"]  # [batch, 3] -> [t, h, w]
+    num_image_tokens = (image_grid_thw.prod(dim=-1) / (merge_size ** 2)).item()
+
+    image_token_id = processor.tokenizer.convert_tokens_to_ids("<|image_pad|>")
+    input_ids = text_inputs["input_ids"][0].tolist()
+    image_token_positions = [i for i, tid in enumerate(input_ids) if tid == image_token_id]
+
+    for pos in reversed(image_token_positions):  # reversed to maintain indices
+        input_ids[pos:pos+1] = [image_token_id] * int(num_image_tokens)
+
+    mm_token_type_ids = [0] * len(input_ids)
+    for pos in image_token_positions: mm_token_type_ids[pos:pos + int(num_image_tokens)] = [1] * int(num_image_tokens)
 
 
-outputs = generate(input_ids=torch.tensor([input_ids]), pixel_values=image_inputs['pixel_values'], image_grid_thw=image_inputs['image_grid_thw'], model=model, max_new_tokens=128)
-#outputs = model.generate(**inputs, max_new_tokens=128)
-generated_ids = outputs[0][len(input_ids):]
-output = processor.decode(generated_ids, skip_special_tokens=True)
-print(output)
-assert output == "This is a Ferrari F40, a legendary sports car produced by Ferrari from 1987 to 1992. It is renowned for its sleek design and powerful performance, making it one of the most iconic cars in automotive history."
+    outputs = generate(input_ids=torch.tensor([input_ids]), pixel_values=image_inputs['pixel_values'], image_grid_thw=image_inputs['image_grid_thw'], model=model, max_new_tokens=128)
+    #outputs = model.generate(**inputs, max_new_tokens=128)
+    generated_ids = outputs[0][len(input_ids):]
+    output = processor.decode(generated_ids, skip_special_tokens=True)
+    print(output)
+    assert output == expected_output
