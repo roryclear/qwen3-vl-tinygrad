@@ -369,7 +369,7 @@ prompts = ["<|im_start|>user\n<|vision_start|><|image_pad|><|vision_end|>\nWhat 
 
 for url, expected_output, prompt in zip(urls, expected_outputs, prompts):
     image = Image.open(BytesIO(requests.get(url).content)).convert("RGB")
-    text_inputs = processor.tokenizer(prompt, return_tensors="pt", add_special_tokens=False)
+    text_inputs = processor.tokenizer(prompt, return_tensors="pt", add_special_tokens=False)["input_ids"][0].tolist()
 
     image_inputs = processor.image_processor(images=image, return_tensors="pt")
 
@@ -378,19 +378,18 @@ for url, expected_output, prompt in zip(urls, expected_outputs, prompts):
     num_image_tokens = (image_grid_thw.prod(dim=-1) / (merge_size ** 2)).item()
 
     image_token_id = processor.tokenizer.convert_tokens_to_ids("<|image_pad|>")
-    input_ids = text_inputs["input_ids"][0].tolist()
-    image_token_positions = [i for i, tid in enumerate(input_ids) if tid == image_token_id]
+    image_token_positions = [i for i, tid in enumerate(text_inputs) if tid == image_token_id]
 
     for pos in reversed(image_token_positions):  # reversed to maintain indices
-        input_ids[pos:pos+1] = [image_token_id] * int(num_image_tokens)
+        text_inputs[pos:pos+1] = [image_token_id] * int(num_image_tokens)
 
-    mm_token_type_ids = [0] * len(input_ids)
+    mm_token_type_ids = [0] * len(text_inputs)
     for pos in image_token_positions: mm_token_type_ids[pos:pos + int(num_image_tokens)] = [1] * int(num_image_tokens)
 
 
-    outputs = generate(input_ids=torch.tensor([input_ids]), pixel_values=image_inputs['pixel_values'], image_grid_thw=image_inputs['image_grid_thw'], model=model, max_new_tokens=128)
+    outputs = generate(input_ids=torch.tensor([text_inputs]), pixel_values=image_inputs['pixel_values'], image_grid_thw=image_inputs['image_grid_thw'], model=model, max_new_tokens=128)
     #outputs = model.generate(**inputs, max_new_tokens=128)
-    generated_ids = outputs[0][len(input_ids):]
+    generated_ids = outputs[0][len(text_inputs):]
     output = processor.decode(generated_ids, skip_special_tokens=True)
     print(output)
     assert output == expected_output
