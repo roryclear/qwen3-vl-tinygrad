@@ -1,4 +1,4 @@
-from transformers_local.src.transformers import AutoModelForImageTextToText
+from transformers import AutoModelForImageTextToText
 from PIL import Image
 import requests
 from io import BytesIO
@@ -367,7 +367,7 @@ def generate(
 
     return result
 
-from transformers_local.src.transformers.models.qwen3_vl import Qwen3VLProcessor
+from transformers.models.qwen3_vl import Qwen3VLProcessor
 processor = Qwen3VLProcessor.from_pretrained("Qwen/Qwen3-VL-2B-Instruct")
 
 model = AutoModelForImageTextToText.from_pretrained("Qwen/Qwen3-VL-2B-Instruct")
