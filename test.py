@@ -370,8 +370,8 @@ prompts = ["<|im_start|>user\n<|vision_start|><|image_pad|><|vision_end|>\nWhat 
 for url, expected_output, prompt in zip(urls, expected_outputs, prompts):
     image = Image.open(BytesIO(requests.get(url).content)).convert("RGB")
     text_inputs = processor.tokenizer(prompt, return_tensors="pt", add_special_tokens=False)["input_ids"][0].tolist()
-
-    image_inputs = processor.image_processor(images=image, return_tensors="pt")
+    
+    image_inputs = processor.image_processor.preprocess(images=image, return_tensors="pt")
 
     merge_size = processor.image_processor.merge_size  # usually 2
     image_grid_thw = image_inputs["image_grid_thw"]  # [batch, 3] -> [t, h, w]
