@@ -356,7 +356,9 @@ def generate(
 
     return result
 
-processor = getattr(importlib.import_module(f".qwen3_vl", "transformers.models"), "Qwen3VLProcessor").from_pretrained("Qwen/Qwen3-VL-2B-Instruct")
+import transformers
+processor = transformers.models.qwen3_vl.Qwen3VLProcessor.from_pretrained("Qwen/Qwen3-VL-2B-Instruct")
+
 model = AutoModelForImageTextToText.from_pretrained("Qwen/Qwen3-VL-2B-Instruct")
 
 urls = ["https://img.wort.lu/public/luxemburg/vfka4n-picture-title-binary/alternates/ONE_ONE_256/Picture%20title%20binary",
