@@ -23,19 +23,6 @@ def set_seed(seed: int, deterministic: bool = False):
 
 set_seed(42)
 
-class ModelOutput(OrderedDict):
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-
-    def __getitem__(self, k):
-        if isinstance(k, str):
-            inner_dict = dict(self.items())
-            return inner_dict[k]
-        else:
-            return self.to_tuple()[k]
-
-
-    def to_tuple(self) -> tuple: return tuple(self[k] for k in self.keys())
 
 def forward_language_model(
     model,
@@ -138,13 +125,19 @@ def get_image_features(
     vision_output[0] = image_embeds
     return vision_output
 
-class Qwen2VLModelOutputWithPast(ModelOutput):
-    last_hidden_state: torch.FloatTensor | None = None
-    past_key_values = None
-    hidden_states: tuple[torch.FloatTensor] | None = None
-    attentions: tuple[torch.FloatTensor] | None = None
-    rope_deltas: torch.LongTensor | None = None
-
+class Qwen2VLModelOutputWithPast:
+    def __init__(self, outputs):
+        self.last_hidden_state = outputs.get('last_hidden_state')
+        self.past_key_values = outputs.get('past_key_values')
+        self.hidden_states = outputs.get('hidden_states')
+        self.attentions = outputs.get('attentions')
+        self.rope_deltas = outputs.get('rope_deltas')
+    
+    def __getitem__(self, k):
+        if isinstance(k, str):
+            return getattr(self, k)
+        else:
+            return tuple(self.__dict__.values())[k]
 
 class output_class():
     def __init__(self, **kwargs):
@@ -183,11 +176,8 @@ def forward_viz(
         deepstack_visual_embeds=deepstack_image_embeds,
         **kwargs,
     )
-
-    return Qwen2VLModelOutputWithPast(
-        **outputs,
-        rope_deltas=model.rope_deltas,
-    )
+    
+    return Qwen2VLModelOutputWithPast(outputs)
 
 def forward(
         model,
@@ -220,7 +210,7 @@ def forward(
             **kwargs,
         )
 
-        hidden_states = outputs[0]
+        hidden_states = outputs["last_hidden_state"]
         slice_indices = slice(-logits_to_keep, None) if isinstance(logits_to_keep, int) else logits_to_keep
         logits = model.lm_head(hidden_states[:, slice_indices, :])
 
