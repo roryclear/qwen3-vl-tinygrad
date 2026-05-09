@@ -195,9 +195,12 @@ def _sample(
         # Copy is needed to avoid keeping a hanging ref to outputs.logits which may be very large for first iteration
         # (the clone itself is always small)
         next_token_logits = outputs[:, -1, :].to(copy=True, dtype=torch.float32, device=input_ids.device)
+        
+        # todo hardcoded to 3 for now
+        next_token_scores = logits_processor[0](input_ids, next_token_logits)
+        next_token_scores = logits_processor[1](input_ids, next_token_scores)
+        next_token_scores = logits_processor[2](input_ids, next_token_scores)
 
-        # pre-process distribution
-        next_token_scores = logits_processor(input_ids, next_token_logits)
         # token selection
         probs = nn.functional.softmax(next_token_scores, dim=-1)
         # TODO (joao): this OP throws "skipping cudagraphs due to ['incompatible ops']", find solution
