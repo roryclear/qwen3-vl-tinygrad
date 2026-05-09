@@ -23,43 +23,6 @@ def set_seed(seed: int, deterministic: bool = False):
 
 set_seed(42)
 
-def forward2(model, hidden_states: torch.Tensor, grid_thw: torch.Tensor, **kwargs):
-    hidden_states = model.patch_embed(hidden_states)
-
-    pos_embeds = model.fast_pos_embed_interpolate(grid_thw)
-    hidden_states = hidden_states + pos_embeds
-
-    rotary_pos_emb = model.rot_pos_emb(grid_thw)
-
-    seq_len, _ = hidden_states.size()
-    hidden_states = hidden_states.reshape(seq_len, -1)
-    rotary_pos_emb = rotary_pos_emb.reshape(seq_len, -1)
-    emb = torch.cat((rotary_pos_emb, rotary_pos_emb), dim=-1)
-    position_embeddings = (emb.cos(), emb.sin())
-
-    cu_seqlens = torch.repeat_interleave(grid_thw[:, 1] * grid_thw[:, 2], grid_thw[:, 0]).cumsum(
-        dim=0,
-        dtype=grid_thw.dtype if torch.jit.is_tracing() else torch.int32,
-    )
-    cu_seqlens = F.pad(cu_seqlens, (1, 0), value=0)
-
-    deepstack_feature_lists = []
-    for layer_num, blk in enumerate(model.blocks):
-        hidden_states = blk(
-            hidden_states,
-            cu_seqlens=cu_seqlens,
-            position_embeddings=position_embeddings,
-            **kwargs,
-        )
-        if layer_num in model.deepstack_visual_indexes:
-            deepstack_feature = model.deepstack_merger_list[model.deepstack_visual_indexes.index(layer_num)](
-                hidden_states
-            )
-            deepstack_feature_lists.append(deepstack_feature)
-
-    merged_hidden_states = model.merger(hidden_states)
-
-    return [merged_hidden_states, deepstack_feature_lists]
 
 class output_class():
     def __init__(self, **kwargs):
@@ -78,7 +41,44 @@ def forward1(
     inputs_embeds = model.language_model.embed_tokens(input_ids)
 
     pixel_values = pixel_values.type(model.visual.dtype)
-    vision_output = forward2(model.visual, pixel_values, grid_thw=image_grid_thw, **kwargs)
+
+    hidden_states = model.visual.patch_embed(pixel_values)
+
+    pos_embeds = model.visual.fast_pos_embed_interpolate(image_grid_thw)
+    hidden_states = hidden_states + pos_embeds
+
+    rotary_pos_emb = model.visual.rot_pos_emb(image_grid_thw)
+
+    seq_len, _ = hidden_states.size()
+    hidden_states = hidden_states.reshape(seq_len, -1)
+    rotary_pos_emb = rotary_pos_emb.reshape(seq_len, -1)
+    emb = torch.cat((rotary_pos_emb, rotary_pos_emb), dim=-1)
+    position_embeddings = (emb.cos(), emb.sin())
+
+    cu_seqlens = torch.repeat_interleave(image_grid_thw[:, 1] * image_grid_thw[:, 2], image_grid_thw[:, 0]).cumsum(
+        dim=0,
+        dtype=image_grid_thw.dtype if torch.jit.is_tracing() else torch.int32,
+    )
+    cu_seqlens = F.pad(cu_seqlens, (1, 0), value=0)
+
+    deepstack_feature_lists = []
+    for layer_num, blk in enumerate(model.visual.blocks):
+        hidden_states = blk(
+            hidden_states,
+            cu_seqlens=cu_seqlens,
+            position_embeddings=position_embeddings,
+            **kwargs,
+        )
+        if layer_num in model.visual.deepstack_visual_indexes:
+            deepstack_feature = model.visual.deepstack_merger_list[model.visual.deepstack_visual_indexes.index(layer_num)](
+                hidden_states
+            )
+            deepstack_feature_lists.append(deepstack_feature)
+
+    merged_hidden_states = model.visual.merger(hidden_states)
+
+    vision_output = [merged_hidden_states, deepstack_feature_lists]
+
     image_embeds = vision_output[0]
     split_sizes = (image_grid_thw.prod(-1) // model.visual.spatial_merge_size**2).tolist()
     image_embeds = torch.split(image_embeds, split_sizes)
