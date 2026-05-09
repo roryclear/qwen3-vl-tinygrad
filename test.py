@@ -129,18 +129,18 @@ def _prefill(
     model,
     input_ids,
     pixel_values,
-    model_kwargs: dict,
-    is_first_iteration: bool = True):
+    model_kwargs: dict):
 
 
-    model_inputs = model.prepare_inputs_for_generation(
-        input_ids,
-        next_sequence_length=None,
-        is_first_iteration=is_first_iteration,
-        **model_kwargs,
-    )
-
+    model_inputs = {}
     model_inputs["pixel_values"] = pixel_values
+    model_inputs["past_key_values"] = model_kwargs["past_key_values"]
+    model_inputs["input_ids"] = input_ids
+    model_inputs["pixel_values_videos"] = None
+    model_inputs["image_grid_thw"] = model_kwargs["image_grid_thw"]
+    model_inputs["use_cache"] = True
+    model_inputs["logits_to_keep"] = 1
+    model_inputs["position_ids"] = torch.arange(model_inputs["input_ids"].shape[-1]).unsqueeze(0).unsqueeze(0).repeat(4, 1, 1)
     hidden_states = forward1(model.model, **model_inputs)
     logits = model.lm_head(hidden_states[:, -1:, :])
     return logits
@@ -176,7 +176,6 @@ def _sample(
         input_ids,
         pixel_values,
         model_kwargs,
-        is_first_iteration=not generation_config.is_assistant,
     )
 
     while not this_peer_finished:
