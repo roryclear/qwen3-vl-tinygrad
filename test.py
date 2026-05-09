@@ -11,6 +11,7 @@ import importlib
 import random
 import numpy as np
 from tinygrad import Tensor
+import math
 
 
 def set_seed(seed: int, deterministic: bool = False):
@@ -195,27 +196,33 @@ def _sample(
         # Copy is needed to avoid keeping a hanging ref to outputs.logits which may be very large for first iteration
         # (the clone itself is always small)
         next_token_logits = outputs[:, -1, :].to(copy=True, dtype=torch.float32, device=input_ids.device)
-        
-        # todo hardcoded to 3 for now
-        next_token_scores = logits_processor[0](input_ids, next_token_logits)
-        next_token_scores = logits_processor[1](input_ids, next_token_scores)
-        next_token_scores = logits_processor[2](input_ids, next_token_scores)
+        scores = next_token_logits / logits_processor[0].temperature
 
-        # token selection
+        top_k = min(logits_processor[1].top_k, scores.size(-1))  # Safety check
+        indices_to_remove = scores < torch.topk(scores, top_k)[0][..., -1, None]
+        scores_processed = scores.masked_fill(indices_to_remove, logits_processor[1].filter_value)
+        scores = scores_processed
+
+
+        sorted_logits, sorted_indices = torch.sort(scores, descending=False)
+        cumulative_probs = sorted_logits.softmax(dim=-1).cumsum(dim=-1)
+
+        sorted_indices_to_remove = cumulative_probs <= (1 - logits_processor[2].top_p)
+        sorted_indices_to_remove[..., -logits_processor[2].min_tokens_to_keep :] = 0
+        indices_to_remove = sorted_indices_to_remove.scatter(1, sorted_indices, sorted_indices_to_remove)
+        scores_processed = scores.masked_fill(indices_to_remove, logits_processor[2].filter_value)
+        
+        next_token_scores = scores_processed
+
         probs = nn.functional.softmax(next_token_scores, dim=-1)
-        # TODO (joao): this OP throws "skipping cudagraphs due to ['incompatible ops']", find solution
         next_tokens = torch.multinomial(probs, num_samples=1).squeeze(1)
 
         next_tokens = next_tokens * unfinished_sequences + pad_token_id * (1 - unfinished_sequences)
 
-        # update generated ids, model inputs, and length for next step
         input_ids = torch.cat([input_ids, next_tokens[:, None]], dim=-1)
 
         unfinished_sequences = unfinished_sequences & ~stopping_criteria(input_ids, scores)
         this_peer_finished = unfinished_sequences.max() == 0
-
-        # This is needed to properly delete outputs.logits which may be very large for first iteration
-        # Otherwise a reference to outputs is kept which keeps the logits alive in the next iteration
         del outputs
 
     return input_ids
