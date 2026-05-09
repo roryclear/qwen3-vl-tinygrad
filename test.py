@@ -129,13 +129,14 @@ def _prefill(
     model,
     input_ids,
     pixel_values,
-    model_kwargs: dict):
+    past_key_values,
+    image_grid_thw):
 
 
     position_ids = torch.arange(input_ids.shape[-1]).unsqueeze(0).unsqueeze(0).repeat(4, 1, 1)
     hidden_states = forward1(model.model, pixel_values=pixel_values,
-                        past_key_values=model_kwargs["past_key_values"],
-                        image_grid_thw=model_kwargs["image_grid_thw"],
+                        past_key_values=past_key_values,
+                        image_grid_thw=image_grid_thw,
                         position_ids=position_ids,
                         input_ids=input_ids)
     logits = model.lm_head(hidden_states[:, -1:, :])
@@ -171,7 +172,8 @@ def _sample(
         model,
         input_ids,
         pixel_values,
-        model_kwargs,
+        model_kwargs["past_key_values"],
+        model_kwargs["image_grid_thw"]
     )
 
     while not this_peer_finished:
