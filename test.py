@@ -179,7 +179,8 @@ def _sample(
     while not this_peer_finished:
         if prefill_consumed:
             next_sequence_length = 1
-            model_inputs = model.prepare_inputs_for_generation(
+
+            model_inputs = prepare_inputs_for_generation(model,
                 input_ids, next_sequence_length=next_sequence_length, **model_kwargs
             )
             outputs = model.model(**model_inputs)
@@ -227,6 +228,22 @@ def _sample(
         del outputs
 
     return input_ids
+
+def prepare_inputs_for_generation(
+    model,
+    input_ids: torch.LongTensor,
+    next_sequence_length: int | None = None,
+    past_key_values=None,
+    attention_mask: torch.LongTensor | None = None,
+    inputs_embeds: torch.FloatTensor | None = None,
+    is_first_iteration: bool | None = False,
+    **kwargs,
+):
+    model_inputs = {}
+    model_inputs["input_ids"] = input_ids[:, -1:]
+    model_inputs["past_key_values"] = past_key_values
+    model_inputs["position_ids"] = kwargs["position_ids"]
+    return model_inputs
 
 @torch.no_grad()
 def generate(
