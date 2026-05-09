@@ -61,20 +61,6 @@ def forward2(model, hidden_states: torch.Tensor, grid_thw: torch.Tensor, **kwarg
 
     return [merged_hidden_states, deepstack_feature_lists]
 
-def get_image_features(
-    model,
-    pixel_values: torch.FloatTensor,
-    image_grid_thw: torch.LongTensor | None = None,
-    **kwargs):
-    pixel_values = pixel_values.type(model.visual.dtype)
-    vision_output = forward2(model.visual, pixel_values, grid_thw=image_grid_thw, **kwargs)
-    image_embeds = vision_output[0]
-    split_sizes = (image_grid_thw.prod(-1) // model.visual.spatial_merge_size**2).tolist()
-    image_embeds = torch.split(image_embeds, split_sizes)
-    vision_output[0] = image_embeds
-    return vision_output
-
-
 class output_class():
     def __init__(self, **kwargs):
         self.__dict__.update(kwargs)
@@ -90,8 +76,14 @@ def forward1(
     image_grid_thw: torch.LongTensor | None = None,
     **kwargs):
     inputs_embeds = model.language_model.embed_tokens(input_ids)
-    image_outputs = get_image_features(model, pixel_values=pixel_values, image_grid_thw=image_grid_thw)
-    image_embeds = image_outputs[0]
+
+    pixel_values = pixel_values.type(model.visual.dtype)
+    vision_output = forward2(model.visual, pixel_values, grid_thw=image_grid_thw, **kwargs)
+    image_embeds = vision_output[0]
+    split_sizes = (image_grid_thw.prod(-1) // model.visual.spatial_merge_size**2).tolist()
+    image_embeds = torch.split(image_embeds, split_sizes)
+    vision_output[0] = image_embeds
+    image_outputs = vision_output
     deepstack_image_embeds = image_outputs[1]
     image_embeds = image_embeds[0]
     image_mask, _ = model.get_placeholder_mask(input_ids, inputs_embeds=inputs_embeds, image_features=image_embeds)
