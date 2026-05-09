@@ -156,7 +156,6 @@ def _update_model_kwargs_for_generation(
 def _sample(
     model,
     input_ids: torch.LongTensor,
-    logits_processor,
     stopping_criteria,
     generation_config,
     pixel_values,
@@ -193,24 +192,30 @@ def _sample(
         model_kwargs["position_ids"] = _update_model_kwargs_for_generation(
             model_kwargs["position_ids"],
         )
-        # Copy is needed to avoid keeping a hanging ref to outputs.logits which may be very large for first iteration
-        # (the clone itself is always small)
-        next_token_logits = outputs[:, -1, :].to(copy=True, dtype=torch.float32, device=input_ids.device)
-        scores = next_token_logits / logits_processor[0].temperature
+        
+        temp = 0.7
+        top_k = 20
+        filter_value = -math.inf
+        min_tokens_to_keep = 1
+        top_p = 0.8
 
-        top_k = min(logits_processor[1].top_k, scores.size(-1))  # Safety check
+        next_token_logits = outputs[:, -1, :].to(copy=True, dtype=torch.float32, device=input_ids.device)
+        scores = next_token_logits / temp
+
+
+        top_k = min(20, scores.size(-1))  # Safety check
         indices_to_remove = scores < torch.topk(scores, top_k)[0][..., -1, None]
-        scores_processed = scores.masked_fill(indices_to_remove, logits_processor[1].filter_value)
+        scores_processed = scores.masked_fill(indices_to_remove, filter_value)
         scores = scores_processed
 
 
         sorted_logits, sorted_indices = torch.sort(scores, descending=False)
         cumulative_probs = sorted_logits.softmax(dim=-1).cumsum(dim=-1)
 
-        sorted_indices_to_remove = cumulative_probs <= (1 - logits_processor[2].top_p)
-        sorted_indices_to_remove[..., -logits_processor[2].min_tokens_to_keep :] = 0
+        sorted_indices_to_remove = cumulative_probs <= (1 - top_p)
+        sorted_indices_to_remove[..., -min_tokens_to_keep :] = 0
         indices_to_remove = sorted_indices_to_remove.scatter(1, sorted_indices, sorted_indices_to_remove)
-        scores_processed = scores.masked_fill(indices_to_remove, logits_processor[2].filter_value)
+        scores_processed = scores.masked_fill(indices_to_remove, filter_value)
         
         next_token_scores = scores_processed
 
@@ -290,17 +295,6 @@ def generate(
         generation_config, model_kwargs, generation_mode, batch_size, max_cache_length
     )
 
-    prepared_logits_processor = model._get_logits_processor(
-        generation_config=generation_config,
-        input_ids_seq_length=input_ids_length,
-        encoder_input_ids=inputs_tensor,
-        prefix_allowed_tokens_fn=prefix_allowed_tokens_fn,
-        logits_processor=[],
-        device=inputs_tensor.device,
-        model_kwargs=model_kwargs,
-        negative_prompt_ids=negative_prompt_ids,
-        negative_prompt_attention_mask=negative_prompt_attention_mask,
-    )
     prepared_stopping_criteria = model._get_stopping_criteria(
         generation_config=generation_config,
         stopping_criteria=[],
@@ -311,7 +305,6 @@ def generate(
     result = _sample(
         model,
         input_ids,
-        logits_processor=prepared_logits_processor,
         stopping_criteria=prepared_stopping_criteria,
         generation_config=generation_config,
         pixel_values=pixel_values,
