@@ -193,38 +193,6 @@ def _update_model_kwargs_for_generation(
         + 1
     )
 
-def forward2(
-        model,
-        input_ids: torch.LongTensor = None,
-        attention_mask: torch.Tensor | None = None,
-        position_ids: torch.LongTensor | None = None,
-        past_key_values= None,
-        inputs_embeds: torch.FloatTensor | None = None,
-        pixel_values: torch.Tensor | None = None,
-        pixel_values_videos: torch.FloatTensor | None = None,
-        image_grid_thw: torch.LongTensor | None = None,
-        video_grid_thw: torch.LongTensor | None = None,
-        mm_token_type_ids: torch.IntTensor | None = None,
-        **kwargs,
-    ):
-        
-        outputs = model.model(
-            input_ids=input_ids,
-            pixel_values=pixel_values,
-            pixel_values_videos=pixel_values_videos,
-            image_grid_thw=image_grid_thw,
-            video_grid_thw=video_grid_thw,
-            position_ids=position_ids,
-            attention_mask=attention_mask,
-            past_key_values=past_key_values,
-            inputs_embeds=inputs_embeds,
-            mm_token_type_ids=mm_token_type_ids,
-            **kwargs,
-        )
-        hidden_states = outputs[0]
-        logits = model.lm_head(hidden_states[:, -1:, :])
-        return logits
-
 def _sample(
     model,
     input_ids: torch.LongTensor,
@@ -257,7 +225,10 @@ def _sample(
             model_inputs = model.prepare_inputs_for_generation(
                 input_ids, next_sequence_length=next_sequence_length, **model_kwargs
             )
-            outputs = forward2(model, **model_inputs)
+            outputs = model.model(**model_inputs)
+            hidden_states = outputs[0]
+            outputs = model.lm_head(hidden_states[:, -1:, :])
+
         prefill_consumed = True
         model_kwargs["position_ids"] = _update_model_kwargs_for_generation(
             model_kwargs["position_ids"],
@@ -343,9 +314,6 @@ def generate(
         input_ids_length=input_ids_length,
     )
 
-    # If the model supports `logits_to_keep` in forward(), set it to 1 to avoid computing the whole
-    # logit matrix. This can save a lot of memory during the first forward pass. Note that assisted decoding
-    # dynamically overrides this value as it can need more than the last token logits
     model_kwargs["logits_to_keep"] = 1
 
     max_cache_length = generation_config.max_length - 1
