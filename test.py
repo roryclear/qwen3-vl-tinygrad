@@ -132,16 +132,12 @@ def _prefill(
     model_kwargs: dict):
 
 
-    model_inputs = {}
-    model_inputs["pixel_values"] = pixel_values
-    model_inputs["past_key_values"] = model_kwargs["past_key_values"]
-    model_inputs["input_ids"] = input_ids
-    model_inputs["pixel_values_videos"] = None
-    model_inputs["image_grid_thw"] = model_kwargs["image_grid_thw"]
-    model_inputs["use_cache"] = True
-    model_inputs["logits_to_keep"] = 1
-    model_inputs["position_ids"] = torch.arange(model_inputs["input_ids"].shape[-1]).unsqueeze(0).unsqueeze(0).repeat(4, 1, 1)
-    hidden_states = forward1(model.model, **model_inputs)
+    position_ids = torch.arange(input_ids.shape[-1]).unsqueeze(0).unsqueeze(0).repeat(4, 1, 1)
+    hidden_states = forward1(model.model, pixel_values=pixel_values,
+                        past_key_values=model_kwargs["past_key_values"],
+                        image_grid_thw=model_kwargs["image_grid_thw"],
+                        position_ids=position_ids,
+                        input_ids=input_ids)
     logits = model.lm_head(hidden_states[:, -1:, :])
     return logits
 
@@ -180,7 +176,7 @@ def _sample(
 
     while not this_peer_finished:
         if prefill_consumed:
-            next_sequence_length = 1 if model_kwargs["use_cache"] else None
+            next_sequence_length = 1
             model_inputs = model.prepare_inputs_for_generation(
                 input_ids, next_sequence_length=next_sequence_length, **model_kwargs
             )
