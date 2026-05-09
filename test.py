@@ -132,12 +132,14 @@ def _prefill(
     model_kwargs: dict,
     is_first_iteration: bool = True):
 
+
     model_inputs = model.prepare_inputs_for_generation(
         input_ids,
         next_sequence_length=None,
         is_first_iteration=is_first_iteration,
         **model_kwargs,
     )
+
     model_inputs["pixel_values"] = pixel_values
     hidden_states = forward1(model.model, **model_inputs)
     logits = model.lm_head(hidden_states[:, -1:, :])
@@ -299,7 +301,6 @@ def generate(
         input_ids,
         generation_config=generation_config,
         pixel_values=pixel_values,
-        synced_gpus=False,
         **model_kwargs,
     )
 
