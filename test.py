@@ -23,7 +23,7 @@ def set_seed(seed: int, deterministic: bool = False):
 
 set_seed(42)
 
-def forward_visual_model(model, hidden_states: torch.Tensor, grid_thw: torch.Tensor, **kwargs):
+def forward2(model, hidden_states: torch.Tensor, grid_thw: torch.Tensor, **kwargs):
         hidden_states = model.patch_embed(hidden_states)
 
         pos_embeds = model.fast_pos_embed_interpolate(grid_thw)
@@ -67,7 +67,7 @@ def get_image_features(
     image_grid_thw: torch.LongTensor | None = None,
     **kwargs):
     pixel_values = pixel_values.type(model.visual.dtype)
-    vision_output = forward_visual_model(model.visual, pixel_values, grid_thw=image_grid_thw, **kwargs)
+    vision_output = forward2(model.visual, pixel_values, grid_thw=image_grid_thw, **kwargs)
     image_embeds = vision_output[0]
     split_sizes = (image_grid_thw.prod(-1) // model.visual.spatial_merge_size**2).tolist()
     image_embeds = torch.split(image_embeds, split_sizes)
@@ -79,7 +79,7 @@ class output_class():
     def __init__(self, **kwargs):
         self.__dict__.update(kwargs)
 
-def forward_viz(
+def forward1(
     model,
     input_ids: torch.LongTensor = None,
     attention_mask: torch.Tensor | None = None,
@@ -147,7 +147,7 @@ def _prefill(
         **model_kwargs,
     )
     model_inputs["pixel_values"] = pixel_values
-    hidden_states = forward_viz(model.model, **model_inputs)
+    hidden_states = forward1(model.model, **model_inputs)
     logits = model.lm_head(hidden_states[:, -1:, :])
     return logits
 
