@@ -177,7 +177,6 @@ def forward(
         image_grid_thw: torch.LongTensor | None = None,
         video_grid_thw: torch.LongTensor | None = None,
         mm_token_type_ids: torch.IntTensor | None = None,
-        logits_to_keep: int | torch.Tensor = 0,
         **kwargs,
         ):
 
@@ -195,9 +194,7 @@ def forward(
             mm_token_type_ids=mm_token_type_ids,
             **kwargs,
         )
-
-        slice_indices = slice(-logits_to_keep, None) if isinstance(logits_to_keep, int) else logits_to_keep
-        logits = model.lm_head(hidden_states[:, slice_indices, :])
+        logits = model.lm_head(hidden_states[:, -1:, :])
         return logits
 
 def _prefill(
@@ -238,7 +235,6 @@ def forward2(
         image_grid_thw: torch.LongTensor | None = None,
         video_grid_thw: torch.LongTensor | None = None,
         mm_token_type_ids: torch.IntTensor | None = None,
-        logits_to_keep: int | torch.Tensor = 0,
         **kwargs,
     ):
         
@@ -256,8 +252,7 @@ def forward2(
             **kwargs,
         )
         hidden_states = outputs[0]
-        slice_indices = slice(-logits_to_keep, None)
-        logits = model.lm_head(hidden_states[:, slice_indices, :])
+        logits = model.lm_head(hidden_states[:, -1:, :])
         return logits
 
 def _sample(
