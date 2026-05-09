@@ -129,7 +129,7 @@ def get_image_features(
 class output_class():
     def __init__(self, **kwargs):
         self.__dict__.update(kwargs)
-    
+
 def forward_viz(
     model,
     input_ids: torch.LongTensor = None,
@@ -226,6 +226,40 @@ def _update_model_kwargs_for_generation(
         + 1
     )
 
+def forward2(
+        model,
+        input_ids: torch.LongTensor = None,
+        attention_mask: torch.Tensor | None = None,
+        position_ids: torch.LongTensor | None = None,
+        past_key_values= None,
+        inputs_embeds: torch.FloatTensor | None = None,
+        pixel_values: torch.Tensor | None = None,
+        pixel_values_videos: torch.FloatTensor | None = None,
+        image_grid_thw: torch.LongTensor | None = None,
+        video_grid_thw: torch.LongTensor | None = None,
+        mm_token_type_ids: torch.IntTensor | None = None,
+        logits_to_keep: int | torch.Tensor = 0,
+        **kwargs,
+    ):
+        
+        outputs = model.model(
+            input_ids=input_ids,
+            pixel_values=pixel_values,
+            pixel_values_videos=pixel_values_videos,
+            image_grid_thw=image_grid_thw,
+            video_grid_thw=video_grid_thw,
+            position_ids=position_ids,
+            attention_mask=attention_mask,
+            past_key_values=past_key_values,
+            inputs_embeds=inputs_embeds,
+            mm_token_type_ids=mm_token_type_ids,
+            **kwargs,
+        )
+        hidden_states = outputs[0]
+        slice_indices = slice(-logits_to_keep, None)
+        logits = model.lm_head(hidden_states[:, slice_indices, :])
+        return logits
+
 def _sample(
     model,
     input_ids: torch.LongTensor,
@@ -258,7 +292,7 @@ def _sample(
             model_inputs = model.prepare_inputs_for_generation(
                 input_ids, next_sequence_length=next_sequence_length, **model_kwargs
             )
-            outputs = model(**model_inputs)["logits"]
+            outputs = forward2(model, **model_inputs)
         prefill_consumed = True
         model_kwargs["position_ids"] = _update_model_kwargs_for_generation(
             model_kwargs["position_ids"],
