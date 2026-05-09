@@ -23,57 +23,6 @@ def set_seed(seed: int, deterministic: bool = False):
 
 set_seed(42)
 
-
-def forward_language_model(
-    model,
-    attention_mask=None,
-    position_ids=None,
-    past_key_values=None,
-    inputs_embeds=None,
-    visual_pos_masks=None,
-    deepstack_visual_embeds=None,
-    **kwargs,
-):
-    text_position_ids = position_ids[0]
-    position_ids = position_ids[1:]
-
-    attention_mask = create_causal_mask(
-        config=model.config,
-        inputs_embeds=inputs_embeds,
-        attention_mask=attention_mask,
-        past_key_values=past_key_values,
-        position_ids=text_position_ids,
-    )
-
-    hidden_states = inputs_embeds
-
-    # create position embeddings to be shared across the decoder layers
-    position_embeddings = model.rotary_emb(hidden_states, position_ids)
-
-    # decoder layers
-    for layer_idx, decoder_layer in enumerate(model.layers):
-        layer_outputs = decoder_layer(
-            hidden_states,
-            attention_mask=attention_mask,
-            position_ids=text_position_ids,
-            past_key_values=past_key_values,
-            position_embeddings=position_embeddings,
-            **kwargs,
-        )
-        hidden_states = layer_outputs
-
-        # add visual features to the hidden states of first several layers
-        if deepstack_visual_embeds is not None and layer_idx in range(len(deepstack_visual_embeds)):
-            hidden_states = model._deepstack_process(
-                hidden_states,
-                visual_pos_masks,
-                deepstack_visual_embeds[layer_idx],
-            )
-
-    hidden_states = model.norm(hidden_states)
-
-    return hidden_states
-
 def forward_visual_model(model, hidden_states: torch.Tensor, grid_thw: torch.Tensor, **kwargs):
         hidden_states = model.patch_embed(hidden_states)
 
@@ -152,18 +101,37 @@ def forward_viz(
 
     image_mask = image_mask[..., 0]
 
+    text_position_ids = position_ids[0]
+    position_ids = position_ids[1:]
 
-    outputs = forward_language_model(
-        model.language_model,
-        position_ids=position_ids,
+    attention_mask = create_causal_mask(
+        config=model.config,
+        inputs_embeds=inputs_embeds,
         attention_mask=attention_mask,
         past_key_values=past_key_values,
-        inputs_embeds=inputs_embeds,
-        visual_pos_masks=image_mask,
-        deepstack_visual_embeds=deepstack_image_embeds,
-        **kwargs,
+        position_ids=text_position_ids,
     )
-    return outputs
+
+    hidden_states = inputs_embeds
+    position_embeddings = model.language_model.rotary_emb(hidden_states, position_ids)
+    for layer_idx, decoder_layer in enumerate(model.language_model.layers):
+        layer_outputs = decoder_layer(
+            hidden_states,
+            attention_mask=attention_mask,
+            position_ids=text_position_ids,
+            past_key_values=past_key_values,
+            position_embeddings=position_embeddings,
+            **kwargs,
+        )
+        hidden_states = layer_outputs
+        if deepstack_image_embeds is not None and layer_idx in range(len(deepstack_image_embeds)):
+            hidden_states = model.language_model._deepstack_process(
+                hidden_states,
+                image_mask,
+                deepstack_image_embeds[layer_idx],
+            )
+    hidden_states = model.language_model.norm(hidden_states)
+    return hidden_states
 
 def _prefill(
     model,
