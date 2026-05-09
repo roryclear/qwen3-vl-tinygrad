@@ -198,7 +198,7 @@ def forward(
 
         slice_indices = slice(-logits_to_keep, None) if isinstance(logits_to_keep, int) else logits_to_keep
         logits = model.lm_head(hidden_states[:, slice_indices, :])
-        return {"logits":logits}
+        return logits
 
 def _prefill(
     model,
@@ -258,14 +258,13 @@ def _sample(
             model_inputs = model.prepare_inputs_for_generation(
                 input_ids, next_sequence_length=next_sequence_length, **model_kwargs
             )
-            outputs = model(**model_inputs)
+            outputs = model(**model_inputs)["logits"]
         prefill_consumed = True
         model_kwargs["position_ids"] = _update_model_kwargs_for_generation(
             model_kwargs["position_ids"],
         )
         # Copy is needed to avoid keeping a hanging ref to outputs.logits which may be very large for first iteration
         # (the clone itself is always small)
-        outputs = outputs["logits"]
         next_token_logits = outputs[:, -1, :].to(copy=True, dtype=torch.float32, device=input_ids.device)
 
         # pre-process distribution
