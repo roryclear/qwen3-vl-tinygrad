@@ -156,7 +156,6 @@ def _update_model_kwargs_for_generation(
 def _sample(
     model,
     input_ids: torch.LongTensor,
-    stopping_criteria,
     generation_config,
     pixel_values,
     **model_kwargs,
@@ -225,9 +224,7 @@ def _sample(
         next_tokens = next_tokens * unfinished_sequences + pad_token_id * (1 - unfinished_sequences)
 
         input_ids = torch.cat([input_ids, next_tokens[:, None]], dim=-1)
-
-        unfinished_sequences = unfinished_sequences & ~stopping_criteria(input_ids, scores)
-        this_peer_finished = unfinished_sequences.max() == 0
+        this_peer_finished = input_ids[0][-1] == 151645 or len(input_ids[0]) == 406
         del outputs
 
     return input_ids
@@ -288,6 +285,7 @@ def generate(
         input_ids_length=input_ids_length,
     )
 
+
     model_kwargs["logits_to_keep"] = 1
 
     max_cache_length = generation_config.max_length - 1
@@ -295,17 +293,10 @@ def generate(
         generation_config, model_kwargs, generation_mode, batch_size, max_cache_length
     )
 
-    prepared_stopping_criteria = model._get_stopping_criteria(
-        generation_config=generation_config,
-        stopping_criteria=[],
-        tokenizer=None,
-    )
-
     model_kwargs["use_cache"] = generation_config.use_cache
     result = _sample(
         model,
         input_ids,
-        stopping_criteria=prepared_stopping_criteria,
         generation_config=generation_config,
         pixel_values=pixel_values,
         synced_gpus=False,
