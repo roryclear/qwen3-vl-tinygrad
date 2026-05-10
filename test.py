@@ -156,13 +156,13 @@ def _update_model_kwargs_for_generation(
 def _sample(
     model,
     input_ids: torch.LongTensor,
-    generation_config,
+    output_scores,
+    return_dict_in_generate,
+    _pad_token_tensor,
     pixel_values,
     **model_kwargs,
 ):
-    pad_token_id = generation_config._pad_token_tensor
-    output_scores = generation_config.output_scores
-    return_dict_in_generate = generation_config.return_dict_in_generate
+    pad_token_id = _pad_token_tensor
     scores = () if (return_dict_in_generate and output_scores) else None
     batch_size = input_ids.shape[0]
     this_peer_finished = False
@@ -273,7 +273,9 @@ def generate(
     result = _sample(
         model,
         input_ids,
-        generation_config=generation_config,
+        _pad_token_tensor=generation_config._pad_token_tensor,
+        output_scores=generation_config.output_scores,
+        return_dict_in_generate=generation_config.return_dict_in_generate,
         pixel_values=pixel_values,
         **model_kwargs,
     )
