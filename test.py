@@ -160,7 +160,7 @@ def _sample(
     pixel_values,
     past_key_values,
     position_ids,
-    **model_kwargs,
+    image_grid_thw,
 ):
     pad_token_id = _pad_token_tensor
     scores = None
@@ -174,7 +174,7 @@ def _sample(
         input_ids,
         pixel_values,
         past_key_values,
-        model_kwargs["image_grid_thw"]
+        image_grid_thw,
     )
 
     while not this_peer_finished:
@@ -240,14 +240,8 @@ def generate(
 ):
     generation_config, _ = model._prepare_generation_config(generation_config, input_ids=input_ids, image_grid_thw=image_grid_thw, max_new_tokens=max_new_tokens)
     
-    model_kwargs = {"input_ids": input_ids, "image_grid_thw": image_grid_thw}
 
-    kwargs_has_attention_mask = model_kwargs.get("attention_mask", None) is not None
-
-    model_kwargs = {"image_grid_thw": image_grid_thw}
-
-    device = input_ids.device
-    model._prepare_special_tokens(generation_config, kwargs_has_attention_mask, device=device)
+    model._prepare_special_tokens(generation_config, None)
 
     # 6. Prepare `max_length` depending on other stopping criteria.
     input_ids_length = input_ids.shape[1]
@@ -267,7 +261,7 @@ def generate(
         past_key_values=DynamicCache({}),
         pixel_values=pixel_values,
         position_ids=torch.arange(input_ids.shape[-1]).unsqueeze(0).unsqueeze(0).repeat(4, 1, 1),
-        **model_kwargs,
+        image_grid_thw=image_grid_thw
     )
 
     return result
