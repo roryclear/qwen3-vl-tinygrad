@@ -156,14 +156,13 @@ def _update_model_kwargs_for_generation(
 def _sample(
     model,
     input_ids: torch.LongTensor,
-    output_scores,
-    return_dict_in_generate,
     _pad_token_tensor,
     pixel_values,
+    past_key_values,
     **model_kwargs,
 ):
     pad_token_id = _pad_token_tensor
-    scores = () if (return_dict_in_generate and output_scores) else None
+    scores = None
     batch_size = input_ids.shape[0]
     this_peer_finished = False
     unfinished_sequences = torch.ones(batch_size, dtype=torch.long, device=input_ids.device)
@@ -173,13 +172,13 @@ def _sample(
         model,
         input_ids,
         pixel_values,
-        model_kwargs["past_key_values"],
+        past_key_values,
         model_kwargs["image_grid_thw"]
     )
 
     while not this_peer_finished:
         if prefill_consumed:
-            model_inputs = {"input_ids": input_ids[:, -1:], "past_key_values": model_kwargs["past_key_values"], "position_ids": model_kwargs["position_ids"]}
+            model_inputs = {"input_ids": input_ids[:, -1:], "past_key_values": past_key_values, "position_ids": model_kwargs["position_ids"]}
             outputs = model.model(**model_inputs)
             hidden_states = outputs[0]
             outputs = model.lm_head(hidden_states[:, -1:, :])
@@ -268,14 +267,11 @@ def generate(
         input_ids_length=input_ids_length,
     )
 
-    # todo what's DynamicCache in transformers?
-    model_kwargs["past_key_values"] = DynamicCache({})
     result = _sample(
         model,
         input_ids,
         _pad_token_tensor=generation_config._pad_token_tensor,
-        output_scores=generation_config.output_scores,
-        return_dict_in_generate=generation_config.return_dict_in_generate,
+        past_key_values=DynamicCache({}),
         pixel_values=pixel_values,
         **model_kwargs,
     )
