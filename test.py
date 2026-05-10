@@ -12,7 +12,8 @@ import random
 import numpy as np
 from tinygrad import Tensor
 import math
-from transformers import DynamicCache
+from transformers import DynamicCache, GenerationConfig
+import copy
 
 
 def set_seed(seed: int, deterministic: bool = False):
@@ -224,7 +225,16 @@ def _sample(
 
     return input_ids
 
-
+def _prepare_generation_config(
+    model,
+    generation_config,
+    **kwargs,
+):
+    generation_config = GenerationConfig()
+    global_defaults = model.generation_config._get_default_generation_params()
+    generation_config.update(**model.generation_config.to_dict(), defaults_only=True, allow_custom_entries=True)
+    generation_config.update(**global_defaults, defaults_only=True)
+    return generation_config, None
 
 
 @torch.no_grad()
@@ -241,7 +251,9 @@ def generate(
     image_grid_thw=None,
     max_new_tokens=128
 ):
-    generation_config, _ = model._prepare_generation_config(generation_config, input_ids=input_ids, image_grid_thw=image_grid_thw, max_new_tokens=max_new_tokens)
+    generation_config, _ = _prepare_generation_config(model, generation_config, input_ids=input_ids, image_grid_thw=image_grid_thw, max_new_tokens=max_new_tokens)
+
+    
 
     generation_config._bos_token_tensor = generation_config.bos_token_id
     generation_config._eos_token_tensor = generation_config.eos_token_id
@@ -258,7 +270,7 @@ def generate(
         inputs_tensor=input_ids,
         input_ids_length=input_ids_length,
     )
-
+    
     result = _sample(
         model,
         input_ids,
