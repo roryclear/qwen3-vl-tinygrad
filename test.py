@@ -178,7 +178,7 @@ def _sample(
 
     while not this_peer_finished:
         if prefill_consumed:
-            model_inputs = prepare_inputs_for_generation(input_ids, **model_kwargs)
+            model_inputs = {"input_ids": input_ids[:, -1:], "past_key_values": model_kwargs["past_key_values"], "position_ids": model_kwargs["position_ids"]}
             outputs = model.model(**model_inputs)
             hidden_states = outputs[0]
             outputs = model.lm_head(hidden_states[:, -1:, :])
@@ -225,17 +225,6 @@ def _sample(
 
     return input_ids
 
-def prepare_inputs_for_generation(
-    input_ids: torch.LongTensor,
-    past_key_values=None,
-    **kwargs,
-):
-    model_inputs = {}
-    model_inputs["input_ids"] = input_ids[:, -1:]
-    model_inputs["past_key_values"] = past_key_values
-    model_inputs["position_ids"] = kwargs["position_ids"]
-    return model_inputs
-
 @torch.no_grad()
 def generate(
     inputs: torch.Tensor | None = None,
@@ -257,20 +246,16 @@ def generate(
     generation_mode = generation_config.get_generation_mode(assistant_model)
     kwargs_has_attention_mask = model_kwargs.get("attention_mask", None) is not None
 
-    # 3. Define model inputs
-    inputs_tensor, model_input_name, model_kwargs = model._prepare_model_inputs(
-        inputs, generation_config.bos_token_id, model_kwargs
-    )
 
 
-    batch_size = inputs_tensor.shape[0]
+    model_kwargs = {"image_grid_thw": image_grid_thw}
+    batch_size = input_ids.shape[0]
 
-    device = inputs_tensor.device
+    device = input_ids.device
     model._prepare_special_tokens(generation_config, kwargs_has_attention_mask, device=device)
 
-    model_kwargs["position_ids"] = model._prepare_position_ids_for_generation(inputs_tensor, model_kwargs)
+    model_kwargs["position_ids"] = model._prepare_position_ids_for_generation(input_ids, model_kwargs)
 
-    input_ids = inputs_tensor if model_input_name == "input_ids" else model_kwargs.pop("input_ids")
 
     # Expand inputs depending on the generation mode
     input_ids, model_kwargs = model._expand_inputs_for_generation(
@@ -287,8 +272,8 @@ def generate(
         generation_config=generation_config,
         has_default_max_length=True,
         has_default_min_length=True,
-        model_input_name=model_input_name,
-        inputs_tensor=inputs_tensor,
+        model_input_name="input_ids",
+        inputs_tensor=input_ids,
         input_ids_length=input_ids_length,
     )
 
