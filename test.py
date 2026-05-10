@@ -159,6 +159,7 @@ def _sample(
     _pad_token_tensor,
     pixel_values,
     past_key_values,
+    position_ids,
     **model_kwargs,
 ):
     pad_token_id = _pad_token_tensor
@@ -178,15 +179,13 @@ def _sample(
 
     while not this_peer_finished:
         if prefill_consumed:
-            model_inputs = {"input_ids": input_ids[:, -1:], "past_key_values": past_key_values, "position_ids": model_kwargs["position_ids"]}
+            model_inputs = {"input_ids": input_ids[:, -1:], "past_key_values": past_key_values, "position_ids": position_ids}
             outputs = model.model(**model_inputs)
             hidden_states = outputs[0]
             outputs = model.lm_head(hidden_states[:, -1:, :])
 
         prefill_consumed = True
-        model_kwargs["position_ids"] = _update_model_kwargs_for_generation(
-            model_kwargs["position_ids"],
-        )
+        position_ids = _update_model_kwargs_for_generation(position_ids)
         
         temp = 0.7
         top_k = 20
@@ -243,18 +242,12 @@ def generate(
     
     model_kwargs = {"input_ids": input_ids, "image_grid_thw": image_grid_thw}
 
-    generation_mode = generation_config.get_generation_mode(assistant_model)
     kwargs_has_attention_mask = model_kwargs.get("attention_mask", None) is not None
 
-
-
     model_kwargs = {"image_grid_thw": image_grid_thw}
-    batch_size = input_ids.shape[0]
 
     device = input_ids.device
     model._prepare_special_tokens(generation_config, kwargs_has_attention_mask, device=device)
-
-    model_kwargs["position_ids"] = torch.arange(input_ids.shape[-1]).unsqueeze(0).unsqueeze(0).repeat(4, 1, 1)
 
     # 6. Prepare `max_length` depending on other stopping criteria.
     input_ids_length = input_ids.shape[1]
@@ -273,6 +266,7 @@ def generate(
         _pad_token_tensor=generation_config._pad_token_tensor,
         past_key_values=DynamicCache({}),
         pixel_values=pixel_values,
+        position_ids=torch.arange(input_ids.shape[-1]).unsqueeze(0).unsqueeze(0).repeat(4, 1, 1),
         **model_kwargs,
     )
 
