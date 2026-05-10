@@ -224,6 +224,9 @@ def _sample(
 
     return input_ids
 
+
+
+
 @torch.no_grad()
 def generate(
     inputs: torch.Tensor | None = None,
@@ -239,9 +242,11 @@ def generate(
     max_new_tokens=128
 ):
     generation_config, _ = model._prepare_generation_config(generation_config, input_ids=input_ids, image_grid_thw=image_grid_thw, max_new_tokens=max_new_tokens)
-    
 
-    model._prepare_special_tokens(generation_config, None)
+    generation_config._bos_token_tensor = generation_config.bos_token_id
+    generation_config._eos_token_tensor = generation_config.eos_token_id
+    generation_config._pad_token_tensor = generation_config.pad_token_id
+    generation_config._decoder_start_token_tensor = generation_config.decoder_start_token_id
 
     # 6. Prepare `max_length` depending on other stopping criteria.
     input_ids_length = input_ids.shape[1]
