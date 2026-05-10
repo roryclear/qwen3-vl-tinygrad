@@ -1,5 +1,4 @@
 from transformers import AutoModelForImageTextToText
-from transformers.masking_utils import create_causal_mask
 from PIL import Image
 import requests
 from io import BytesIO
@@ -98,20 +97,13 @@ def forward1(
     text_position_ids = position_ids[0]
     position_ids = position_ids[1:]
 
-    attention_mask = create_causal_mask(
-        config=model.config,
-        inputs_embeds=inputs_embeds,
-        attention_mask=attention_mask,
-        past_key_values=None,
-        position_ids=text_position_ids,
-    )
 
     hidden_states = inputs_embeds
     position_embeddings = model.language_model.rotary_emb(hidden_states, position_ids)
     for layer_idx, decoder_layer in enumerate(model.language_model.layers):
         layer_outputs = decoder_layer(
             hidden_states,
-            attention_mask=attention_mask,
+            attention_mask=None,
             position_ids=text_position_ids,
             past_key_values=past_key_values,
             position_embeddings=position_embeddings,
