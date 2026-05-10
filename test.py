@@ -254,7 +254,7 @@ def generate(
     device = input_ids.device
     model._prepare_special_tokens(generation_config, kwargs_has_attention_mask, device=device)
 
-    model_kwargs["position_ids"] = model._prepare_position_ids_for_generation(input_ids, model_kwargs)
+    model_kwargs["position_ids"] = torch.arange(input_ids.shape[-1]).unsqueeze(0).unsqueeze(0).repeat(4, 1, 1)
 
 
     # Expand inputs depending on the generation mode
