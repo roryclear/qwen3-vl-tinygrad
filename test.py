@@ -256,16 +256,6 @@ def generate(
 
     model_kwargs["position_ids"] = torch.arange(input_ids.shape[-1]).unsqueeze(0).unsqueeze(0).repeat(4, 1, 1)
 
-
-    # Expand inputs depending on the generation mode
-    input_ids, model_kwargs = model._expand_inputs_for_generation(
-        input_ids=input_ids,
-        expand_size=max(generation_config.num_beams, generation_config.num_return_sequences),
-        is_encoder_decoder=model.config.is_encoder_decoder,
-        **model_kwargs,
-    )
-
-
     # 6. Prepare `max_length` depending on other stopping criteria.
     input_ids_length = input_ids.shape[1]
     generation_config = model._prepare_generated_length(
