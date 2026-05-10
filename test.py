@@ -12,6 +12,7 @@ import random
 import numpy as np
 from tinygrad import Tensor
 import math
+from transformers import DynamicCache
 
 
 def set_seed(seed: int, deterministic: bool = False):
@@ -267,12 +268,11 @@ def generate(
         input_ids_length=input_ids_length,
     )
 
-    max_cache_length = generation_config.max_length - 1
-    model._prepare_cache_for_generation(
-        generation_config, model_kwargs, generation_mode, batch_size, max_cache_length
-    )
+    # todo what's DynamicCache in transformers?
+    model_kwargs["past_key_values"] = DynamicCache({})
 
-    model_kwargs["use_cache"] = generation_config.use_cache
+    print(generation_config.use_cache)
+    model_kwargs["use_cache"] = True
     result = _sample(
         model,
         input_ids,
@@ -282,6 +282,8 @@ def generate(
     )
 
     return result
+
+
 
 from transformers.models.qwen3_vl import Qwen3VLProcessor
 processor = Qwen3VLProcessor.from_pretrained("Qwen/Qwen3-VL-2B-Instruct")
