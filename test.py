@@ -12,7 +12,7 @@ import random
 import numpy as np
 from tinygrad import Tensor
 import math
-from transformers import DynamicCache, GenerationConfig
+from transformers import DynamicCache
 import copy
 
 
@@ -102,7 +102,7 @@ def forward1(
         config=model.config,
         inputs_embeds=inputs_embeds,
         attention_mask=attention_mask,
-        past_key_values=past_key_values,
+        past_key_values=None,
         position_ids=text_position_ids,
     )
 
