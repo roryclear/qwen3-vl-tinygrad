@@ -225,65 +225,6 @@ def _sample(
 
     return input_ids
 
-def _prepare_generation_config(
-    model,
-    generation_config,
-    **kwargs,
-):
-    generation_config = GenerationConfig()
-    global_defaults = model.generation_config._get_default_generation_params()
-    generation_config.update(**model.generation_config.to_dict(), defaults_only=True, allow_custom_entries=True)
-    generation_config.update(**global_defaults, defaults_only=True)
-    return generation_config, None
-
-
-@torch.no_grad()
-def generate(
-    inputs: torch.Tensor | None = None,
-    model=None,
-    generation_config=None,
-    prefix_allowed_tokens_fn=None,
-    assistant_model= None,
-    negative_prompt_ids: torch.Tensor | None = None,
-    negative_prompt_attention_mask: torch.Tensor | None = None,
-    input_ids=None,
-    pixel_values=None,
-    image_grid_thw=None,
-    max_new_tokens=128
-):
-    generation_config, _ = _prepare_generation_config(model, generation_config, input_ids=input_ids, image_grid_thw=image_grid_thw, max_new_tokens=max_new_tokens)
-
-    
-
-    generation_config._bos_token_tensor = generation_config.bos_token_id
-    generation_config._eos_token_tensor = generation_config.eos_token_id
-    generation_config._pad_token_tensor = generation_config.pad_token_id
-    generation_config._decoder_start_token_tensor = generation_config.decoder_start_token_id
-
-    # 6. Prepare `max_length` depending on other stopping criteria.
-    input_ids_length = input_ids.shape[1]
-    generation_config = model._prepare_generated_length(
-        generation_config=generation_config,
-        has_default_max_length=True,
-        has_default_min_length=True,
-        model_input_name="input_ids",
-        inputs_tensor=input_ids,
-        input_ids_length=input_ids_length,
-    )
-    
-    result = _sample(
-        model,
-        input_ids,
-        _pad_token_tensor=generation_config._pad_token_tensor,
-        past_key_values=DynamicCache({}),
-        pixel_values=pixel_values,
-        position_ids=torch.arange(input_ids.shape[-1]).unsqueeze(0).unsqueeze(0).repeat(4, 1, 1),
-        image_grid_thw=image_grid_thw
-    )
-
-    return result
-
-
 
 from transformers.models.qwen3_vl import Qwen3VLProcessor
 processor = Qwen3VLProcessor.from_pretrained("Qwen/Qwen3-VL-2B-Instruct")
@@ -322,8 +263,9 @@ for url, expected_output, prompt in zip(urls, expected_outputs, prompts):
     mm_token_type_ids = [0] * len(text_inputs)
     for pos in image_token_positions: mm_token_type_ids[pos:pos + int(num_image_tokens)] = [1] * int(num_image_tokens)
 
+    outputs = _sample(model=model, input_ids=torch.tensor([text_inputs]), _pad_token_tensor=151643, past_key_values=DynamicCache({}), pixel_values=image_inputs['pixel_values'],
+            position_ids=torch.arange(torch.tensor([text_inputs]).shape[-1]).unsqueeze(0).unsqueeze(0).repeat(4, 1, 1), image_grid_thw=image_inputs['image_grid_thw'])
 
-    outputs = generate(input_ids=torch.tensor([text_inputs]), pixel_values=image_inputs['pixel_values'], image_grid_thw=image_inputs['image_grid_thw'], model=model, max_new_tokens=128)
     #outputs = model.generate(**inputs, max_new_tokens=128)
     generated_ids = outputs[0][len(text_inputs):]
     output = processor.decode(generated_ids, skip_special_tokens=True)
