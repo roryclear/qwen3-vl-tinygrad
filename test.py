@@ -267,9 +267,6 @@ def generate(
         input_ids_length=input_ids_length,
     )
 
-
-    model_kwargs["logits_to_keep"] = 1
-
     max_cache_length = generation_config.max_length - 1
     model._prepare_cache_for_generation(
         generation_config, model_kwargs, generation_mode, batch_size, max_cache_length
