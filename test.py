@@ -270,9 +270,6 @@ def generate(
 
     # todo what's DynamicCache in transformers?
     model_kwargs["past_key_values"] = DynamicCache({})
-
-    print(generation_config.use_cache)
-    model_kwargs["use_cache"] = True
     result = _sample(
         model,
         input_ids,
