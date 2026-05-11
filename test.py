@@ -118,19 +118,6 @@ def rotate_half(x):
     x2 = x[..., x.shape[-1] // 2 :]
     return torch.cat((-x2, x1), dim=-1)
 
-def apply_rotary_pos_emb_vision(
-    q: torch.Tensor, k: torch.Tensor, cos: torch.Tensor, sin: torch.Tensor
-) -> tuple[torch.Tensor, torch.Tensor]:
-    orig_q_dtype = q.dtype
-    orig_k_dtype = k.dtype
-    q, k = q.float(), k.float()
-    cos, sin = cos.unsqueeze(-2).float(), sin.unsqueeze(-2).float()
-    q_embed = (q * cos) + (rotate_half(q) * sin)
-    k_embed = (k * cos) + (rotate_half(k) * sin)
-    q_embed = q_embed.to(orig_q_dtype)
-    k_embed = k_embed.to(orig_k_dtype)
-    return q_embed, k_embed
-
 def sdpa_attention_paged_forward(
     query: torch.Tensor,
     key: torch.Tensor,
@@ -170,7 +157,14 @@ def forward_atn(
         atn.qkv(hidden_states).reshape(seq_length, 3, atn.num_heads, -1).permute(1, 0, 2, 3).unbind(0)
     )
     cos, sin = position_embeddings
-    query_states, key_states = apply_rotary_pos_emb_vision(query_states, key_states, cos, sin)
+    orig_q_dtype = query_states.dtype
+    orig_k_dtype = key_states.dtype
+    query_states, key_states = query_states.float(), key_states.float()
+    cos, sin = cos.unsqueeze(-2).float(), sin.unsqueeze(-2).float()
+    q_embed = (query_states * cos) + (rotate_half(query_states) * sin)
+    k_embed = (key_states * cos) + (rotate_half(key_states) * sin)
+    query_states = q_embed.to(orig_q_dtype)
+    key_states = k_embed.to(orig_k_dtype)
 
     query_states = query_states.transpose(0, 1).unsqueeze(0)
     key_states = key_states.transpose(0, 1).unsqueeze(0)
