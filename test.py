@@ -221,12 +221,9 @@ def _sample(
     return input_ids
 
 
-def preprocess(proc, images, *args, **kwargs):
-    for kwarg_name in proc._valid_kwargs_names:
-        kwargs.setdefault(kwarg_name, getattr(proc, kwarg_name, None))
-    
+def preprocess(proc, images, *args, **kwargs):    
     images = [tvF.pil_to_tensor(images)]
-    return _preprocess(proc, images, *args, **kwargs)
+    return _preprocess(proc, images)
 
 
 def smart_resize(
@@ -308,18 +305,14 @@ class SizeDict:
             return merged
         return NotImplemented
 
-def _preprocess(
-    proc,
-    images: list["torch.Tensor"],
-    size,
-    return_tensors,
-    **kwargs):
+def _preprocess(proc, images):
     patch_size=16
     merge_size=2
     rescale_factor=0.00392156862745098
     do_normalize=True
     temporal_patch_size=2
     resample=3
+    size=SizeDict(height=None, width=None, longest_edge=16777216, shortest_edge=65536, max_height=None, max_width=None)
 
     height, width = images[0].shape[-2:]
     resized_height, resized_width = smart_resize(
