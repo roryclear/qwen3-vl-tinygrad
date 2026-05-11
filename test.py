@@ -176,27 +176,33 @@ def forward(
 
     image_mask = image_mask[..., 0]
 
-    text_position_ids = position_ids[0]
     position_ids = position_ids[1:]
 
 
     hidden_states = inputs_embeds
     position_embeddings = model.language_model.rotary_emb(hidden_states, position_ids)
-    for layer_idx, decoder_layer in enumerate(model.language_model.layers):
-        layer_outputs = decoder_layer(
-            hidden_states,
-            attention_mask=None,
-            position_ids=text_position_ids,
+    for i in range(len(model.language_model.layers)):
+        residual = hidden_states
+        hidden_states = model.language_model.layers[i].input_layernorm(hidden_states)
+        hidden_states, _ = model.language_model.layers[i].self_attn(
+            hidden_states=hidden_states,
+            attention_mask=attention_mask,
+            position_ids=position_ids,
             past_key_values=past_key_values,
-            position_embeddings=position_embeddings,
-            **kwargs,
+            use_cache=True,
+            position_embeddings=position_embeddings
         )
-        hidden_states = layer_outputs
-        if deepstack_image_embeds is not None and layer_idx in range(len(deepstack_image_embeds)):
+        hidden_states = residual + hidden_states
+        residual = hidden_states
+        hidden_states = model.language_model.layers[i].post_attention_layernorm(hidden_states)
+        hidden_states = model.language_model.layers[i].mlp(hidden_states)
+        hidden_states = residual + hidden_states
+   
+        if deepstack_image_embeds is not None and i in range(len(deepstack_image_embeds)):
             hidden_states = model.language_model._deepstack_process(
                 hidden_states,
                 image_mask,
-                deepstack_image_embeds[layer_idx],
+                deepstack_image_embeds[i],
             )
     hidden_states = model.language_model.norm(hidden_states)
     return hidden_states
