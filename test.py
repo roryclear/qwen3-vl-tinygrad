@@ -13,6 +13,7 @@ from tinygrad import Tensor
 import math
 from transformers import DynamicCache
 import copy
+from functools import partial
 
 
 def set_seed(seed: int, deterministic: bool = False):
@@ -217,11 +218,12 @@ def _sample(
 
     return input_ids
 
+
 def preprocess(proc, images, *args, **kwargs):
     for kwarg_name in proc._valid_kwargs_names:
         kwargs.setdefault(kwarg_name, getattr(proc, kwarg_name, None))
-
-    images = proc._prepare_image_like_inputs(images, **kwargs)
+    
+    images = [proc.process_image(images)]
     return proc._preprocess(images, *args, **kwargs)
 
 from transformers.models.qwen3_vl import Qwen3VLProcessor
