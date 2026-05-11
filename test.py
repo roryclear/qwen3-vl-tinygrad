@@ -243,38 +243,6 @@ def _iterate_items(items, is_nested: bool):
         for i, item in enumerate(items):
             yield i, item
 
-def group_images_by_shape(
-    images,
-    *paired_inputs,
-    disable_grouping: bool | None,
-    is_nested: bool = False,
-) -> tuple[dict, ...]:
-    disable_grouping = True
-
-    if disable_grouping:
-        grouped_images_index = {key: (key, 0) for key, _ in _iterate_items(images, is_nested)}
-        if is_nested:
-            grouped_images_index["_num_sublists"] = len(images)
-
-        return (
-            {key: img.unsqueeze(0) for key, img in _iterate_items(images, is_nested)},
-            *[
-                {key: item.unsqueeze(0) for key, item in _iterate_items(paired_list, is_nested)}
-                for paired_list in paired_inputs
-            ],
-            grouped_images_index,
-        )
-
-    # Handle single level nested structure
-    grouped_images, *paired_grouped_values, grouped_images_index = _group_images_by_shape(
-        images, *paired_inputs, is_nested=is_nested
-    )
-
-    # Stack images with the same shape
-    grouped_images = {shape: torch.stack(images_list, dim=0) for shape, images_list in grouped_images.items()}
-
-    return grouped_images, *paired_grouped_values, grouped_images_index
-
 def smart_resize(
     height: int, width: int, factor: int = 28, min_pixels: int = 56 * 56, max_pixels: int = 14 * 14 * 4 * 1280
 ):
@@ -379,7 +347,7 @@ def _preprocess(
     do_normalize=True
     temporal_patch_size=2
     resample=3
-    grouped_images, _ = group_images_by_shape(images, disable_grouping=None)
+    grouped_images = {0: images[0].unsqueeze(0)}
     resized_images_grouped = {}
     for shape, stacked_images in grouped_images.items():
         height, width = stacked_images.shape[-2:]
@@ -398,7 +366,7 @@ def _preprocess(
         resized_images_grouped[shape] = stacked_images
     resized_images = [resized_images_grouped[0][0]]
 
-    grouped_images, _ = group_images_by_shape(resized_images, disable_grouping=None)
+    grouped_images = {0: resized_images[0].unsqueeze(0)}
     processed_images_grouped = {}
     processed_grids = {}
     for shape, stacked_images in grouped_images.items():
