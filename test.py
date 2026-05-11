@@ -241,69 +241,15 @@ def smart_resize(
         w_bar = math.ceil(width * beta / factor) * factor
     return h_bar, w_bar
 
-@dataclass()
-class SizeDict:
-    """
-    Hashable dictionary to store image size information.
-    """
+def resize(
+    proc,
+    image: "torch.Tensor",
+    size,
+    resample: "PILImageResampling | tvF.InterpolationMode | int | None" = None,
+    antialias: bool = True,
+    **kwargs):
+    return tvF.resize(image, (size.height, size.width), interpolation=3, antialias=antialias)
 
-    height: int | None = None
-    width: int | None = None
-    longest_edge: int | None = None
-    shortest_edge: int | None = None
-    max_height: int | None = None
-    max_width: int | None = None
-
-    def __getitem__(self, key):
-        if hasattr(self, key):
-            return getattr(self, key)
-        raise KeyError(f"Key {key} not found in SizeDict.")
-
-    def get(self, key, default=None):
-        if hasattr(self, key) and getattr(self, key) is not None:
-            return getattr(self, key)
-        return default
-
-    def __iter__(self):
-        # Yield only non-None (key, value) pairs so dict(self) excludes missing values.
-        for f in fields(self):
-            val = getattr(self, f.name)
-            if val is not None:
-                yield f.name, val
-
-    def __hash__(self):
-        return hash((self.height, self.width, self.longest_edge, self.shortest_edge, self.max_height, self.max_width))
-
-    def __contains__(self, key):
-        return hasattr(self, key) and getattr(self, key) is not None
-
-    def __setitem__(self, key, value):
-        if not hasattr(self, key):
-            raise KeyError(f"Key {key} is not a valid field of SizeDict.")
-        object.__setattr__(self, key, value)
-
-    def __eq__(self, other):
-        if isinstance(other, dict):
-            return dict(self) == other
-        if isinstance(other, SizeDict):
-            return tuple(getattr(self, f.name) for f in fields(self)) == tuple(
-                getattr(other, f.name) for f in fields(self)
-            )
-        return NotImplemented
-
-    def __or__(self, other) -> "SizeDict":
-        if isinstance(other, dict | SizeDict):
-            merged = dict(self)
-            merged.update(dict(other))
-            return SizeDict(**merged)
-        return NotImplemented
-
-    def __ror__(self, other) -> dict:
-        if isinstance(other, dict):
-            merged = dict(other)
-            merged.update(dict(self))
-            return merged
-        return NotImplemented
 
 def _preprocess(proc, images):
     patch_size=16
@@ -312,21 +258,18 @@ def _preprocess(proc, images):
     do_normalize=True
     temporal_patch_size=2
     resample=3
-    size=SizeDict(height=None, width=None, longest_edge=16777216, shortest_edge=65536, max_height=None, max_width=None)
 
     height, width = images[0].shape[-2:]
     resized_height, resized_width = smart_resize(
         height,
         width,
         factor=patch_size * merge_size,
-        min_pixels=size.shortest_edge,
-        max_pixels=size.longest_edge,
+        min_pixels=65536,
+        max_pixels=16777216,
     )
-    resized_images = proc.resize(
-        image=images[0].unsqueeze(0),
-        size=SizeDict(height=resized_height, width=resized_width),
-        resample=resample,
-    )
+
+    resized_images = tvF.resize(images[0].unsqueeze(0), (resized_height, resized_width), interpolation=3, antialias=True)
+
 
     stacked_images = resized_images[0].unsqueeze(0)
     resized_height, resized_width = stacked_images.shape[-2:]
@@ -407,4 +350,5 @@ for url, expected_output, prompt in zip(urls, expected_outputs, prompts):
     output = processor.decode(generated_ids, skip_special_tokens=True)
     print(output)
     assert output == expected_output
+
 
