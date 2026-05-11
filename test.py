@@ -122,24 +122,11 @@ def sdpa_attention_paged_forward(
     query: torch.Tensor,
     key: torch.Tensor,
     value: torch.Tensor,
-    attention_mask: torch.Tensor | None,
-    dropout: float = 0.0,
-    scaling: float | None = None,
-    **kwargs,
+    scaling: float | None = None
 ) -> tuple[torch.Tensor, None]:
     query = query.contiguous()
     key = key.contiguous()
     value = value.contiguous()
-    attn_output = torch.nn.functional.scaled_dot_product_attention(
-        query,
-        key,
-        value,
-        attn_mask=attention_mask,
-        dropout_p=dropout,
-        scale=scaling,
-        # Packed sequence format is used for input, so that it can never be causal.
-        is_causal=False,
-    )
 
     L, S = query.size(-2), key.size(-2)
     attn_bias = torch.zeros(L, S, dtype=query.dtype, device=query.device)
@@ -188,11 +175,7 @@ def forward_atn(
             q,
             k,
             v,
-            attention_mask=None,
-            scaling=atn.scaling,
-            dropout=0.0,
-            is_causal=False,
-            **kwargs,
+            scaling=atn.scaling
         )
         for q, k, v in zip(*splits)
     ]
