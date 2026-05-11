@@ -343,7 +343,7 @@ for url, expected_output, prompt in zip(urls, expected_outputs, prompts):
     image_grid_thw = image_inputs["image_grid_thw"]  # [batch, 3] -> [t, h, w]
     num_image_tokens = (image_grid_thw.prod(dim=-1) / (merge_size ** 2)).item()
 
-    image_token_id = processor.tokenizer.convert_tokens_to_ids("<|image_pad|>")
+    image_token_id = 151655
     image_token_positions = [i for i, tid in enumerate(text_inputs) if tid == image_token_id]
 
     for pos in reversed(image_token_positions):  # reversed to maintain indices
