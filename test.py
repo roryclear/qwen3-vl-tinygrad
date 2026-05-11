@@ -101,16 +101,10 @@ class SimpleTokenizer:
 def set_seed(seed: int, deterministic: bool = False):
     random.seed(seed)
     np.random.seed(seed)
-
     torch.manual_seed(seed)
 
 
 set_seed(42)
-
-
-class output_class():
-    def __init__(self, **kwargs):
-        self.__dict__.update(kwargs)
 
 def rotate_half(x):
     """Rotates half the hidden dims of the input."""
@@ -118,24 +112,6 @@ def rotate_half(x):
     x2 = x[..., x.shape[-1] // 2 :]
     return torch.cat((-x2, x1), dim=-1)
 
-def sdpa_attention_paged_forward(
-    q: torch.Tensor,
-    k: torch.Tensor,
-    v: torch.Tensor,
-    scaling: float | None = None
-) -> tuple[torch.Tensor, None]:
-    q = q.contiguous()
-    k = k.contiguous()
-    v = v.contiguous()
-    L, S = q.size(-2), k.size(-2)
-    attn_bias = torch.zeros(L, S, dtype=q.dtype, device=q.device)
-    attn_weight = q @ k.transpose(-2, -1) * scaling
-    attn_weight += attn_bias
-    attn_weight = torch.softmax(attn_weight, dim=-1)
-    attn_weight = torch.dropout(attn_weight, 0, train=True)
-    attn_output = attn_weight @ v
-    attn_output = attn_output.transpose(1, 2).contiguous()
-    return attn_output
 
 def forward(
     model,
