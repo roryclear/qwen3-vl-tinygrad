@@ -119,22 +119,21 @@ def rotate_half(x):
     return torch.cat((-x2, x1), dim=-1)
 
 def sdpa_attention_paged_forward(
-    query: torch.Tensor,
-    key: torch.Tensor,
-    value: torch.Tensor,
+    q: torch.Tensor,
+    k: torch.Tensor,
+    v: torch.Tensor,
     scaling: float | None = None
 ) -> tuple[torch.Tensor, None]:
-    query = query.contiguous()
-    key = key.contiguous()
-    value = value.contiguous()
-
-    L, S = query.size(-2), key.size(-2)
-    attn_bias = torch.zeros(L, S, dtype=query.dtype, device=query.device)
-    attn_weight = query @ key.transpose(-2, -1) * scaling
+    q = q.contiguous()
+    k = k.contiguous()
+    v = v.contiguous()
+    L, S = q.size(-2), k.size(-2)
+    attn_bias = torch.zeros(L, S, dtype=q.dtype, device=q.device)
+    attn_weight = q @ k.transpose(-2, -1) * scaling
     attn_weight += attn_bias
     attn_weight = torch.softmax(attn_weight, dim=-1)
     attn_weight = torch.dropout(attn_weight, 0, train=True)
-    attn_output = attn_weight @ value
+    attn_output = attn_weight @ v
     attn_output = attn_output.transpose(1, 2).contiguous()
     return attn_output
 
@@ -169,16 +168,20 @@ def forward_atn(
     splits = [
         torch.split(tensor, lengths.tolist(), dim=2) for tensor in (query_states, key_states, value_states)
     ]
-
-    attn_outputs = [
-        sdpa_attention_paged_forward(
-            q,
-            k,
-            v,
-            scaling=atn.scaling
-        )
-        for q, k, v in zip(*splits)
-    ]
+    attn_outputs = []
+    for q, k, v in zip(*splits):
+        q = q.contiguous()
+        k = k.contiguous()
+        v = v.contiguous()
+        L, S = q.size(-2), k.size(-2)
+        attn_bias = torch.zeros(L, S, dtype=q.dtype, device=q.device)
+        attn_weight = q @ k.transpose(-2, -1) * atn.scaling
+        attn_weight += attn_bias
+        attn_weight = torch.softmax(attn_weight, dim=-1)
+        attn_weight = torch.dropout(attn_weight, 0, train=True)
+        attn_output = attn_weight @ v
+        x = attn_output.transpose(1, 2).contiguous()
+        attn_outputs.append(x)
     attn_output = torch.cat(attn_outputs, dim=1)
 
     attn_output = attn_output.reshape(seq_length, -1).contiguous()
@@ -221,8 +224,6 @@ def forward(
 
     deepstack_feature_lists = []
     for i in range(len(model.visual.blocks)):
-        #print(type(model.visual.blocks[i].attn))
-        #print(model.visual.blocks[i].attn.config._attn_implementation)
         hidden_states = hidden_states + forward_atn(model.visual.blocks[i].attn,
             hidden_states=model.visual.blocks[i].norm1(hidden_states),
             cu_seqlens=cu_seqlens,
