@@ -137,46 +137,6 @@ def sdpa_attention_paged_forward(
     attn_output = attn_output.transpose(1, 2).contiguous()
     return attn_output
 
-def forward_atn(
-    atn,
-    hidden_states: torch.Tensor,
-    position_embeddings: tuple[torch.Tensor, torch.Tensor] | None = None):
-    seq_length = hidden_states.shape[0]
-    query_states, key_states, value_states = (
-        atn.qkv(hidden_states).reshape(seq_length, 3, atn.num_heads, -1).permute(1, 0, 2, 3).unbind(0)
-    )
-    cos, sin = position_embeddings
-    orig_q_dtype = query_states.dtype
-    orig_k_dtype = key_states.dtype
-    query_states, key_states = query_states.float(), key_states.float()
-    cos, sin = cos.unsqueeze(-2).float(), sin.unsqueeze(-2).float()
-    q_embed = (query_states * cos) + (rotate_half(query_states) * sin)
-    k_embed = (key_states * cos) + (rotate_half(key_states) * sin)
-    query_states = q_embed.to(orig_q_dtype)
-    key_states = k_embed.to(orig_k_dtype)
-
-    query_states = query_states.transpose(0, 1).unsqueeze(0)
-    key_states = key_states.transpose(0, 1).unsqueeze(0)
-    value_states = value_states.transpose(0, 1).unsqueeze(0)
-
-
-    query_states = query_states.contiguous()
-    key_states = key_states.contiguous()
-    value_states = value_states.contiguous()
-    L, S = query_states.size(-2), key_states.size(-2)
-    attn_bias = torch.zeros(L, S, dtype=key_states.dtype, device=query_states.device)
-    attn_weight = query_states @ key_states.transpose(-2, -1) * atn.scaling
-    attn_weight += attn_bias
-    attn_weight = torch.softmax(attn_weight, dim=-1)
-    attn_weight = torch.dropout(attn_weight, 0, train=True)
-    attn_output = attn_weight @ value_states
-    attn_output = attn_output.transpose(1, 2).contiguous()
-
-    attn_output = attn_output.reshape(seq_length, -1).contiguous()
-    attn_output = atn.proj(attn_output)
-    return attn_output
-
-
 def forward(
     model,
     input_ids: torch.LongTensor = None,
@@ -212,12 +172,43 @@ def forward(
 
     deepstack_feature_lists = []
     for i in range(len(model.visual.blocks)):
-        hidden_states = hidden_states + forward_atn(model.visual.blocks[i].attn,
-            hidden_states=model.visual.blocks[i].norm1(hidden_states),
-            position_embeddings=position_embeddings
-        )
-
         
+        hidden_states_input = model.visual.blocks[i].norm1(hidden_states)
+        seq_length = hidden_states_input.shape[0]
+        query_states, key_states, value_states = (
+            model.visual.blocks[i].attn.qkv(hidden_states_input).reshape(seq_length, 3, model.visual.blocks[i].attn.num_heads, -1).permute(1, 0, 2, 3).unbind(0)
+        )
+        cos, sin = position_embeddings
+        orig_q_dtype = query_states.dtype
+        orig_k_dtype = key_states.dtype
+        query_states, key_states = query_states.float(), key_states.float()
+        cos, sin = cos.unsqueeze(-2).float(), sin.unsqueeze(-2).float()
+        q_embed = (query_states * cos) + (rotate_half(query_states) * sin)
+        k_embed = (key_states * cos) + (rotate_half(key_states) * sin)
+        query_states = q_embed.to(orig_q_dtype)
+        key_states = k_embed.to(orig_k_dtype)
+
+        query_states = query_states.transpose(0, 1).unsqueeze(0)
+        key_states = key_states.transpose(0, 1).unsqueeze(0)
+        value_states = value_states.transpose(0, 1).unsqueeze(0)
+
+
+        query_states = query_states.contiguous()
+        key_states = key_states.contiguous()
+        value_states = value_states.contiguous()
+        L, S = query_states.size(-2), key_states.size(-2)
+        attn_bias = torch.zeros(L, S, dtype=key_states.dtype, device=query_states.device)
+        attn_weight = query_states @ key_states.transpose(-2, -1) * model.visual.blocks[i].attn.scaling
+        attn_weight += attn_bias
+        attn_weight = torch.softmax(attn_weight, dim=-1)
+        attn_weight = torch.dropout(attn_weight, 0, train=True)
+        attn_output = attn_weight @ value_states
+        attn_output = attn_output.transpose(1, 2).contiguous()
+
+        attn_output = attn_output.reshape(seq_length, -1).contiguous()
+        attn_output = model.visual.blocks[i].attn.proj(attn_output)
+
+        hidden_states += attn_output
         hidden_states = hidden_states + model.visual.blocks[i].mlp(model.visual.blocks[i].norm2(hidden_states))
 
         if i in model.visual.deepstack_visual_indexes:
