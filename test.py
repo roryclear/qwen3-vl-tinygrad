@@ -146,17 +146,17 @@ def forward(
     cu_seqlens = F.pad(cu_seqlens, (1, 0), value=0)
 
     deepstack_feature_lists = []
-    for layer_num, blk in enumerate(model.visual.blocks):
-        hidden_states = blk(
-            hidden_states,
+    for i in range(len(model.visual.blocks)):
+        hidden_states = hidden_states + model.visual.blocks[i].attn(
+            model.visual.blocks[i].norm1(hidden_states),
             cu_seqlens=cu_seqlens,
-            position_embeddings=position_embeddings,
-            **kwargs,
+            rotary_pos_emb=rotary_pos_emb,
+            position_embeddings=position_embeddings
         )
-        if layer_num in model.visual.deepstack_visual_indexes:
-            deepstack_feature = model.visual.deepstack_merger_list[model.visual.deepstack_visual_indexes.index(layer_num)](
-                hidden_states
-            )
+        hidden_states = hidden_states + model.visual.blocks[i].mlp(model.visual.blocks[i].norm2(hidden_states))
+
+        if i in model.visual.deepstack_visual_indexes:
+            deepstack_feature = model.visual.deepstack_merger_list[model.visual.deepstack_visual_indexes.index(i)](hidden_states)
             deepstack_feature_lists.append(deepstack_feature)
 
     merged_hidden_states = model.visual.merger(hidden_states)
