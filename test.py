@@ -112,6 +112,132 @@ class output_class():
     def __init__(self, **kwargs):
         self.__dict__.update(kwargs)
 
+def rotate_half(x):
+    """Rotates half the hidden dims of the input."""
+    x1 = x[..., : x.shape[-1] // 2]
+    x2 = x[..., x.shape[-1] // 2 :]
+    return torch.cat((-x2, x1), dim=-1)
+
+def apply_rotary_pos_emb_vision(
+    q: torch.Tensor, k: torch.Tensor, cos: torch.Tensor, sin: torch.Tensor
+) -> tuple[torch.Tensor, torch.Tensor]:
+    orig_q_dtype = q.dtype
+    orig_k_dtype = k.dtype
+    q, k = q.float(), k.float()
+    cos, sin = cos.unsqueeze(-2).float(), sin.unsqueeze(-2).float()
+    q_embed = (q * cos) + (rotate_half(q) * sin)
+    k_embed = (k * cos) + (rotate_half(k) * sin)
+    q_embed = q_embed.to(orig_q_dtype)
+    k_embed = k_embed.to(orig_k_dtype)
+    return q_embed, k_embed
+
+def repeat_kv(hidden_states: torch.Tensor, n_rep: int) -> torch.Tensor:
+    """
+    This is the equivalent of torch.repeat_interleave(x, dim=1, repeats=n_rep). The hidden states go from (batch,
+    num_key_value_heads, seqlen, head_dim) to (batch, num_attention_heads, seqlen, head_dim)
+    """
+    batch, num_key_value_heads, slen, head_dim = hidden_states.shape
+    if n_rep == 1:
+        return hidden_states
+    hidden_states = hidden_states[:, :, None, :, :].expand(batch, num_key_value_heads, n_rep, slen, head_dim)
+    return hidden_states.reshape(batch, num_key_value_heads * n_rep, slen, head_dim)
+
+def sdpa_attention_paged_forward(
+    module: torch.nn.Module,
+    query: torch.Tensor,
+    key: torch.Tensor,
+    value: torch.Tensor,
+    attention_mask: torch.Tensor | None,
+    dropout: float = 0.0,
+    scaling: float | None = None,
+    **kwargs,
+) -> tuple[torch.Tensor, None]:
+    # Add KV cache to the key and value tensors
+    cache = kwargs.pop("cache", None)
+    if cache is not None:
+        # This changes the shape of k and v from [1, num_kv_heads, seqlen_kv, head_dim] to [-1, num_kv_heads, head_dim]
+        key, value = cache.update(
+            key_states=key,
+            value_states=value,
+            layer_idx=module.layer_idx,
+            read_index=kwargs["read_index"],
+            write_index=kwargs["write_index"],
+        )
+        key = key.transpose(0, 1).unsqueeze(0)
+        value = value.transpose(0, 1).unsqueeze(0)
+
+    # Repeat the key and value tensors for each group of key-value heads
+    if hasattr(module, "num_key_value_groups"):
+        key = repeat_kv(key, module.num_key_value_groups)
+        value = repeat_kv(value, module.num_key_value_groups)
+
+    # Get the right causal mask for the current layer
+    causal_mask = attention_mask
+
+    # Run the actual attention
+    query = query.contiguous()
+    key = key.contiguous()
+    value = value.contiguous()
+    attn_output = torch.nn.functional.scaled_dot_product_attention(
+        query,
+        key,
+        value,
+        attn_mask=causal_mask,
+        dropout_p=dropout,
+        scale=scaling,
+        # Packed sequence format is used for input, so that it can never be causal.
+        is_causal=False,
+    )
+    attn_output = attn_output.transpose(1, 2).contiguous()
+
+    return attn_output, None
+
+def forward_atn(
+    atn,
+    hidden_states: torch.Tensor,
+    cu_seqlens: torch.Tensor,
+    rotary_pos_emb: torch.Tensor | None = None,
+    position_embeddings: tuple[torch.Tensor, torch.Tensor] | None = None,
+    **kwargs,
+) -> torch.Tensor:
+    seq_length = hidden_states.shape[0]
+    query_states, key_states, value_states = (
+        atn.qkv(hidden_states).reshape(seq_length, 3, atn.num_heads, -1).permute(1, 0, 2, 3).unbind(0)
+    )
+    cos, sin = position_embeddings
+    query_states, key_states = apply_rotary_pos_emb_vision(query_states, key_states, cos, sin)
+
+    query_states = query_states.transpose(0, 1).unsqueeze(0)
+    key_states = key_states.transpose(0, 1).unsqueeze(0)
+    value_states = value_states.transpose(0, 1).unsqueeze(0)
+
+    # Other implementations: Process each chunk separately
+    lengths = cu_seqlens[1:] - cu_seqlens[:-1]
+    splits = [
+        torch.split(tensor, lengths.tolist(), dim=2) for tensor in (query_states, key_states, value_states)
+    ]
+
+    attn_outputs = [
+        sdpa_attention_paged_forward(
+            atn,
+            q,
+            k,
+            v,
+            attention_mask=None,
+            scaling=atn.scaling,
+            dropout=0.0,
+            is_causal=False,
+            **kwargs,
+        )[0]
+        for q, k, v in zip(*splits)
+    ]
+    attn_output = torch.cat(attn_outputs, dim=1)
+
+    attn_output = attn_output.reshape(seq_length, -1).contiguous()
+    attn_output = atn.proj(attn_output)
+    return attn_output
+
+
 def forward(
     model,
     input_ids: torch.LongTensor = None,
@@ -149,12 +275,14 @@ def forward(
     for i in range(len(model.visual.blocks)):
         #print(type(model.visual.blocks[i].attn))
         #print(model.visual.blocks[i].attn.config._attn_implementation)
-        hidden_states = hidden_states + model.visual.blocks[i].attn(
+        hidden_states = hidden_states + forward_atn(model.visual.blocks[i].attn,
             hidden_states=model.visual.blocks[i].norm1(hidden_states),
             cu_seqlens=cu_seqlens,
             rotary_pos_emb=rotary_pos_emb,
             position_embeddings=position_embeddings
         )
+
+        
         hidden_states = hidden_states + model.visual.blocks[i].mlp(model.visual.blocks[i].norm2(hidden_states))
 
         if i in model.visual.deepstack_visual_indexes:
