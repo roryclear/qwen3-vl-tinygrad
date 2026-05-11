@@ -251,7 +251,6 @@ def resize(
     return tvF.resize(image, (size.height, size.width), interpolation=3, antialias=antialias)
 
 def rescale_and_normalize(
-    proc,
     images: "torch.Tensor",
     do_rescale: bool,
     rescale_factor: float,
@@ -262,7 +261,7 @@ def rescale_and_normalize(
     rescale_factor = 0.00392156862745098
     image_mean = torch.tensor(image_mean) * (1.0 / rescale_factor)
     image_std = torch.tensor(image_std) * (1.0 / rescale_factor)
-    images = proc.normalize(images.to(dtype=torch.float32), image_mean, image_std)
+    images = tvF.normalize(images.to(dtype=torch.float32), image_mean, image_std)
     return images
 
 def _preprocess(proc, images):
@@ -287,9 +286,7 @@ def _preprocess(proc, images):
 
     stacked_images = resized_images[0].unsqueeze(0)
     resized_height, resized_width = stacked_images.shape[-2:]
-    patches = rescale_and_normalize(proc,
-        stacked_images, True, rescale_factor, do_normalize, (0.5, 0.5, 0.5), (0.5, 0.5, 0.5)
-    )
+    patches = rescale_and_normalize(stacked_images, True, rescale_factor, do_normalize, (0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
     batch_size, channel = patches.shape[:2]
     grid_h, grid_w = resized_height // patch_size, resized_width // patch_size
     patches = patches.reshape(
