@@ -14,6 +14,7 @@ import math
 from transformers import DynamicCache
 import copy
 from functools import partial
+from torchvision.transforms.v2 import functional as tvF
 
 
 def set_seed(seed: int, deterministic: bool = False):
@@ -223,7 +224,7 @@ def preprocess(proc, images, *args, **kwargs):
     for kwarg_name in proc._valid_kwargs_names:
         kwargs.setdefault(kwarg_name, getattr(proc, kwarg_name, None))
     
-    images = [proc.process_image(images)]
+    images = [tvF.pil_to_tensor(images)]
     return proc._preprocess(images, *args, **kwargs)
 
 from transformers.models.qwen3_vl import Qwen3VLProcessor
