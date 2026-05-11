@@ -228,37 +228,10 @@ def preprocess(proc, images, *args, **kwargs):
     images = [tvF.pil_to_tensor(images)]
     return _preprocess(proc, images, *args, **kwargs)
 
-def _iterate_items(items, is_nested: bool):
-    """
-    Helper function to iterate over items yielding (key, item) pairs.
-
-    For nested structures, yields ((row_index, col_index), item).
-    For flat structures, yields (index, item).
-    """
-    if is_nested:
-        for i, row in enumerate(items):
-            for j, item in enumerate(row):
-                yield (i, j), item
-    else:
-        for i, item in enumerate(items):
-            yield i, item
 
 def smart_resize(
     height: int, width: int, factor: int = 28, min_pixels: int = 56 * 56, max_pixels: int = 14 * 14 * 4 * 1280
 ):
-    """Rescales the image so that the following conditions are met:
-
-    1. Both dimensions (height and width) are divisible by 'factor'.
-
-    2. The total number of pixels is within the range ['min_pixels', 'max_pixels'].
-
-    3. The aspect ratio of the image is maintained as closely as possible.
-
-    """
-    if max(height, width) / min(height, width) > 200:
-        raise ValueError(
-            f"absolute aspect ratio must be smaller than 200, got {max(height, width) / min(height, width)}"
-        )
     h_bar = round(height / factor) * factor
     w_bar = round(width / factor) * factor
     if h_bar * w_bar > max_pixels:
@@ -347,64 +320,53 @@ def _preprocess(
     do_normalize=True
     temporal_patch_size=2
     resample=3
-    grouped_images = {0: images[0].unsqueeze(0)}
-    resized_images_grouped = {}
-    for shape, stacked_images in grouped_images.items():
-        height, width = stacked_images.shape[-2:]
-        resized_height, resized_width = smart_resize(
-            height,
-            width,
-            factor=patch_size * merge_size,
-            min_pixels=size.shortest_edge,
-            max_pixels=size.longest_edge,
-        )
-        stacked_images = proc.resize(
-            image=stacked_images,
-            size=SizeDict(height=resized_height, width=resized_width),
-            resample=resample,
-        )
-        resized_images_grouped[shape] = stacked_images
-    resized_images = [resized_images_grouped[0][0]]
 
-    grouped_images = {0: resized_images[0].unsqueeze(0)}
-    processed_images_grouped = {}
-    processed_grids = {}
-    for shape, stacked_images in grouped_images.items():
-        resized_height, resized_width = stacked_images.shape[-2:]
-        patches = proc.rescale_and_normalize(
-            stacked_images, True, rescale_factor, do_normalize, (0.5, 0.5, 0.5), (0.5, 0.5, 0.5)
-        )
-        batch_size, channel = patches.shape[:2]
-        grid_h, grid_w = resized_height // patch_size, resized_width // patch_size
-        patches = patches.reshape(
+    height, width = images[0].shape[-2:]
+    resized_height, resized_width = smart_resize(
+        height,
+        width,
+        factor=patch_size * merge_size,
+        min_pixels=size.shortest_edge,
+        max_pixels=size.longest_edge,
+    )
+    resized_images = proc.resize(
+        image=images[0].unsqueeze(0),
+        size=SizeDict(height=resized_height, width=resized_width),
+        resample=resample,
+    )
+
+    stacked_images = resized_images[0].unsqueeze(0)
+    resized_height, resized_width = stacked_images.shape[-2:]
+    patches = proc.rescale_and_normalize(
+        stacked_images, True, rescale_factor, do_normalize, (0.5, 0.5, 0.5), (0.5, 0.5, 0.5)
+    )
+    batch_size, channel = patches.shape[:2]
+    grid_h, grid_w = resized_height // patch_size, resized_width // patch_size
+    patches = patches.reshape(
+        batch_size,
+        channel,
+        grid_h // merge_size,
+        merge_size,
+        patch_size,
+        grid_w // merge_size,
+        merge_size,
+        patch_size,
+    )
+    patches = patches.permute(0, 2, 5, 3, 6, 1, 4, 7)
+
+    flatten_patches = (
+        patches.unsqueeze(6)
+        .expand(-1, -1, -1, -1, -1, -1, temporal_patch_size, -1, -1)
+        .reshape(
             batch_size,
-            channel,
-            grid_h // merge_size,
-            merge_size,
-            patch_size,
-            grid_w // merge_size,
-            merge_size,
-            patch_size,
+            grid_h * grid_w,
+            channel * temporal_patch_size * patch_size * patch_size,
         )
-        # Reorder dimensions to group grid and patch information for subsequent flattening.
-        # [batch, grid_h/merge, grid_w/merge, merge, merge, channel, patch, patch]
-        patches = patches.permute(0, 2, 5, 3, 6, 1, 4, 7)
+    )
 
-        flatten_patches = (
-            patches.unsqueeze(6)
-            .expand(-1, -1, -1, -1, -1, -1, temporal_patch_size, -1, -1)
-            .reshape(
-                batch_size,
-                grid_h * grid_w,
-                channel * temporal_patch_size * patch_size * patch_size,
-            )
-        )
+    processed_images = [flatten_patches[0]]
+    processed_grids_ordered = [[[1, grid_h, grid_w]][0]]
 
-        processed_images_grouped[shape] = flatten_patches
-        processed_grids[shape] = [[1, grid_h, grid_w]] * batch_size
-
-    processed_images = [processed_images_grouped[0][0]]
-    processed_grids_ordered = [processed_grids[0][0]]
     pixel_values = torch.cat(processed_images, dim=0)
     image_grid_thw = torch.tensor(processed_grids_ordered, dtype=torch.long)
 
@@ -452,3 +414,4 @@ for url, expected_output, prompt in zip(urls, expected_outputs, prompts):
     output = processor.decode(generated_ids, skip_special_tokens=True)
     print(output)
     assert output == expected_output
+
