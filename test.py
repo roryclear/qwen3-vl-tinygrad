@@ -140,11 +140,7 @@ def sdpa_attention_paged_forward(
 def forward_atn(
     atn,
     hidden_states: torch.Tensor,
-    cu_seqlens: torch.Tensor,
-    rotary_pos_emb: torch.Tensor | None = None,
-    position_embeddings: tuple[torch.Tensor, torch.Tensor] | None = None,
-    **kwargs,
-) -> torch.Tensor:
+    position_embeddings: tuple[torch.Tensor, torch.Tensor] | None = None):
     seq_length = hidden_states.shape[0]
     query_states, key_states, value_states = (
         atn.qkv(hidden_states).reshape(seq_length, 3, atn.num_heads, -1).permute(1, 0, 2, 3).unbind(0)
@@ -218,8 +214,6 @@ def forward(
     for i in range(len(model.visual.blocks)):
         hidden_states = hidden_states + forward_atn(model.visual.blocks[i].attn,
             hidden_states=model.visual.blocks[i].norm1(hidden_states),
-            cu_seqlens=cu_seqlens,
-            rotary_pos_emb=rotary_pos_emb,
             position_embeddings=position_embeddings
         )
 
