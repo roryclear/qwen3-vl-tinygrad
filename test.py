@@ -163,26 +163,18 @@ def forward_atn(
     key_states = key_states.transpose(0, 1).unsqueeze(0)
     value_states = value_states.transpose(0, 1).unsqueeze(0)
 
-    # Other implementations: Process each chunk separately
-    lengths = cu_seqlens[1:] - cu_seqlens[:-1]
-    splits = [
-        torch.split(tensor, lengths.tolist(), dim=2) for tensor in (query_states, key_states, value_states)
-    ]
-    attn_outputs = []
-    for q, k, v in zip(*splits):
-        q = q.contiguous()
-        k = k.contiguous()
-        v = v.contiguous()
-        L, S = q.size(-2), k.size(-2)
-        attn_bias = torch.zeros(L, S, dtype=q.dtype, device=q.device)
-        attn_weight = q @ k.transpose(-2, -1) * atn.scaling
-        attn_weight += attn_bias
-        attn_weight = torch.softmax(attn_weight, dim=-1)
-        attn_weight = torch.dropout(attn_weight, 0, train=True)
-        attn_output = attn_weight @ v
-        x = attn_output.transpose(1, 2).contiguous()
-        attn_outputs.append(x)
-    attn_output = torch.cat(attn_outputs, dim=1)
+
+    query_states = query_states.contiguous()
+    key_states = key_states.contiguous()
+    value_states = value_states.contiguous()
+    L, S = query_states.size(-2), key_states.size(-2)
+    attn_bias = torch.zeros(L, S, dtype=key_states.dtype, device=query_states.device)
+    attn_weight = query_states @ key_states.transpose(-2, -1) * atn.scaling
+    attn_weight += attn_bias
+    attn_weight = torch.softmax(attn_weight, dim=-1)
+    attn_weight = torch.dropout(attn_weight, 0, train=True)
+    attn_output = attn_weight @ value_states
+    attn_output = attn_output.transpose(1, 2).contiguous()
 
     attn_output = attn_output.reshape(seq_length, -1).contiguous()
     attn_output = atn.proj(attn_output)
