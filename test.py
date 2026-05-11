@@ -259,15 +259,9 @@ def rescale_and_normalize(
     image_mean: float | list[float],
     image_std: float | list[float],
 ) -> "torch.Tensor":
-    """Rescale and normalize images using Torchvision (fused for efficiency)."""
-    image_mean, image_std, do_rescale = proc._fuse_mean_std_and_rescale_factor(
-        do_normalize=do_normalize,
-        image_mean=image_mean,
-        image_std=image_std,
-        do_rescale=do_rescale,
-        rescale_factor=rescale_factor,
-        device=images.device,
-    )
+    rescale_factor = 0.00392156862745098
+    image_mean = torch.tensor(image_mean) * (1.0 / rescale_factor)
+    image_std = torch.tensor(image_std) * (1.0 / rescale_factor)
     images = proc.normalize(images.to(dtype=torch.float32), image_mean, image_std)
     return images
 
