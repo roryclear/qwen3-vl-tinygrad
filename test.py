@@ -147,8 +147,10 @@ def forward(
 
     deepstack_feature_lists = []
     for i in range(len(model.visual.blocks)):
+        #print(type(model.visual.blocks[i].attn))
+        #print(model.visual.blocks[i].attn.config._attn_implementation)
         hidden_states = hidden_states + model.visual.blocks[i].attn(
-            model.visual.blocks[i].norm1(hidden_states),
+            hidden_states=model.visual.blocks[i].norm1(hidden_states),
             cu_seqlens=cu_seqlens,
             rotary_pos_emb=rotary_pos_emb,
             position_embeddings=position_embeddings
