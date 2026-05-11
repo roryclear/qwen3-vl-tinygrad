@@ -401,47 +401,41 @@ def reorder_images(
 def _preprocess(
     proc,
     images: list["torch.Tensor"],
-    do_resize: bool,
     size,
-    resample,
-    do_rescale: bool,
-    rescale_factor: float,
-    do_normalize: bool,
-    image_mean: float | list[float] | None,
-    image_std: float | list[float] | None,
-    patch_size: int,
-    temporal_patch_size: int,
-    merge_size: int,
-    disable_grouping: bool | None,
     return_tensors,
     **kwargs):
-    grouped_images, grouped_images_index = group_images_by_shape(images, disable_grouping=disable_grouping)
+    patch_size=16
+    merge_size=2
+    rescale_factor=0.00392156862745098
+    do_normalize=True
+    temporal_patch_size=2
+    resample=3
+    grouped_images, grouped_images_index = group_images_by_shape(images, disable_grouping=None)
     resized_images_grouped = {}
     for shape, stacked_images in grouped_images.items():
         height, width = stacked_images.shape[-2:]
-        if do_resize:
-            resized_height, resized_width = smart_resize(
-                height,
-                width,
-                factor=patch_size * merge_size,
-                min_pixels=size.shortest_edge,
-                max_pixels=size.longest_edge,
-            )
-            stacked_images = proc.resize(
-                image=stacked_images,
-                size=SizeDict(height=resized_height, width=resized_width),
-                resample=resample,
-            )
+        resized_height, resized_width = smart_resize(
+            height,
+            width,
+            factor=patch_size * merge_size,
+            min_pixels=size.shortest_edge,
+            max_pixels=size.longest_edge,
+        )
+        stacked_images = proc.resize(
+            image=stacked_images,
+            size=SizeDict(height=resized_height, width=resized_width),
+            resample=resample,
+        )
         resized_images_grouped[shape] = stacked_images
     resized_images = reorder_images(resized_images_grouped, grouped_images_index)
 
-    grouped_images, grouped_images_index = group_images_by_shape(resized_images, disable_grouping=disable_grouping)
+    grouped_images, grouped_images_index = group_images_by_shape(resized_images, disable_grouping=None)
     processed_images_grouped = {}
     processed_grids = {}
     for shape, stacked_images in grouped_images.items():
         resized_height, resized_width = stacked_images.shape[-2:]
         patches = proc.rescale_and_normalize(
-            stacked_images, do_rescale, rescale_factor, do_normalize, image_mean, image_std
+            stacked_images, True, rescale_factor, do_normalize, (0.5, 0.5, 0.5), (0.5, 0.5, 0.5)
         )
         batch_size, channel = patches.shape[:2]
         grid_h, grid_w = resized_height // patch_size, resized_width // patch_size
