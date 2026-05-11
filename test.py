@@ -33,7 +33,7 @@ class output_class():
     def __init__(self, **kwargs):
         self.__dict__.update(kwargs)
 
-def forward1(
+def forward(
     model,
     input_ids: torch.LongTensor = None,
     attention_mask: torch.Tensor | None = None,
@@ -131,7 +131,7 @@ def _prefill(
 
 
     position_ids = torch.arange(input_ids.shape[-1]).unsqueeze(0).unsqueeze(0).repeat(4, 1, 1)
-    hidden_states = forward1(model.model, pixel_values=pixel_values,
+    hidden_states = forward(model.model, pixel_values=pixel_values,
                         past_key_values=past_key_values,
                         image_grid_thw=image_grid_thw,
                         position_ids=position_ids,
@@ -221,9 +221,9 @@ def _sample(
     return input_ids
 
 
-def preprocess(proc, images, *args, **kwargs):    
+def preprocess(images):    
     images = [tvF.pil_to_tensor(images)]
-    return _preprocess(proc, images)
+    return _preprocess(images)
 
 
 def smart_resize(
@@ -264,7 +264,7 @@ def rescale_and_normalize(
     images = tvF.normalize(images.to(dtype=torch.float32), image_mean, image_std)
     return images
 
-def _preprocess(proc, images):
+def _preprocess(images):
     patch_size=16
     merge_size=2
     rescale_factor=0.00392156862745098
@@ -338,9 +338,8 @@ for url, expected_output, prompt in zip(urls, expected_outputs, prompts):
     image = Image.open(BytesIO(requests.get(url).content)).convert("RGB")
     text_inputs = processor.tokenizer(prompt, return_tensors="pt", add_special_tokens=False)["input_ids"][0].tolist()
     
-    image_inputs = preprocess(processor.image_processor, images=image, return_tensors="pt")
-
-    merge_size = processor.image_processor.merge_size  # usually 2
+    image_inputs = preprocess(images=image)
+    merge_size = 2
     image_grid_thw = image_inputs["image_grid_thw"]  # [batch, 3] -> [t, h, w]
     num_image_tokens = (image_grid_thw.prod(dim=-1) / (merge_size ** 2)).item()
 
