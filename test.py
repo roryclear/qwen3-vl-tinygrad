@@ -250,6 +250,26 @@ def resize(
     **kwargs):
     return tvF.resize(image, (size.height, size.width), interpolation=3, antialias=antialias)
 
+def rescale_and_normalize(
+    proc,
+    images: "torch.Tensor",
+    do_rescale: bool,
+    rescale_factor: float,
+    do_normalize: bool,
+    image_mean: float | list[float],
+    image_std: float | list[float],
+) -> "torch.Tensor":
+    """Rescale and normalize images using Torchvision (fused for efficiency)."""
+    image_mean, image_std, do_rescale = proc._fuse_mean_std_and_rescale_factor(
+        do_normalize=do_normalize,
+        image_mean=image_mean,
+        image_std=image_std,
+        do_rescale=do_rescale,
+        rescale_factor=rescale_factor,
+        device=images.device,
+    )
+    images = proc.normalize(images.to(dtype=torch.float32), image_mean, image_std)
+    return images
 
 def _preprocess(proc, images):
     patch_size=16
@@ -273,7 +293,7 @@ def _preprocess(proc, images):
 
     stacked_images = resized_images[0].unsqueeze(0)
     resized_height, resized_width = stacked_images.shape[-2:]
-    patches = proc.rescale_and_normalize(
+    patches = rescale_and_normalize(proc,
         stacked_images, True, rescale_factor, do_normalize, (0.5, 0.5, 0.5), (0.5, 0.5, 0.5)
     )
     batch_size, channel = patches.shape[:2]
