@@ -16,14 +16,93 @@ import copy
 from functools import partial
 from torchvision.transforms.v2 import functional as tvF
 from dataclasses import dataclass, fields
+import typing
 
+class SimpleTokenizer:
+  def __init__(self, normal_tokens:dict[str, int], special_tokens:dict[str, int], preset:str="llama3",
+               bos_id:int|None=None, eos_id:int=0, eot_id:int|None=None):
+    preset = {"qwen35":"qwen2","qwen35moe":"qwen2"}.get(preset, preset)
+    if preset not in ("llama3","llama-v3","llama-bpe","qwen2","olmo","kimi-k2","tekken","glm4"):
+      raise ValueError(f"Invalid tokenizer preset '{preset}'")
+    # https://github.com/openai/gpt-2/blob/9b63575ef42771a015060c964af2c3da4cf7c8ab/src/encoder.py#L9
+    bs = [*range(33, 127), *range(161, 173), *range(174, 256)]  # bytes that map to themselves
+    self._byte_decoder = {chr(b): b for b in bs} | {chr(256+i): b for i,b in enumerate(b for b in range(256) if b not in bs)}
+
+    # https://github.com/ggml-org/llama.cpp/blob/94933c8c2eeaa9a7983e3f6c08af76bd86724094/src/llama-vocab.cpp#L286
+    # 0x323b0 is one past the max codepoint in unicode categories L/N/Z (0x323af is max L)
+    def ucat_range(pre: str): return "".join(re.escape(chr(cp)) for cp in range(0x323b0) if unicodedata.category(chr(cp)).startswith(pre))
+    r_ws, r_p_N, r_p_L = r"\t\n\x0b\x0c\r\x85" + ucat_range("Z"), ucat_range("N"), ucat_range("L")
+    self._split_to_word = re.compile("(?i:'s|'t|'re|'ve|'m|'ll|'d)|" + \
+      f"[^\\r\\n{r_p_N}{r_p_L}]?[{r_p_L}]+|[{r_p_N}]{{1,3}}| ?[^{r_ws}{r_p_N}{r_p_L}]+[\\r\\n]*|[{r_ws}]*[\\r\\n]+|[{r_ws}]+(?![^{r_ws}])|[{r_ws}]+")
+    self._split_to_sentence = re.compile("|".join(re.escape(tok) for tok in special_tokens.keys()) if special_tokens else r"(?!)")
+
+    self._normal_tokens = {bytes(self._byte_decoder[c] for c in tok): tid for tok, tid in normal_tokens.items()}
+    self._special_tokens = special_tokens
+    self._tok2bytes = {tid: tok for tok, tid in self._normal_tokens.items()} | {tid: tok.encode() for tok, tid in self._special_tokens.items()}
+    self.preset = preset
+    self.bos_id, self.eos_id, self.eot_id = bos_id, eos_id, eot_id
+
+  @staticmethod
+  def from_gguf_kv(kv:dict):
+    # https://github.com/ggml-org/llama.cpp/blob/94933c8c2eeaa9a7983e3f6c08af76bd86724094/src/llama-vocab.cpp#L1818-L1820
+    vocab: typing.Iterable[tuple[str, int]] = ((tok, idx) for idx, tok in enumerate(kv["tokenizer.ggml.tokens"]))
+    normal_tokens, special_tokens = partition(vocab, lambda e: kv["tokenizer.ggml.token_type"][e[1]] == 1)
+    return SimpleTokenizer(dict(normal_tokens), dict(special_tokens), kv["tokenizer.ggml.pre"],
+      bos_id=kv.get('tokenizer.ggml.bos_token_id') if kv.get('tokenizer.ggml.add_bos_token', True) else None,
+      eos_id=kv.get('tokenizer.ggml.eos_token_id', 0), eot_id=kv.get('tokenizer.ggml.eot_token_id'))
+
+  def _encode_word(self, word:bytes) -> list[int]:
+    if (early_token:=self._normal_tokens.get(word)) is not None: return [early_token]
+    parts = [bytes([b]) for b in word]
+    # greedily merge any parts that we can
+    while True:
+      i = min([(sys.maxsize, -1)] + [(self._normal_tokens.get(parts[j]+parts[j+1], sys.maxsize), j) for j in range(len(parts)-1)])[1]
+      if i == -1: break
+      parts[i:i+2] = [parts[i] + parts[i+1]]
+    try: return [self._normal_tokens[p] for p in parts]
+    except KeyError: raise RuntimeError("token not found")
+  def _encode_sentence(self, chunk:str) -> list[int]:
+    return [tok for word in self._split_to_word.findall(chunk) for tok in self._encode_word(word.encode())]
+  def encode(self, text:str) -> list[int]:
+    tokens: list[int] = []
+    pos = 0
+    for match in self._split_to_sentence.finditer(text):
+      tokens.extend(self._encode_sentence(text[pos:match.start(0)]) + [self._special_tokens[text[match.start(0):match.end(0)]]])
+      pos = match.end(0)
+    ret = tokens + self._encode_sentence(text[pos:])
+    return ret
+
+  def decode(self, ids:list[int]) -> str: return b''.join(self._tok2bytes[tid] for tid in ids).decode(errors='replace')
+  def stream_decoder(self) -> typing.Callable[..., str]:
+    dec = codecs.getincrementaldecoder('utf-8')('replace')
+    def _decode(tid:int|None=None) -> str: return dec.decode(self._tok2bytes[tid]) if tid is not None else dec.decode(b'', final=True)
+    return _decode
+  def role(self, role:str):
+    if self.preset == 'olmo': return self.encode("<|" + role + "|>\n")  # OLMoE Instruct format
+    if self.preset == 'kimi-k2': return self.encode("<|im_" + role + "|>" + role + "<|im_middle|>")
+    if self.preset == 'qwen2': return self.encode("<|im_start|>" + role + "\n")
+    if self.preset == 'glm4': return self.encode("<|" + role + "|>")
+    if self.preset == 'tekken':
+      if role == 'user': return self.encode("[INST]")
+      if role == 'assistant': return []
+      raise ValueError(f"Unsupported role '{role}' for tokenizer preset '{self.preset}'")
+    return self.encode("<|start_header_id|>" + role + "<|end_header_id|>\n\n")
+  def end_turn(self):
+    if self.preset == 'olmo': return self.encode("\n")
+    if self.preset == 'kimi-k2': return [self.eos_id]
+    if self.preset == 'qwen2': return [self.eos_id] + self.encode("\n")
+    if self.preset == 'glm4': return []
+    if self.preset == 'tekken': return self.encode("[/INST]")
+    return [self.eos_id]
+  def prefix(self) -> list[int]:
+    return ([] if self.bos_id is None else [self.bos_id]) + (self.encode("<sop>") if self.preset == 'glm4' else [])
+  def is_end(self, token_id:int) -> bool: return token_id in (self.eos_id, self.eot_id)
 
 def set_seed(seed: int, deterministic: bool = False):
     random.seed(seed)
     np.random.seed(seed)
 
     torch.manual_seed(seed)
-
 
 
 set_seed(42)
@@ -319,9 +398,6 @@ def _preprocess(images):
 
     return {"pixel_values": pixel_values, "image_grid_thw": image_grid_thw}
 
-from transformers.models.qwen3_vl import Qwen3VLProcessor
-processor = Qwen3VLProcessor.from_pretrained("Qwen/Qwen3-VL-2B-Instruct")
-
 model = AutoModelForImageTextToText.from_pretrained("Qwen/Qwen3-VL-2B-Instruct")
 
 
@@ -334,10 +410,14 @@ expected_outputs = ["This is a Ferrari F40, a legendary sports car produced by F
 prompts = ["<|im_start|>user\n<|vision_start|><|image_pad|><|vision_end|>\nWhat car is this?<|im_end|>\n<|im_start|>assistant\n",
            "<|im_start|>user\n<|vision_start|><|image_pad|><|vision_end|>\nTell me the history of this car<|im_end|>\n<|im_start|>assistant\n"]
 
+import pickle
+tok = pickle.load(open("tok.pkl", "rb"))
+
 for url, expected_output, prompt in zip(urls, expected_outputs, prompts):
     image = Image.open(BytesIO(requests.get(url).content)).convert("RGB")
-    text_inputs = processor.tokenizer(prompt, return_tensors="pt", add_special_tokens=False)["input_ids"][0].tolist()
-    
+
+    text_inputs = tok.encode(prompt)
+
     image_inputs = preprocess(images=image)
     merge_size = 2
     image_grid_thw = image_inputs["image_grid_thw"]  # [batch, 3] -> [t, h, w]
@@ -357,7 +437,8 @@ for url, expected_output, prompt in zip(urls, expected_outputs, prompts):
 
     #outputs = model.generate(**inputs, max_new_tokens=128)
     generated_ids = outputs[0][len(text_inputs):]
-    output = processor.decode(generated_ids, skip_special_tokens=True)
+    output = tok.decode(generated_ids.detach().numpy())
+    output = output.replace("<|im_end|>","") # todo hack
     print(output)
     assert output == expected_output
 
