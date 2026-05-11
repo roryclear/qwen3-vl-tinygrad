@@ -15,6 +15,7 @@ from transformers import DynamicCache
 import copy
 from functools import partial
 from torchvision.transforms.v2 import functional as tvF
+from dataclasses import dataclass, fields
 
 
 def set_seed(seed: int, deterministic: bool = False):
@@ -225,16 +226,264 @@ def preprocess(proc, images, *args, **kwargs):
         kwargs.setdefault(kwarg_name, getattr(proc, kwarg_name, None))
     
     images = [tvF.pil_to_tensor(images)]
-    return proc._preprocess(images, *args, **kwargs)
+    return _preprocess(proc, images, *args, **kwargs)
+
+def _iterate_items(items, is_nested: bool):
+    """
+    Helper function to iterate over items yielding (key, item) pairs.
+
+    For nested structures, yields ((row_index, col_index), item).
+    For flat structures, yields (index, item).
+    """
+    if is_nested:
+        for i, row in enumerate(items):
+            for j, item in enumerate(row):
+                yield (i, j), item
+    else:
+        for i, item in enumerate(items):
+            yield i, item
+
+def group_images_by_shape(
+    images,
+    *paired_inputs,
+    disable_grouping: bool | None,
+    is_nested: bool = False,
+) -> tuple[dict, ...]:
+    disable_grouping = True
+
+    if disable_grouping:
+        grouped_images_index = {key: (key, 0) for key, _ in _iterate_items(images, is_nested)}
+        if is_nested:
+            grouped_images_index["_num_sublists"] = len(images)
+
+        return (
+            {key: img.unsqueeze(0) for key, img in _iterate_items(images, is_nested)},
+            *[
+                {key: item.unsqueeze(0) for key, item in _iterate_items(paired_list, is_nested)}
+                for paired_list in paired_inputs
+            ],
+            grouped_images_index,
+        )
+
+    # Handle single level nested structure
+    grouped_images, *paired_grouped_values, grouped_images_index = _group_images_by_shape(
+        images, *paired_inputs, is_nested=is_nested
+    )
+
+    # Stack images with the same shape
+    grouped_images = {shape: torch.stack(images_list, dim=0) for shape, images_list in grouped_images.items()}
+
+    return grouped_images, *paired_grouped_values, grouped_images_index
+
+def smart_resize(
+    height: int, width: int, factor: int = 28, min_pixels: int = 56 * 56, max_pixels: int = 14 * 14 * 4 * 1280
+):
+    """Rescales the image so that the following conditions are met:
+
+    1. Both dimensions (height and width) are divisible by 'factor'.
+
+    2. The total number of pixels is within the range ['min_pixels', 'max_pixels'].
+
+    3. The aspect ratio of the image is maintained as closely as possible.
+
+    """
+    if max(height, width) / min(height, width) > 200:
+        raise ValueError(
+            f"absolute aspect ratio must be smaller than 200, got {max(height, width) / min(height, width)}"
+        )
+    h_bar = round(height / factor) * factor
+    w_bar = round(width / factor) * factor
+    if h_bar * w_bar > max_pixels:
+        beta = math.sqrt((height * width) / max_pixels)
+        h_bar = max(factor, math.floor(height / beta / factor) * factor)
+        w_bar = max(factor, math.floor(width / beta / factor) * factor)
+    elif h_bar * w_bar < min_pixels:
+        beta = math.sqrt(min_pixels / (height * width))
+        h_bar = math.ceil(height * beta / factor) * factor
+        w_bar = math.ceil(width * beta / factor) * factor
+    return h_bar, w_bar
+
+@dataclass()
+class SizeDict:
+    """
+    Hashable dictionary to store image size information.
+    """
+
+    height: int | None = None
+    width: int | None = None
+    longest_edge: int | None = None
+    shortest_edge: int | None = None
+    max_height: int | None = None
+    max_width: int | None = None
+
+    def __getitem__(self, key):
+        if hasattr(self, key):
+            return getattr(self, key)
+        raise KeyError(f"Key {key} not found in SizeDict.")
+
+    def get(self, key, default=None):
+        if hasattr(self, key) and getattr(self, key) is not None:
+            return getattr(self, key)
+        return default
+
+    def __iter__(self):
+        # Yield only non-None (key, value) pairs so dict(self) excludes missing values.
+        for f in fields(self):
+            val = getattr(self, f.name)
+            if val is not None:
+                yield f.name, val
+
+    def __hash__(self):
+        return hash((self.height, self.width, self.longest_edge, self.shortest_edge, self.max_height, self.max_width))
+
+    def __contains__(self, key):
+        return hasattr(self, key) and getattr(self, key) is not None
+
+    def __setitem__(self, key, value):
+        if not hasattr(self, key):
+            raise KeyError(f"Key {key} is not a valid field of SizeDict.")
+        object.__setattr__(self, key, value)
+
+    def __eq__(self, other):
+        if isinstance(other, dict):
+            return dict(self) == other
+        if isinstance(other, SizeDict):
+            return tuple(getattr(self, f.name) for f in fields(self)) == tuple(
+                getattr(other, f.name) for f in fields(self)
+            )
+        return NotImplemented
+
+    def __or__(self, other) -> "SizeDict":
+        if isinstance(other, dict | SizeDict):
+            merged = dict(self)
+            merged.update(dict(other))
+            return SizeDict(**merged)
+        return NotImplemented
+
+    def __ror__(self, other) -> dict:
+        if isinstance(other, dict):
+            merged = dict(other)
+            merged.update(dict(self))
+            return merged
+        return NotImplemented
+
+def reorder_images(
+    processed_images: dict[tuple[int, int], "torch.Tensor"],
+    grouped_images_index: dict[int | tuple[int, int], tuple[tuple[int, int], int]],
+    is_nested: bool = False,
+):
+    """
+    Reconstructs images in the original order, preserving the original structure (nested or not).
+    The input structure is either all flat or all nested.
+
+    Args:
+        processed_images (dict[tuple[int, int], "torch.Tensor"]):
+            Dictionary mapping shapes to batched processed images.
+        grouped_images_index (dict[Union[int, tuple[int, int]], tuple[tuple[int, int], int]]):
+            Dictionary mapping original indices to (shape, index) tuples.
+        is_nested (bool, *optional*, defaults to False):
+            Whether the images are nested. Cannot be inferred from the input, as some processing functions outputs nested images.
+            even with non nested images,e.g functions splitting images into patches. We thus can't deduce is_nested from the input.
+
+
+    Returns:
+        Union[list["torch.Tensor"], "torch.Tensor"]:
+            Images in the original structure.
+    """
+    if not is_nested:
+        return [
+            processed_images[grouped_images_index[i][0]][grouped_images_index[i][1]]
+            for i in range(len(grouped_images_index))
+        ]
+
+    return _reconstruct_nested_structure(grouped_images_index, processed_images)
+
+def _preprocess(
+    proc,
+    images: list["torch.Tensor"],
+    do_resize: bool,
+    size,
+    resample,
+    do_rescale: bool,
+    rescale_factor: float,
+    do_normalize: bool,
+    image_mean: float | list[float] | None,
+    image_std: float | list[float] | None,
+    patch_size: int,
+    temporal_patch_size: int,
+    merge_size: int,
+    disable_grouping: bool | None,
+    return_tensors,
+    **kwargs):
+    grouped_images, grouped_images_index = group_images_by_shape(images, disable_grouping=disable_grouping)
+    resized_images_grouped = {}
+    for shape, stacked_images in grouped_images.items():
+        height, width = stacked_images.shape[-2:]
+        if do_resize:
+            resized_height, resized_width = smart_resize(
+                height,
+                width,
+                factor=patch_size * merge_size,
+                min_pixels=size.shortest_edge,
+                max_pixels=size.longest_edge,
+            )
+            stacked_images = proc.resize(
+                image=stacked_images,
+                size=SizeDict(height=resized_height, width=resized_width),
+                resample=resample,
+            )
+        resized_images_grouped[shape] = stacked_images
+    resized_images = reorder_images(resized_images_grouped, grouped_images_index)
+
+    grouped_images, grouped_images_index = group_images_by_shape(resized_images, disable_grouping=disable_grouping)
+    processed_images_grouped = {}
+    processed_grids = {}
+    for shape, stacked_images in grouped_images.items():
+        resized_height, resized_width = stacked_images.shape[-2:]
+        patches = proc.rescale_and_normalize(
+            stacked_images, do_rescale, rescale_factor, do_normalize, image_mean, image_std
+        )
+        batch_size, channel = patches.shape[:2]
+        grid_h, grid_w = resized_height // patch_size, resized_width // patch_size
+        patches = patches.reshape(
+            batch_size,
+            channel,
+            grid_h // merge_size,
+            merge_size,
+            patch_size,
+            grid_w // merge_size,
+            merge_size,
+            patch_size,
+        )
+        # Reorder dimensions to group grid and patch information for subsequent flattening.
+        # [batch, grid_h/merge, grid_w/merge, merge, merge, channel, patch, patch]
+        patches = patches.permute(0, 2, 5, 3, 6, 1, 4, 7)
+
+        flatten_patches = (
+            patches.unsqueeze(6)
+            .expand(-1, -1, -1, -1, -1, -1, temporal_patch_size, -1, -1)
+            .reshape(
+                batch_size,
+                grid_h * grid_w,
+                channel * temporal_patch_size * patch_size * patch_size,
+            )
+        )
+
+        processed_images_grouped[shape] = flatten_patches
+        processed_grids[shape] = [[1, grid_h, grid_w]] * batch_size
+
+    processed_images = reorder_images(processed_images_grouped, grouped_images_index)
+    processed_grids_ordered = reorder_images(processed_grids, grouped_images_index)
+    pixel_values = torch.cat(processed_images, dim=0)
+    image_grid_thw = torch.tensor(processed_grids_ordered, dtype=torch.long)
+
+    return {"pixel_values": pixel_values, "image_grid_thw": image_grid_thw}
 
 from transformers.models.qwen3_vl import Qwen3VLProcessor
 processor = Qwen3VLProcessor.from_pretrained("Qwen/Qwen3-VL-2B-Instruct")
 
 model = AutoModelForImageTextToText.from_pretrained("Qwen/Qwen3-VL-2B-Instruct")
 
-# model visual in tiny to start?
-#print(model.model)
-#print(model.model.visual.patch_embed, type(model.model.visual.patch_embed.proj))
 
 urls = ["https://img.wort.lu/public/luxemburg/vfka4n-picture-title-binary/alternates/ONE_ONE_256/Picture%20title%20binary",
         "https://www.cartell.ie/car_check/wp-content/uploads/2012/03/Nissan-Micra-_4b.jpg"]
