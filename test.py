@@ -367,37 +367,6 @@ class SizeDict:
             return merged
         return NotImplemented
 
-def reorder_images(
-    processed_images: dict[tuple[int, int], "torch.Tensor"],
-    grouped_images_index: dict[int | tuple[int, int], tuple[tuple[int, int], int]],
-    is_nested: bool = False,
-):
-    """
-    Reconstructs images in the original order, preserving the original structure (nested or not).
-    The input structure is either all flat or all nested.
-
-    Args:
-        processed_images (dict[tuple[int, int], "torch.Tensor"]):
-            Dictionary mapping shapes to batched processed images.
-        grouped_images_index (dict[Union[int, tuple[int, int]], tuple[tuple[int, int], int]]):
-            Dictionary mapping original indices to (shape, index) tuples.
-        is_nested (bool, *optional*, defaults to False):
-            Whether the images are nested. Cannot be inferred from the input, as some processing functions outputs nested images.
-            even with non nested images,e.g functions splitting images into patches. We thus can't deduce is_nested from the input.
-
-
-    Returns:
-        Union[list["torch.Tensor"], "torch.Tensor"]:
-            Images in the original structure.
-    """
-    if not is_nested:
-        return [
-            processed_images[grouped_images_index[i][0]][grouped_images_index[i][1]]
-            for i in range(len(grouped_images_index))
-        ]
-
-    return _reconstruct_nested_structure(grouped_images_index, processed_images)
-
 def _preprocess(
     proc,
     images: list["torch.Tensor"],
@@ -410,7 +379,7 @@ def _preprocess(
     do_normalize=True
     temporal_patch_size=2
     resample=3
-    grouped_images, grouped_images_index = group_images_by_shape(images, disable_grouping=None)
+    grouped_images, _ = group_images_by_shape(images, disable_grouping=None)
     resized_images_grouped = {}
     for shape, stacked_images in grouped_images.items():
         height, width = stacked_images.shape[-2:]
@@ -427,9 +396,9 @@ def _preprocess(
             resample=resample,
         )
         resized_images_grouped[shape] = stacked_images
-    resized_images = reorder_images(resized_images_grouped, grouped_images_index)
+    resized_images = [resized_images_grouped[0][0]]
 
-    grouped_images, grouped_images_index = group_images_by_shape(resized_images, disable_grouping=None)
+    grouped_images, _ = group_images_by_shape(resized_images, disable_grouping=None)
     processed_images_grouped = {}
     processed_grids = {}
     for shape, stacked_images in grouped_images.items():
@@ -466,8 +435,8 @@ def _preprocess(
         processed_images_grouped[shape] = flatten_patches
         processed_grids[shape] = [[1, grid_h, grid_w]] * batch_size
 
-    processed_images = reorder_images(processed_images_grouped, grouped_images_index)
-    processed_grids_ordered = reorder_images(processed_grids, grouped_images_index)
+    processed_images = [processed_images_grouped[0][0]]
+    processed_grids_ordered = [processed_grids[0][0]]
     pixel_values = torch.cat(processed_images, dim=0)
     image_grid_thw = torch.tensor(processed_grids_ordered, dtype=torch.long)
 
