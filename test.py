@@ -400,17 +400,16 @@ def forward2(
         query = (query * cos) + (rotate_half(query) * sin)
         key = (key * cos) + (rotate_half(key) * sin)
 
-        key, value = past_key_values.update(key, value, i)
-        attn_output = torch.nn.functional.scaled_dot_product_attention(
-            query=query,
-            key=key,
-            value=value,
-            attn_mask=attention_mask,
-            dropout_p=0,
-            scale=model.layers[i].self_attn.scaling,
-            is_causal=False,
-            enable_gqa=True
-        )
+        key, value = past_key_values.update(key, value, i)   
+
+        key = key.repeat_interleave(query.size(-3)//key.size(-3), -3)
+        value = value.repeat_interleave(query.size(-3)//value.size(-3), -3)
+
+        attn_weight = query @ key.transpose(-2, -1) * model.layers[i].self_attn.scaling
+
+        attn_weight = torch.softmax(attn_weight, dim=-1)
+        attn_output = attn_weight @ value
+
 
         attn_output = attn_output.transpose(1, 2).contiguous()
 
@@ -604,8 +603,8 @@ model = AutoModelForImageTextToText.from_pretrained("Qwen/Qwen3-VL-2B-Instruct")
 urls = ["https://img.wort.lu/public/luxemburg/vfka4n-picture-title-binary/alternates/ONE_ONE_256/Picture%20title%20binary",
         "https://www.cartell.ie/car_check/wp-content/uploads/2012/03/Nissan-Micra-_4b.jpg"]
 
-expected_outputs = ["This is a Ferrari F40, a legendary sports car produced by Ferrari from 1987 to 1992. It is renowned for its sleek design and powerful performance, making it one of the most iconic cars in automotive history.",
-                    "This is a Nissan Micra, a compact car produced by the Japanese automaker Nissan. The Micra is a popular and affordable car, known for its reliability and efficiency.\n\nThe Nissan Micra was first introduced in 1990 as a small, affordable car. It was designed to compete with other small cars in the market, and it quickly gained popularity due to its fuel efficiency and low cost.\n\nThe Micra was produced in several different versions, including the 1.0L and 1.3L engines, which were available in different configurations. The Micra was also available with different body styles, including the standard"]
+expected_outputs = ["This is a Ferrari F40, a legendary sports car produced by Ferrari from 1987 to 1992. It is renowned for its sleek design and high performance, making it one of the most iconic cars in automotive history.",
+                    "This is a Nissan Micra, a compact car produced by the Japanese automaker Nissan. The Micra is a popular and affordable car, known for its reliability and efficiency.\n\nThe Nissan Micra was first introduced in 1990 as a small, affordable car. It was designed to compete with other small cars in the market, such as the Toyota Corolla and Honda Civic. The Micra was produced in various versions, including the 1.0L and 1.3L engines, and was available in different body styles, including the hatchback and estate.\n\nThe Micra has been produced in various markets around the"]
 
 prompts = ["<|im_start|>user\n<|vision_start|><|image_pad|><|vision_end|>\nWhat car is this?<|im_end|>\n<|im_start|>assistant\n",
            "<|im_start|>user\n<|vision_start|><|image_pad|><|vision_end|>\nTell me the history of this car<|im_end|>\n<|im_start|>assistant\n"]
