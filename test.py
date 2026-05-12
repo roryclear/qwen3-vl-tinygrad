@@ -264,18 +264,10 @@ def _prefill(
 
 def forward2(
     model,
-    input_ids: torch.LongTensor | None = None,
-    attention_mask: torch.Tensor | None = None,
     position_ids: torch.LongTensor | None = None,
     past_key_values=None,
-    inputs_embeds: torch.FloatTensor | None = None,
-    use_cache: bool | None = None,
-    # args for deepstack
-    visual_pos_masks: torch.Tensor | None = None,
-    deepstack_visual_embeds: list[torch.Tensor] | None = None,
-    **kwargs):
+    inputs_embeds: torch.FloatTensor | None = None):
 
-    text_position_ids = position_ids[0]
     position_ids = position_ids[1:]
 
 
@@ -356,13 +348,9 @@ def _sample(
         if prefill_consumed:
             inputs_embeds = model.model.get_input_embeddings()(input_ids[:, -1:])
             hidden_states = forward2(model.model.language_model,
-                input_ids=None,
                 position_ids=position_ids,
-                attention_mask=None,
                 past_key_values=past_key_values,
                 inputs_embeds=inputs_embeds,
-                visual_pos_masks=None,
-                deepstack_visual_embeds=None
             )
             outputs = model.lm_head(hidden_states[:, -1:, :])
 
@@ -407,14 +395,7 @@ def _sample(
     return input_ids
 
 
-def preprocess(images):    
-    images = [tvF.pil_to_tensor(images)]
-    return _preprocess(images)
-
-
-def smart_resize(
-    height: int, width: int, factor: int = 28, min_pixels: int = 56 * 56, max_pixels: int = 14 * 14 * 4 * 1280
-):
+def smart_resize(height, width, factor, min_pixels, max_pixels):
     h_bar = round(height / factor) * factor
     w_bar = round(width / factor) * factor
     if h_bar * w_bar > max_pixels:
@@ -427,27 +408,12 @@ def smart_resize(
         w_bar = math.ceil(width * beta / factor) * factor
     return h_bar, w_bar
 
-def rescale_and_normalize(
-    images: "torch.Tensor",
-    do_rescale: bool,
-    rescale_factor: float,
-    do_normalize: bool,
-    image_mean: float | list[float],
-    image_std: float | list[float],
-) -> "torch.Tensor":
-    rescale_factor = 0.00392156862745098
-    image_mean = torch.tensor(image_mean) * (1.0 / rescale_factor)
-    image_std = torch.tensor(image_std) * (1.0 / rescale_factor)
-    images = tvF.normalize(images.to(dtype=torch.float32), image_mean, image_std)
-    return images
 
 def _preprocess(images):
     patch_size=16
     merge_size=2
     rescale_factor=0.00392156862745098
-    do_normalize=True
     temporal_patch_size=2
-    resample=3
 
     height, width = images[0].shape[-2:]
     resized_height, resized_width = smart_resize(
@@ -460,10 +426,14 @@ def _preprocess(images):
 
     resized_images = tvF.resize(images[0].unsqueeze(0), (resized_height, resized_width), interpolation=3, antialias=True)
 
-
     stacked_images = resized_images[0].unsqueeze(0)
     resized_height, resized_width = stacked_images.shape[-2:]
-    patches = rescale_and_normalize(stacked_images, True, rescale_factor, do_normalize, (0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
+
+    rescale_factor = 0.00392156862745098
+    image_mean = torch.tensor((0.5, 0.5, 0.5)) / rescale_factor
+    image_std = torch.tensor((0.5, 0.5, 0.5)) / rescale_factor
+    patches = tvF.normalize(stacked_images.to(dtype=torch.float32), image_mean, image_std)
+
     batch_size, channel = patches.shape[:2]
     grid_h, grid_w = resized_height // patch_size, resized_width // patch_size
     patches = patches.reshape(
@@ -515,8 +485,8 @@ tok = pickle.load(open("tok.pkl", "rb"))
 
 for image, expected_output, prompt in zip(images, expected_outputs, prompts):
     text_inputs = tok.encode(prompt)
-
-    image_inputs = preprocess(images=image)
+    image = [tvF.pil_to_tensor(image)]
+    image_inputs = _preprocess(images=image)
     merge_size = 2
     image_grid_thw = image_inputs["image_grid_thw"]  # [batch, 3] -> [t, h, w]
     num_image_tokens = (image_grid_thw.prod(dim=-1) / (merge_size ** 2)).item()
