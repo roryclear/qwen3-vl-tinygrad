@@ -213,7 +213,7 @@ def forward(
 
     hidden_states = inputs_embeds
     position_embeddings = model.language_model.rotary_emb(hidden_states, position_ids)
-    for i in range(len(model.language_model.layers)):
+    for i in range(len(model.language_model.layers)): # todo same block above
         residual = hidden_states
         hidden_states = model.language_model.layers[i].input_layernorm(hidden_states)
 
@@ -229,18 +229,22 @@ def forward(
         key_states = (key_states * cos) + (rotate_half(key_states) * sin)
 
         key_states, value_states = past_key_values.update(key_states, value_states, i)
+    
+        L, S = query_states.size(-2), key_states.size(-2)
+        attn_bias = torch.zeros(L, S, dtype=query_states.dtype, device=query_states.device)
 
+        temp_mask = torch.ones(L, S, dtype=torch.bool).tril(diagonal=0)
+        attn_bias.masked_fill_(temp_mask.logical_not(), float("-inf"))
 
-        attn_output = torch.nn.functional.scaled_dot_product_attention(
-            query_states,
-            key_states,
-            value_states,
-            attn_mask=attention_mask,
-            dropout_p=0.0,
-            scale=model.language_model.layers[i].self_attn.scaling,
-            is_causal=True,
-            enable_gqa=True
-        )
+        key_states = key_states.repeat_interleave(query_states.size(-3)//key_states.size(-3), -3)
+        value_states = value_states.repeat_interleave(query_states.size(-3)//value_states.size(-3), -3)
+
+        attn_weight = query_states @ key_states.transpose(-2, -1) * model.language_model.layers[i].self_attn.scaling
+        attn_weight += attn_bias
+        attn_weight = torch.softmax(attn_weight, dim=-1)
+        attn_weight = torch.dropout(attn_weight, 0, train=True)
+        attn_output = attn_weight @ value_states
+
         attn_output = attn_output.transpose(1, 2).contiguous()
 
 
@@ -456,7 +460,7 @@ model = AutoModelForImageTextToText.from_pretrained("Qwen/Qwen3-VL-2B-Instruct")
 urls = ["https://img.wort.lu/public/luxemburg/vfka4n-picture-title-binary/alternates/ONE_ONE_256/Picture%20title%20binary",
         "https://www.cartell.ie/car_check/wp-content/uploads/2012/03/Nissan-Micra-_4b.jpg"]
 
-expected_outputs = ["This is a Ferrari F40, a legendary sports car produced by Ferrari from 1987 to 1992. It is renowned for its sleek design and high performance, making it one of the most iconic cars in automotive history.",
+expected_outputs = ["This is a Ferrari F40, a legendary sports car produced by Ferrari from 1987 to 1992. It is renowned for its sleek design and powerful performance, making it one of the most iconic cars in automotive history.",
                     "This is a Nissan Micra, a compact car produced by the Japanese automaker Nissan. The Micra is a popular and affordable car, known for its reliability and efficiency.\n\nThe Nissan Micra was first introduced in 1990 as a small, affordable car. It was designed to compete with other small cars in the market, and it quickly gained popularity due to its fuel efficiency and low cost.\n\nThe Micra was produced in several different versions, including the 1.0L and 1.3L engines, which were available in different configurations. The Micra was also available with different body styles, including the standard"]
 
 prompts = ["<|im_start|>user\n<|vision_start|><|image_pad|><|vision_end|>\nWhat car is this?<|im_end|>\n<|im_start|>assistant\n",
