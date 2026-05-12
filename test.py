@@ -368,13 +368,6 @@ def forward_layer(
 
     return hidden_states
 
-def apply_rotary_pos_emb(q, k, cos, sin, unsqueeze_dim=1):
-    cos = cos.unsqueeze(unsqueeze_dim)
-    sin = sin.unsqueeze(unsqueeze_dim)
-    q_embed = (q * cos) + (rotate_half(q) * sin)
-    k_embed = (k * cos) + (rotate_half(k) * sin)
-    return q_embed, k_embed
-
 def sdpa_attention_forward(
     module: torch.nn.Module,
     query: torch.Tensor,
@@ -413,10 +406,10 @@ def forward_atn(
     value_states = model.v_proj(hidden_states).view(hidden_shape).transpose(1, 2)
 
     cos, sin = position_embeddings
-    query_states, key_states = apply_rotary_pos_emb(query_states, key_states, cos, sin)
+    query_states = (query_states * cos) + (rotate_half(query_states) * sin)
+    key_states = (key_states * cos) + (rotate_half(key_states) * sin)
 
-    if past_key_values is not None:
-        key_states, value_states = past_key_values.update(key_states, value_states, model.layer_idx)
+    key_states, value_states = past_key_values.update(key_states, value_states, model.layer_idx)
 
     attn_output = sdpa_attention_forward(
         model,
@@ -471,6 +464,8 @@ def forward2(
             past_key_values=past_key_values,
             position_embeddings=position_embeddings
         )
+
+        
         hidden_states = residual + hidden_states
         residual = hidden_states
         hidden_states = model.layers[i].post_attention_layernorm(hidden_states)
