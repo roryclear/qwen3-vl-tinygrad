@@ -188,7 +188,9 @@ def forward(
         hidden_states = hidden_states + model.visual.blocks[i].mlp(model.visual.blocks[i].norm2(hidden_states))
 
         if i in model.visual.deepstack_visual_indexes:
-            deepstack_feature = model.visual.deepstack_merger_list[model.visual.deepstack_visual_indexes.index(i)](hidden_states)
+            layer = model.visual.deepstack_merger_list[model.visual.deepstack_visual_indexes.index(i)]
+            deepstack_feature = layer.norm(hidden_states.view(-1, layer.hidden_size)).view(-1, layer.hidden_size)
+            deepstack_feature = layer.linear_fc2(layer.act_fn(layer.linear_fc1(deepstack_feature)))
             deepstack_feature_lists.append(deepstack_feature)
 
     image_embeds = model.visual.merger(hidden_states)
