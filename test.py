@@ -246,97 +246,6 @@ def forward(
     hidden_states = model.language_model.norm(hidden_states)
     return hidden_states
 
-def _preprocess_mask_arguments(
-    config,
-    inputs_embeds: torch.Tensor,
-    attention_mask,
-    past_key_values,
-    position_ids: torch.Tensor | None,
-    layer_idx: int | None,
-    encoder_hidden_states: torch.Tensor | None = None):
-    """
-    Perform some common pre-processing of the mask arguments we get from the modeling code. Mostly determine the
-    key-value length and offsets, and if we should early exit or not.
-
-    Args:
-        config (`PreTrainedConfig`):
-            The model config.
-        inputs_embeds (`torch.Tensor`):
-            The input embeddings of shape (batch_size, query_length, hidden_dim). This is used only to infer the
-            batch size, query length and dtype.
-        attention_mask (`torch.Tensor`, optional):
-            The 2D attention mask corresponding to padded tokens of shape (batch_size, number_of_seen_tokens+q_length).
-            It can also be an already prepared 4D mask, in which case it is returned as-is.
-        past_key_values (`Cache`, optional):
-            The past key values, if we use a cache.
-        position_ids (`torch.Tensor`, optional)
-            A 2D tensor of shape (batch_size, query_length) indicating the positions of each token in the sequences.
-        layer_idx (`int`, optional):
-            If `past_key_values` is not None, this is the layer index of the cache from which to get the key-value
-            length and offset. Indeed, for hybrid caches, different layers may return different lengths.
-        encoder_hidden_states (`torch.Tensor`, optional):
-            The input embeddings of shape (batch_size, kv_length, hidden_dim). If provided, it is used instead of
-            `inputs_embeds` to infer the kv length.
-
-    Returns:
-        early_exit (`bool`):
-            Whether we should early exit mask creation, and return the mask as-is.
-        attention_mask (`torch.Tensor` or `BlockMask` or `None`):
-            The attention mask to either return immediately, or to use in downstream mask creation.
-        packed_sequence_mask (`torch.Tensor`, optional):
-            In case we detected packed sequence format, this is a tensor where each similar integer indicates that
-            the tokens belong to the same sequence.
-        q_length (`int`):
-            The size that the query states will have during the attention computation.
-        kv_length (`int`):
-            The size that the key and value states will have during the attention computation.
-        q_offset (`int`, optional):
-            An optional offset to indicate at which first position the query states will refer to.
-        kv_offset (`int`):
-            An offset to indicate at which first position the key and values states will refer to.
-    """
-
-
-    # Move the mask to correct device, and potentially switch dtype for efficiency
-    if attention_mask is not None and attention_mask.ndim == 2:
-        attention_mask = attention_mask.to(device=inputs_embeds.device, dtype=torch.bool)
-
-    q_length = inputs_embeds.shape[1]
-    # If using a cache, it can give all information about mask sizes based on seen tokens
-    if past_key_values is not None:
-        q_offset = past_key_values.get_seq_length()
-        # To avoid graph breaks, StaticLayer return a tensor instead of int -> this has no impact on the ops, but we
-        # need the correct device
-        q_offset = q_offset.to(inputs_embeds.device) if isinstance(q_offset, torch.Tensor) else q_offset
-        kv_length, kv_offset = past_key_values.get_mask_sizes(q_length, layer_idx)
-    # Otherwise, we infer based on our input
-    else:
-        q_offset = 0
-        # 1. Rely on input directly
-        if attention_mask is None:
-            # For encoder-decoders, use encoder_hidden_states to infer kv_length if provided
-            kv_length = encoder_hidden_states.shape[1] if encoder_hidden_states is not None else q_length
-            kv_offset = 0
-        # 2. Rely on the mask instead - needed for special cases like prefix tuning in PEFT
-        #
-        # This is a very unique and special case where an encoder utilizes a cache and expects its length
-        # to be accounted for (usually, they should never use a cache). In general, the mask should always
-        # match with the input sizes nonetheless (i.e. it does not affect others).
-        # Conclusion: "prefix tuning is evil"
-        else:
-            kv_length, kv_offset = attention_mask.shape[-1], 0
-
-    # We check the position_ids for potential packed sequence format (only if the 2D attention mask is explicitly None,
-    # and we don't have past_key_values, i.e. generally a training setup)
-    packed_sequence_mask = None
-    if position_ids is not None and attention_mask is None and past_key_values is None:
-        batch_size = inputs_embeds.shape[0]
-        # The position ids are sometimes just unsqueezed, without being expanded
-        if batch_size != position_ids.shape[0]:
-            position_ids = position_ids.expand(batch_size, -1)
-        packed_sequence_mask = find_packed_sequence_indices(position_ids)
-
-    return False, attention_mask, packed_sequence_mask, q_length, kv_length, q_offset, kv_offset
 
 def causal_mask_function(batch_idx: int, head_idx: int, q_idx: int, kv_idx: int) -> bool:
     """
@@ -528,15 +437,11 @@ def create_causal_mask(
     and_mask_function=None,
     block_sequence_ids=None):
 
-    # If we have an hybrid cache structure, here we want to create the mask for the full layers
-    if hasattr(past_key_values, "is_sliding") and False in past_key_values.is_sliding:
-        layer_idx = past_key_values.is_sliding.index(False)
-    else:
-        layer_idx = 0
+    q_offset = past_key_values.get_seq_length()
+    kv_length = q_offset+1
 
-    _, _, _, q_length, kv_length, q_offset, kv_offset = (
-        _preprocess_mask_arguments(config, inputs_embeds, attention_mask, past_key_values, position_ids, layer_idx)
-    )
+    q_length = 1
+    kv_offset = 0
 
     batch_size, dtype, device = inputs_embeds.shape[0], inputs_embeds.dtype, inputs_embeds.device
 
