@@ -527,17 +527,6 @@ def create_causal_mask(
     or_mask_function=None,
     and_mask_function=None,
     block_sequence_ids=None):
-    # Power feature: if `is_causal` is False, then fallback to bi-directional mask for bi-directional attention.
-    # It allows to use decoder-only models with bi-directional attention as well
-    if not getattr(config, "is_causal", True):
-        return create_bidirectional_mask(
-            config,
-            inputs_embeds,
-            attention_mask,
-            past_key_values=past_key_values,
-            or_mask_function=or_mask_function,
-            and_mask_function=and_mask_function,
-        )
 
     # If we have an hybrid cache structure, here we want to create the mask for the full layers
     if hasattr(past_key_values, "is_sliding") and False in past_key_values.is_sliding:
@@ -545,59 +534,25 @@ def create_causal_mask(
     else:
         layer_idx = 0
 
-    early_exit, attention_mask, packed_sequence_mask, q_length, kv_length, q_offset, kv_offset = (
+    _, _, _, q_length, kv_length, q_offset, kv_offset = (
         _preprocess_mask_arguments(config, inputs_embeds, attention_mask, past_key_values, position_ids, layer_idx)
     )
-    if early_exit:
-        return attention_mask
 
     batch_size, dtype, device = inputs_embeds.shape[0], inputs_embeds.dtype, inputs_embeds.device
-    mask_factory_function = causal_mask_function
-    mask_interface = sdpa_mask
 
-    # Defaulting to using non-vmap based mask creations except when detecting
-    # users passing custom mask functions (as we cannot guarantee that they
-    # are properly index-based as required by our implementation).
     use_vmap = False
-
-    # Do not allow skip if we are compiling (this is to match BC)
-    # TODO: cyril -> probably revisit and remove this, but a lot of tests rely on it
-
     allow_is_causal_skip = not getattr(past_key_values, "is_compileable", False)
 
-    # Allow slight deviations from causal mask
-    # Note that it is very important to apply this before any other deviations of the mask (such as packed sequence mask,
-    # padding mask, etc) as the resulting mask may otherwise not be correct!
-    if or_mask_function is not None:
-        if not _is_torch_greater_or_equal_than_2_6:
-            raise ValueError("Using `or_mask_function` or `and_mask_function` arguments require torch>=2.6")
-        mask_factory_function = or_masks(mask_factory_function, or_mask_function)
-        allow_is_causal_skip = False
-        use_vmap = True
-    if and_mask_function is not None:
-        if not _is_torch_greater_or_equal_than_2_6:
-            raise ValueError("Using `or_mask_function` or `and_mask_function` arguments require torch>=2.6")
-        mask_factory_function = and_masks(mask_factory_function, and_mask_function)
-        allow_is_causal_skip = False
-        use_vmap = True
 
-    # If we detected packing format or blockwise overlay
-    if packed_sequence_mask is not None:
-        mask_factory_function = and_masks(mask_factory_function, packed_sequence_mask_function(packed_sequence_mask))
-        allow_is_causal_skip = False
-    if block_sequence_ids is not None:
-        block_sequence_ids = maybe_pad_block_sequence_ids(block_sequence_ids, attention_mask, kv_length, kv_offset)
-        mask_factory_function = or_masks(mask_factory_function, blockwise_overlay(block_sequence_ids))
-        allow_is_causal_skip = False
 
     # We now create the mask
-    causal_mask = mask_interface(
+    causal_mask = sdpa_mask(
         batch_size=batch_size,
         q_length=q_length,
         kv_length=kv_length,
         q_offset=q_offset,
         kv_offset=kv_offset,
-        mask_function=mask_factory_function,
+        mask_function=causal_mask_function,
         attention_mask=attention_mask,
         allow_is_causal_skip=allow_is_causal_skip,  # additional kwarg for sdpa
         dtype=dtype,  # Additional kwarg for eager
@@ -644,25 +599,9 @@ def forward2(
     visual_pos_masks: torch.Tensor | None = None,
     deepstack_visual_embeds: list[torch.Tensor] | None = None,
     **kwargs):
-    if (input_ids is None) ^ (inputs_embeds is not None):
-        raise ValueError("You must specify exactly one of input_ids or inputs_embeds")
 
-    if inputs_embeds is None:
-        inputs_embeds = self.embed_tokens(input_ids)
-
-    # the hard coded `4` is for text, temporal, height and width.
-    if position_ids is None:
-        past_seen_tokens = past_key_values.get_seq_length() if past_key_values is not None else 0
-        position_ids = torch.arange(inputs_embeds.shape[1], device=inputs_embeds.device) + past_seen_tokens
-        position_ids = position_ids.view(1, 1, -1).expand(4, inputs_embeds.shape[0], -1)
-    elif position_ids.ndim == 2:
-        position_ids = position_ids[None, ...].expand(4, position_ids.shape[0], -1)
-
-    if position_ids.ndim == 3 and position_ids.shape[0] == 4:
-        text_position_ids = position_ids[0]
-        position_ids = position_ids[1:]
-    else:
-        text_position_ids = None
+    text_position_ids = position_ids[0]
+    position_ids = position_ids[1:]
 
     attention_mask = create_causal_mask(
         config=model.config,
@@ -679,7 +618,7 @@ def forward2(
 
     # decoder layers
     for layer_idx, decoder_layer in enumerate(model.layers):
-        layer_outputs = decoder_layer(
+        hidden_states = decoder_layer(
             hidden_states,
             attention_mask=attention_mask,
             position_ids=text_position_ids,
@@ -687,15 +626,6 @@ def forward2(
             position_embeddings=position_embeddings,
             **kwargs,
         )
-        hidden_states = layer_outputs
-
-        # add visual features to the hidden states of first several layers
-        if deepstack_visual_embeds is not None and layer_idx in range(len(deepstack_visual_embeds)):
-            hidden_states = self._deepstack_process(
-                hidden_states,
-                visual_pos_masks,
-                deepstack_visual_embeds[layer_idx],
-            )
 
     hidden_states = model.norm(hidden_states)
 
