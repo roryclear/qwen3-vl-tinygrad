@@ -246,91 +246,6 @@ def forward(
     hidden_states = model.language_model.norm(hidden_states)
     return hidden_states
 
-
-def causal_mask_function(batch_idx: int, head_idx: int, q_idx: int, kv_idx: int) -> bool:
-    """
-    This creates a basic lower-diagonal causal mask.
-    """
-    return kv_idx <= q_idx
-
-def _non_vmap_expansion_sdpa(
-    batch_indices: torch.Tensor, head_indices: torch.Tensor, q_indices: torch.Tensor, kv_indices: torch.Tensor
-):
-    batch_indices = batch_indices[:, None, None, None]
-    head_indices = head_indices[None, :, None, None]
-    q_indices = q_indices[None, None, :, None]
-    kv_indices = kv_indices[None, None, None, :]
-    return batch_indices, head_indices, q_indices, kv_indices
-
-def sdpa_mask(
-    batch_size: int,
-    q_length: int,
-    kv_length: int,
-    q_offset: int = 0,
-    kv_offset: int = 0,
-    mask_function=causal_mask_function,
-    attention_mask: torch.Tensor | None = None,
-    local_size: int | None = None,
-    allow_is_causal_skip: bool = True,
-    allow_is_bidirectional_skip: bool = False,
-    allow_torch_fix: bool = True,
-    use_vmap: bool = False,
-    device: torch.device | str = "cpu",
-    **kwargs,
-) -> torch.Tensor | None:
-    batch_arange = torch.arange(batch_size, device=device)
-    head_arange = torch.arange(1, device=device)
-    q_arange = torch.arange(q_length, device=device) + q_offset
-    kv_arange = torch.arange(kv_length, device=device) + kv_offset
-
-
-    attention_mask = mask_function(*_non_vmap_expansion_sdpa(batch_arange, head_arange, q_arange, kv_arange))
-    attention_mask = attention_mask.expand(batch_size, -1, q_length, kv_length)
-
-
-
-    return attention_mask
-
-def create_causal_mask(
-    config,
-    inputs_embeds: torch.Tensor,
-    attention_mask: torch.Tensor | None,
-    past_key_values,
-    position_ids: torch.Tensor | None = None,
-    or_mask_function=None,
-    and_mask_function=None,
-    block_sequence_ids=None):
-
-    q_offset = past_key_values.get_seq_length()
-    kv_length = q_offset+1
-
-    q_length = 1
-    kv_offset = 0
-
-    batch_size, dtype, device = inputs_embeds.shape[0], inputs_embeds.dtype, inputs_embeds.device
-
-    use_vmap = False
-    allow_is_causal_skip = not getattr(past_key_values, "is_compileable", False)
-
-
-
-    # We now create the mask
-    causal_mask = sdpa_mask(
-        batch_size=batch_size,
-        q_length=q_length,
-        kv_length=kv_length,
-        q_offset=q_offset,
-        kv_offset=kv_offset,
-        mask_function=causal_mask_function,
-        attention_mask=attention_mask,
-        allow_is_causal_skip=allow_is_causal_skip,  # additional kwarg for sdpa
-        dtype=dtype,  # Additional kwarg for eager
-        config=config,  # Pass the config as well, in case someone wants to easily have their own mask_interface
-        use_vmap=use_vmap,  # Short-circuit to non-vmap expansions for the mask
-        device=device,
-    )
-    return causal_mask
-
 def _prefill(
     model,
     input_ids,
@@ -372,13 +287,6 @@ def forward2(
     text_position_ids = position_ids[0]
     position_ids = position_ids[1:]
 
-    attention_mask = create_causal_mask(
-        config=model.config,
-        inputs_embeds=inputs_embeds,
-        attention_mask=attention_mask,
-        past_key_values=past_key_values,
-        position_ids=text_position_ids,
-    )
 
     hidden_states = inputs_embeds
 
