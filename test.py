@@ -246,6 +246,366 @@ def forward(
     hidden_states = model.language_model.norm(hidden_states)
     return hidden_states
 
+def _preprocess_mask_arguments(
+    config,
+    inputs_embeds: torch.Tensor,
+    attention_mask,
+    past_key_values,
+    position_ids: torch.Tensor | None,
+    layer_idx: int | None,
+    encoder_hidden_states: torch.Tensor | None = None):
+    """
+    Perform some common pre-processing of the mask arguments we get from the modeling code. Mostly determine the
+    key-value length and offsets, and if we should early exit or not.
+
+    Args:
+        config (`PreTrainedConfig`):
+            The model config.
+        inputs_embeds (`torch.Tensor`):
+            The input embeddings of shape (batch_size, query_length, hidden_dim). This is used only to infer the
+            batch size, query length and dtype.
+        attention_mask (`torch.Tensor`, optional):
+            The 2D attention mask corresponding to padded tokens of shape (batch_size, number_of_seen_tokens+q_length).
+            It can also be an already prepared 4D mask, in which case it is returned as-is.
+        past_key_values (`Cache`, optional):
+            The past key values, if we use a cache.
+        position_ids (`torch.Tensor`, optional)
+            A 2D tensor of shape (batch_size, query_length) indicating the positions of each token in the sequences.
+        layer_idx (`int`, optional):
+            If `past_key_values` is not None, this is the layer index of the cache from which to get the key-value
+            length and offset. Indeed, for hybrid caches, different layers may return different lengths.
+        encoder_hidden_states (`torch.Tensor`, optional):
+            The input embeddings of shape (batch_size, kv_length, hidden_dim). If provided, it is used instead of
+            `inputs_embeds` to infer the kv length.
+
+    Returns:
+        early_exit (`bool`):
+            Whether we should early exit mask creation, and return the mask as-is.
+        attention_mask (`torch.Tensor` or `BlockMask` or `None`):
+            The attention mask to either return immediately, or to use in downstream mask creation.
+        packed_sequence_mask (`torch.Tensor`, optional):
+            In case we detected packed sequence format, this is a tensor where each similar integer indicates that
+            the tokens belong to the same sequence.
+        q_length (`int`):
+            The size that the query states will have during the attention computation.
+        kv_length (`int`):
+            The size that the key and value states will have during the attention computation.
+        q_offset (`int`, optional):
+            An optional offset to indicate at which first position the query states will refer to.
+        kv_offset (`int`):
+            An offset to indicate at which first position the key and values states will refer to.
+    """
+
+
+    # Move the mask to correct device, and potentially switch dtype for efficiency
+    if attention_mask is not None and attention_mask.ndim == 2:
+        attention_mask = attention_mask.to(device=inputs_embeds.device, dtype=torch.bool)
+
+    q_length = inputs_embeds.shape[1]
+    # If using a cache, it can give all information about mask sizes based on seen tokens
+    if past_key_values is not None:
+        q_offset = past_key_values.get_seq_length()
+        # To avoid graph breaks, StaticLayer return a tensor instead of int -> this has no impact on the ops, but we
+        # need the correct device
+        q_offset = q_offset.to(inputs_embeds.device) if isinstance(q_offset, torch.Tensor) else q_offset
+        kv_length, kv_offset = past_key_values.get_mask_sizes(q_length, layer_idx)
+    # Otherwise, we infer based on our input
+    else:
+        q_offset = 0
+        # 1. Rely on input directly
+        if attention_mask is None:
+            # For encoder-decoders, use encoder_hidden_states to infer kv_length if provided
+            kv_length = encoder_hidden_states.shape[1] if encoder_hidden_states is not None else q_length
+            kv_offset = 0
+        # 2. Rely on the mask instead - needed for special cases like prefix tuning in PEFT
+        #
+        # This is a very unique and special case where an encoder utilizes a cache and expects its length
+        # to be accounted for (usually, they should never use a cache). In general, the mask should always
+        # match with the input sizes nonetheless (i.e. it does not affect others).
+        # Conclusion: "prefix tuning is evil"
+        else:
+            kv_length, kv_offset = attention_mask.shape[-1], 0
+
+    # We check the position_ids for potential packed sequence format (only if the 2D attention mask is explicitly None,
+    # and we don't have past_key_values, i.e. generally a training setup)
+    packed_sequence_mask = None
+    if position_ids is not None and attention_mask is None and past_key_values is None:
+        batch_size = inputs_embeds.shape[0]
+        # The position ids are sometimes just unsqueezed, without being expanded
+        if batch_size != position_ids.shape[0]:
+            position_ids = position_ids.expand(batch_size, -1)
+        packed_sequence_mask = find_packed_sequence_indices(position_ids)
+
+    return False, attention_mask, packed_sequence_mask, q_length, kv_length, q_offset, kv_offset
+
+def causal_mask_function(batch_idx: int, head_idx: int, q_idx: int, kv_idx: int) -> bool:
+    """
+    This creates a basic lower-diagonal causal mask.
+    """
+    return kv_idx <= q_idx
+
+def prepare_padding_mask(attention_mask: torch.Tensor | None, kv_length: int, kv_offset: int) -> torch.Tensor | None:
+    """
+    From the 2D attention mask, prepare the correct padding mask to use by potentially padding it.
+    """
+    local_padding_mask = attention_mask
+    if attention_mask is not None:
+        # Pad it if necessary
+        if (padding_length := kv_length + kv_offset - attention_mask.shape[-1]) > 0:
+            local_padding_mask = torch.nn.functional.pad(attention_mask, (0, padding_length))
+    return local_padding_mask
+
+def _non_vmap_expansion_sdpa(
+    batch_indices: torch.Tensor, head_indices: torch.Tensor, q_indices: torch.Tensor, kv_indices: torch.Tensor
+):
+    """
+    Used to broadcast our mask_functions over the all 4 dimensions (b_idx, h_idx, q_idx, kv_idx) of the inputs.
+    Allows the usage of any index-based mask function without relying on vmap.
+
+    NOTE: This is limited to index based functions only and is not guaranteed to work otherwise.
+
+    Reference:
+        - https://github.com/huggingface/optimum-onnx/blob/c123e8f4fab61b54a8e0e31ce74462bcacca576e/optimum/exporters/onnx/model_patcher.py#L362-L365
+    """
+    batch_indices = batch_indices[:, None, None, None]
+    head_indices = head_indices[None, :, None, None]
+    q_indices = q_indices[None, None, :, None]
+    kv_indices = kv_indices[None, None, None, :]
+    return batch_indices, head_indices, q_indices, kv_indices
+
+def sdpa_mask(
+    batch_size: int,
+    q_length: int,
+    kv_length: int,
+    q_offset: int = 0,
+    kv_offset: int = 0,
+    mask_function=causal_mask_function,
+    attention_mask: torch.Tensor | None = None,
+    local_size: int | None = None,
+    allow_is_causal_skip: bool = True,
+    allow_is_bidirectional_skip: bool = False,
+    allow_torch_fix: bool = True,
+    use_vmap: bool = False,
+    device: torch.device | str = "cpu",
+    **kwargs,
+) -> torch.Tensor | None:
+    """
+    Create a 4D boolean mask of shape `(batch_size, 1, query_length, kv_length)` where a value of True indicates that
+    the element should take part in the attention computation, and False that it should not.
+    This function can only be used with torch>=2.5, as the context manager is otherwise not available.
+
+    Args:
+        batch_size (`int`):
+            The batch size of the input sequence.
+        q_length (`int`):
+            The size that the query states will have during the attention computation.
+        kv_length (`int`):
+            The size that the key and value states will have during the attention computation.
+        kv_offset (`int`, optional):
+            An optional offset to indicate at which first position the key and values states will refer to.
+        q_offset (`int`, optional):
+            An optional offset to indicate at which first position the query states will refer to.
+        mask_function (`Callable`):
+            The mask factory function describing the mask pattern.
+        attention_mask (`torch.Tensor`, optional):
+            The 2D attention mask corresponding to padded tokens of shape (batch_size, number_of_seen_tokens+q_length)
+        local_size (`int`, optional):
+            The size of the local attention, if we do not use full attention. This is used only if `allow_is_causal_skip=True`
+            to try to skip mask creation if possible.
+        allow_is_causal_skip (`bool`, optional):
+            Whether to allow to return `None` for the mask under conditions where we can use the `is_causal` argument in
+            `torch.sdpa` instead. Default to `True`.
+        allow_is_bidirectional_skip (`bool`, optional):
+            Whether to allow to return `None` for the mask under conditions where we do not have to add any bias,
+            i.e. full attention without any padding. Default to `False`.
+        allow_torch_fix (`bool`, optional):
+            Whether to update the mask in case a query is not attending to any tokens, to solve a bug in torch's older
+            versions. We need an arg to skip it when using eager. By default `True`.
+        use_vmap (`bool`, optional):
+            Whether to use `vmap` during the mask construction or not. Allows powerful custom patterns that may not be
+            index-based (for the cost of speed performance). By default `False`.
+        device (`torch.device` or `str`, optional):
+            An optional device to create the mask on.
+
+
+    ## Creating a simple causal mask:
+
+    To create the following causal mask:
+
+        0 ■ ⬚ ⬚ ⬚ ⬚
+        1 ■ ■ ⬚ ⬚ ⬚
+        2 ■ ■ ■ ⬚ ⬚
+        3 ■ ■ ■ ■ ⬚
+        4 ■ ■ ■ ■ ■
+
+    You can do
+
+    ```python
+    >>> sdpa_mask(batch_size=1, q_length=5, kv_length=5)
+    >>> tensor([[[[ True, False, False, False, False],
+                  [ True,  True, False, False, False],
+                  [ True,  True,  True, False, False],
+                  [ True,  True,  True,  True, False],
+                  [ True,  True,  True,  True,  True]]]])
+    ```
+
+    ## Creating a sliding window mask:
+
+    To create the following sliding window mask (`sliding_window=3`):
+
+        0 ■ ⬚ ⬚ ⬚ ⬚
+        1 ■ ■ ⬚ ⬚ ⬚
+        2 ■ ■ ■ ⬚ ⬚
+        3 ⬚ ■ ■ ■ ⬚
+        4 ⬚ ⬚ ■ ■ ■
+
+    You can do
+
+    ```python
+    >>> sdpa_mask(batch_size=1, q_length=5, kv_length=5, mask_function=sliding_window_causal_mask_function(3))
+    >>> tensor([[[[ True, False, False, False, False],
+                  [ True,  True, False, False, False],
+                  [ True,  True,  True, False, False],
+                  [False,  True,  True,  True, False],
+                  [False, False,  True,  True,  True]]]])
+    ```
+
+    ## Creating a chunked attention mask
+
+    To create the following chunked attention mask (`chunk_size=3`):
+
+        0 ■ ⬚ ⬚ ⬚ ⬚
+        1 ■ ■ ⬚ ⬚ ⬚
+        2 ■ ■ ■ ⬚ ⬚
+        3 ⬚ ⬚ ⬚ ■ ⬚
+        4 ⬚ ⬚ ⬚ ■ ■
+
+    You can do
+
+    ```python
+    >>> sdpa_mask(batch_size=1, q_length=5, kv_length=5, mask_function=chunked_causal_mask_function(3, torch.zeros(1, dtype=int)))
+    >>> tensor([[[[ True, False, False, False, False],
+                [ True,  True, False, False, False],
+                [ True,  True,  True, False, False],
+                [False, False, False,  True, False],
+                [False, False, False,  True,  True]]]])
+    ```
+
+    """
+    # Potentially pad the 2D mask
+    padding_mask = prepare_padding_mask(attention_mask, kv_length, kv_offset)
+
+
+
+    # Potentially add the padding 2D mask
+    if padding_mask is not None:
+        mask_function = and_masks(mask_function, padding_mask_function(padding_mask))
+
+    batch_arange = torch.arange(batch_size, device=device)
+    head_arange = torch.arange(1, device=device)
+    q_arange = torch.arange(q_length, device=device) + q_offset
+    kv_arange = torch.arange(kv_length, device=device) + kv_offset
+
+    # Actual mask creation
+    # Option 1: Fast non-vmap mask creation (default)
+    if not use_vmap:
+        # Apply mask function element-wise through broadcasting
+        attention_mask = mask_function(*_non_vmap_expansion_sdpa(batch_arange, head_arange, q_arange, kv_arange))
+        # Expand the mask to match batch size and query length if they weren't used in the mask function
+        attention_mask = attention_mask.expand(batch_size, -1, q_length, kv_length)
+
+
+
+    return attention_mask
+
+def create_causal_mask(
+    config,
+    inputs_embeds: torch.Tensor,
+    attention_mask: torch.Tensor | None,
+    past_key_values,
+    position_ids: torch.Tensor | None = None,
+    or_mask_function=None,
+    and_mask_function=None,
+    block_sequence_ids=None):
+    # Power feature: if `is_causal` is False, then fallback to bi-directional mask for bi-directional attention.
+    # It allows to use decoder-only models with bi-directional attention as well
+    if not getattr(config, "is_causal", True):
+        return create_bidirectional_mask(
+            config,
+            inputs_embeds,
+            attention_mask,
+            past_key_values=past_key_values,
+            or_mask_function=or_mask_function,
+            and_mask_function=and_mask_function,
+        )
+
+    # If we have an hybrid cache structure, here we want to create the mask for the full layers
+    if hasattr(past_key_values, "is_sliding") and False in past_key_values.is_sliding:
+        layer_idx = past_key_values.is_sliding.index(False)
+    else:
+        layer_idx = 0
+
+    early_exit, attention_mask, packed_sequence_mask, q_length, kv_length, q_offset, kv_offset = (
+        _preprocess_mask_arguments(config, inputs_embeds, attention_mask, past_key_values, position_ids, layer_idx)
+    )
+    if early_exit:
+        return attention_mask
+
+    batch_size, dtype, device = inputs_embeds.shape[0], inputs_embeds.dtype, inputs_embeds.device
+    mask_factory_function = causal_mask_function
+    mask_interface = sdpa_mask
+
+    # Defaulting to using non-vmap based mask creations except when detecting
+    # users passing custom mask functions (as we cannot guarantee that they
+    # are properly index-based as required by our implementation).
+    use_vmap = False
+
+    # Do not allow skip if we are compiling (this is to match BC)
+    # TODO: cyril -> probably revisit and remove this, but a lot of tests rely on it
+
+    allow_is_causal_skip = not getattr(past_key_values, "is_compileable", False)
+
+    # Allow slight deviations from causal mask
+    # Note that it is very important to apply this before any other deviations of the mask (such as packed sequence mask,
+    # padding mask, etc) as the resulting mask may otherwise not be correct!
+    if or_mask_function is not None:
+        if not _is_torch_greater_or_equal_than_2_6:
+            raise ValueError("Using `or_mask_function` or `and_mask_function` arguments require torch>=2.6")
+        mask_factory_function = or_masks(mask_factory_function, or_mask_function)
+        allow_is_causal_skip = False
+        use_vmap = True
+    if and_mask_function is not None:
+        if not _is_torch_greater_or_equal_than_2_6:
+            raise ValueError("Using `or_mask_function` or `and_mask_function` arguments require torch>=2.6")
+        mask_factory_function = and_masks(mask_factory_function, and_mask_function)
+        allow_is_causal_skip = False
+        use_vmap = True
+
+    # If we detected packing format or blockwise overlay
+    if packed_sequence_mask is not None:
+        mask_factory_function = and_masks(mask_factory_function, packed_sequence_mask_function(packed_sequence_mask))
+        allow_is_causal_skip = False
+    if block_sequence_ids is not None:
+        block_sequence_ids = maybe_pad_block_sequence_ids(block_sequence_ids, attention_mask, kv_length, kv_offset)
+        mask_factory_function = or_masks(mask_factory_function, blockwise_overlay(block_sequence_ids))
+        allow_is_causal_skip = False
+
+    # We now create the mask
+    causal_mask = mask_interface(
+        batch_size=batch_size,
+        q_length=q_length,
+        kv_length=kv_length,
+        q_offset=q_offset,
+        kv_offset=kv_offset,
+        mask_function=mask_factory_function,
+        attention_mask=attention_mask,
+        allow_is_causal_skip=allow_is_causal_skip,  # additional kwarg for sdpa
+        dtype=dtype,  # Additional kwarg for eager
+        config=config,  # Pass the config as well, in case someone wants to easily have their own mask_interface
+        use_vmap=use_vmap,  # Short-circuit to non-vmap expansions for the mask
+        device=device,
+    )
+    return causal_mask
 
 def _prefill(
     model,
@@ -271,6 +631,75 @@ def _update_model_kwargs_for_generation(
         + position_ids[..., -1:]
         + 1
     )
+
+def forward2(
+    model,
+    input_ids: torch.LongTensor | None = None,
+    attention_mask: torch.Tensor | None = None,
+    position_ids: torch.LongTensor | None = None,
+    past_key_values=None,
+    inputs_embeds: torch.FloatTensor | None = None,
+    use_cache: bool | None = None,
+    # args for deepstack
+    visual_pos_masks: torch.Tensor | None = None,
+    deepstack_visual_embeds: list[torch.Tensor] | None = None,
+    **kwargs):
+    if (input_ids is None) ^ (inputs_embeds is not None):
+        raise ValueError("You must specify exactly one of input_ids or inputs_embeds")
+
+    if inputs_embeds is None:
+        inputs_embeds = self.embed_tokens(input_ids)
+
+    # the hard coded `4` is for text, temporal, height and width.
+    if position_ids is None:
+        past_seen_tokens = past_key_values.get_seq_length() if past_key_values is not None else 0
+        position_ids = torch.arange(inputs_embeds.shape[1], device=inputs_embeds.device) + past_seen_tokens
+        position_ids = position_ids.view(1, 1, -1).expand(4, inputs_embeds.shape[0], -1)
+    elif position_ids.ndim == 2:
+        position_ids = position_ids[None, ...].expand(4, position_ids.shape[0], -1)
+
+    if position_ids.ndim == 3 and position_ids.shape[0] == 4:
+        text_position_ids = position_ids[0]
+        position_ids = position_ids[1:]
+    else:
+        text_position_ids = None
+
+    attention_mask = create_causal_mask(
+        config=model.config,
+        inputs_embeds=inputs_embeds,
+        attention_mask=attention_mask,
+        past_key_values=past_key_values,
+        position_ids=text_position_ids,
+    )
+
+    hidden_states = inputs_embeds
+
+    # create position embeddings to be shared across the decoder layers
+    position_embeddings = model.rotary_emb(hidden_states, position_ids)
+
+    # decoder layers
+    for layer_idx, decoder_layer in enumerate(model.layers):
+        layer_outputs = decoder_layer(
+            hidden_states,
+            attention_mask=attention_mask,
+            position_ids=text_position_ids,
+            past_key_values=past_key_values,
+            position_embeddings=position_embeddings,
+            **kwargs,
+        )
+        hidden_states = layer_outputs
+
+        # add visual features to the hidden states of first several layers
+        if deepstack_visual_embeds is not None and layer_idx in range(len(deepstack_visual_embeds)):
+            hidden_states = self._deepstack_process(
+                hidden_states,
+                visual_pos_masks,
+                deepstack_visual_embeds[layer_idx],
+            )
+
+    hidden_states = model.norm(hidden_states)
+
+    return hidden_states
 
 def _sample(
     model,
@@ -299,7 +728,7 @@ def _sample(
     while not this_peer_finished:
         if prefill_consumed:
             inputs_embeds = model.model.get_input_embeddings()(input_ids[:, -1:])
-            outputs = model.model.language_model(
+            hidden_states = forward2(model.model.language_model,
                 input_ids=None,
                 position_ids=position_ids,
                 attention_mask=None,
@@ -308,7 +737,6 @@ def _sample(
                 visual_pos_masks=None,
                 deepstack_visual_embeds=None
             )
-            hidden_states = outputs[0]
             outputs = model.lm_head(hidden_states[:, -1:, :])
 
         prefill_consumed = True
