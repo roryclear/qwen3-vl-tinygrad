@@ -148,34 +148,34 @@ def forward(
         
         hidden_states_input = model.visual.blocks[i].norm1(hidden_states)
         seq_length = hidden_states_input.shape[0]
-        query_states, key_states, value_states = (
+        query, key, value = (
             model.visual.blocks[i].attn.qkv(hidden_states_input).reshape(seq_length, 3, model.visual.blocks[i].attn.num_heads, -1).permute(1, 0, 2, 3).unbind(0)
         )
         cos, sin = position_embeddings
-        orig_q_dtype = query_states.dtype
-        orig_k_dtype = key_states.dtype
-        query_states, key_states = query_states.float(), key_states.float()
+        orig_q_dtype = query.dtype
+        orig_k_dtype = key.dtype
+        query, key = query.float(), key.float()
         cos, sin = cos.unsqueeze(-2).float(), sin.unsqueeze(-2).float()
-        q_embed = (query_states * cos) + (rotate_half(query_states) * sin)
-        k_embed = (key_states * cos) + (rotate_half(key_states) * sin)
-        query_states = q_embed.to(orig_q_dtype)
-        key_states = k_embed.to(orig_k_dtype)
+        q_embed = (query * cos) + (rotate_half(query) * sin)
+        k_embed = (key * cos) + (rotate_half(key) * sin)
+        query = q_embed.to(orig_q_dtype)
+        key = k_embed.to(orig_k_dtype)
 
-        query_states = query_states.transpose(0, 1).unsqueeze(0)
-        key_states = key_states.transpose(0, 1).unsqueeze(0)
-        value_states = value_states.transpose(0, 1).unsqueeze(0)
+        query = query.transpose(0, 1).unsqueeze(0)
+        key = key.transpose(0, 1).unsqueeze(0)
+        value = value.transpose(0, 1).unsqueeze(0)
 
 
-        query_states = query_states.contiguous()
-        key_states = key_states.contiguous()
-        value_states = value_states.contiguous()
-        L, S = query_states.size(-2), key_states.size(-2)
-        attn_bias = torch.zeros(L, S, dtype=key_states.dtype, device=query_states.device)
-        attn_weight = query_states @ key_states.transpose(-2, -1) * model.visual.blocks[i].attn.scaling
+        query = query.contiguous()
+        key = key.contiguous()
+        value = value.contiguous()
+        L, S = query.size(-2), key.size(-2)
+        attn_bias = torch.zeros(L, S, dtype=key.dtype, device=query.device)
+        attn_weight = query @ key.transpose(-2, -1) * model.visual.blocks[i].attn.scaling
         attn_weight += attn_bias
         attn_weight = torch.softmax(attn_weight, dim=-1)
         attn_weight = torch.dropout(attn_weight, 0, train=True)
-        attn_output = attn_weight @ value_states
+        attn_output = attn_weight @ value
         attn_output = attn_output.transpose(1, 2).contiguous()
 
         attn_output = attn_output.reshape(seq_length, -1).contiguous()
@@ -205,30 +205,30 @@ def forward(
         input_shape = hidden_states.shape[:-1]
         hidden_shape = (*input_shape, -1, model.language_model.layers[i].self_attn.head_dim)
 
-        query_states = model.language_model.layers[i].self_attn.q_norm(model.language_model.layers[i].self_attn.q_proj(hidden_states).view(hidden_shape)).transpose(1, 2)
-        key_states = model.language_model.layers[i].self_attn.k_norm(model.language_model.layers[i].self_attn.k_proj(hidden_states).view(hidden_shape)).transpose(1, 2)
-        value_states = model.language_model.layers[i].self_attn.v_proj(hidden_states).view(hidden_shape).transpose(1, 2)
+        query = model.language_model.layers[i].self_attn.q_norm(model.language_model.layers[i].self_attn.q_proj(hidden_states).view(hidden_shape)).transpose(1, 2)
+        key = model.language_model.layers[i].self_attn.k_norm(model.language_model.layers[i].self_attn.k_proj(hidden_states).view(hidden_shape)).transpose(1, 2)
+        value = model.language_model.layers[i].self_attn.v_proj(hidden_states).view(hidden_shape).transpose(1, 2)
 
         cos, sin = position_embeddings
-        query_states = (query_states * cos) + (rotate_half(query_states) * sin)
-        key_states = (key_states * cos) + (rotate_half(key_states) * sin)
+        query = (query * cos) + (rotate_half(query) * sin)
+        key = (key * cos) + (rotate_half(key) * sin)
 
-        key_states, value_states = past_key_values.update(key_states, value_states, i)
+        key, value = past_key_values.update(key, value, i)
     
-        L, S = query_states.size(-2), key_states.size(-2)
-        attn_bias = torch.zeros(L, S, dtype=query_states.dtype, device=query_states.device)
+        L, S = query.size(-2), key.size(-2)
+        attn_bias = torch.zeros(L, S, dtype=query.dtype, device=query.device)
 
         temp_mask = torch.ones(L, S, dtype=torch.bool).tril(diagonal=0)
         attn_bias.masked_fill_(temp_mask.logical_not(), float("-inf"))
 
-        key_states = key_states.repeat_interleave(query_states.size(-3)//key_states.size(-3), -3)
-        value_states = value_states.repeat_interleave(query_states.size(-3)//value_states.size(-3), -3)
+        key = key.repeat_interleave(query.size(-3)//key.size(-3), -3)
+        value = value.repeat_interleave(query.size(-3)//value.size(-3), -3)
 
-        attn_weight = query_states @ key_states.transpose(-2, -1) * model.language_model.layers[i].self_attn.scaling
+        attn_weight = query @ key.transpose(-2, -1) * model.language_model.layers[i].self_attn.scaling
         attn_weight += attn_bias
         attn_weight = torch.softmax(attn_weight, dim=-1)
         attn_weight = torch.dropout(attn_weight, 0, train=True)
-        attn_output = attn_weight @ value_states
+        attn_output = attn_weight @ value
 
         attn_output = attn_output.transpose(1, 2).contiguous()
 
@@ -392,19 +392,19 @@ def forward2(
         input_shape = hidden_states.shape[:-1]
         hidden_shape = (*input_shape, -1, model.layers[i].self_attn.head_dim)
 
-        query_states = model.layers[i].self_attn.q_norm(model.layers[i].self_attn.q_proj(hidden_states).view(hidden_shape)).transpose(1, 2)
-        key_states = model.layers[i].self_attn.k_norm(model.layers[i].self_attn.k_proj(hidden_states).view(hidden_shape)).transpose(1, 2)
-        value_states = model.layers[i].self_attn.v_proj(hidden_states).view(hidden_shape).transpose(1, 2)
+        query = model.layers[i].self_attn.q_norm(model.layers[i].self_attn.q_proj(hidden_states).view(hidden_shape)).transpose(1, 2)
+        key = model.layers[i].self_attn.k_norm(model.layers[i].self_attn.k_proj(hidden_states).view(hidden_shape)).transpose(1, 2)
+        value = model.layers[i].self_attn.v_proj(hidden_states).view(hidden_shape).transpose(1, 2)
 
         cos, sin = position_embeddings
-        query_states = (query_states * cos) + (rotate_half(query_states) * sin)
-        key_states = (key_states * cos) + (rotate_half(key_states) * sin)
+        query = (query * cos) + (rotate_half(query) * sin)
+        key = (key * cos) + (rotate_half(key) * sin)
 
-        key_states, value_states = past_key_values.update(key_states, value_states, i)
+        key, value = past_key_values.update(key, value, i)
         attn_output = torch.nn.functional.scaled_dot_product_attention(
-            query_states,
-            key_states,
-            value_states,
+            query=query,
+            key=key,
+            value=value,
             attn_mask=attention_mask,
             dropout_p=0,
             scale=model.layers[i].self_attn.scaling,
