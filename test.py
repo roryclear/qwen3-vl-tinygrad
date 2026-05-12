@@ -116,15 +116,12 @@ def rotate_half(x):
 def forward(
     model,
     input_ids: torch.LongTensor = None,
-    attention_mask: torch.Tensor | None = None,
     position_ids: torch.LongTensor | None = None,
     past_key_values= None,
-    inputs_embeds: torch.FloatTensor | None = None,
     pixel_values: torch.Tensor | None = None,
-    image_grid_thw: torch.LongTensor | None = None,
-    **kwargs):
+    image_grid_thw: torch.LongTensor | None = None):
     inputs_embeds = model.language_model.embed_tokens(input_ids)
-
+    position_ids = torch.arange(input_ids.shape[-1]).unsqueeze(0).unsqueeze(0).repeat(4, 1, 1)
     pixel_values = pixel_values.type(model.visual.dtype)
 
     hidden_states = model.visual.patch_embed(pixel_values)
@@ -258,11 +255,9 @@ def _prefill(
     image_grid_thw):
 
 
-    position_ids = torch.arange(input_ids.shape[-1]).unsqueeze(0).unsqueeze(0).repeat(4, 1, 1)
     hidden_states = forward(model.model, pixel_values=pixel_values,
                         past_key_values=past_key_values,
                         image_grid_thw=image_grid_thw,
-                        position_ids=position_ids,
                         input_ids=input_ids)
     logits = model.lm_head(hidden_states[:, -1:, :])
     return logits
