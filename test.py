@@ -257,14 +257,10 @@ def forward(
         hidden_states = model.language_model.layers[i].mlp(hidden_states)
         hidden_states = residual + hidden_states
    
-        if deepstack_image_embeds is not None and i in range(len(deepstack_image_embeds)):
-            hidden_states = model.language_model._deepstack_process(
-                hidden_states,
-                image_mask,
-                deepstack_image_embeds[i],
-            )
+        if i < len(deepstack_image_embeds): hidden_states[image_mask, :] += deepstack_image_embeds[i]
     hidden_states = model.language_model.norm(hidden_states)
     return hidden_states
+
 
 def _prefill(
     model,
