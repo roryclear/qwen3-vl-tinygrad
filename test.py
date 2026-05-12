@@ -11,12 +11,25 @@ import random
 import numpy as np
 from tinygrad import Tensor
 import math
-from transformers import DynamicCache
 import copy
 from functools import partial
 from torchvision.transforms.v2 import functional as tvF
 from dataclasses import dataclass, fields
 import typing
+
+class SimpleKVCache:
+    def __init__(self):
+        self.cache = {}
+
+    def update(self, key, value, layer_idx):
+        if layer_idx not in self.cache:
+            self.cache[layer_idx] = (key, value)
+        else:
+            past_key, past_value = self.cache[layer_idx]
+            key = torch.cat([past_key, key], dim=-2)
+            value = torch.cat([past_value, value], dim=-2)
+            self.cache[layer_idx] = (key, value)
+        return key, value
 
 class SimpleTokenizer:
   def __init__(self, normal_tokens:dict[str, int], special_tokens:dict[str, int], preset:str="llama3",
@@ -500,7 +513,7 @@ for image, expected_output, prompt in zip(images, expected_outputs, prompts):
     mm_token_type_ids = [0] * len(text_inputs)
     for pos in image_token_positions: mm_token_type_ids[pos:pos + int(num_image_tokens)] = [1] * int(num_image_tokens)
 
-    outputs = _sample(model=model, input_ids=torch.tensor([text_inputs]), _pad_token_tensor=151643, past_key_values=DynamicCache({}), pixel_values=image_inputs['pixel_values'],
+    outputs = _sample(model=model, input_ids=torch.tensor([text_inputs]), _pad_token_tensor=151643, past_key_values=SimpleKVCache(), pixel_values=image_inputs['pixel_values'],
             position_ids=torch.arange(torch.tensor([text_inputs]).shape[-1]).unsqueeze(0).unsqueeze(0).repeat(4, 1, 1), image_grid_thw=image_inputs['image_grid_thw'])
 
     #outputs = model.generate(**inputs, max_new_tokens=128)
