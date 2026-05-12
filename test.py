@@ -279,20 +279,9 @@ def forward_model(
     position_ids: torch.LongTensor | None = None,
     past_key_values=None,
     inputs_embeds: torch.FloatTensor | None = None,
-    pixel_values: torch.Tensor | None = None,
-    pixel_values_videos: torch.FloatTensor | None = None,
-    image_grid_thw: torch.LongTensor | None = None,
-    video_grid_thw: torch.LongTensor | None = None,
-    mm_token_type_ids: torch.IntTensor | None = None,
 ):
-    if inputs_embeds is None:
-        inputs_embeds = model.get_input_embeddings()(input_ids)
 
-
-    visual_pos_masks = None
-    deepstack_visual_embeds = None
-
-
+    inputs_embeds = model.get_input_embeddings()(input_ids)
 
     outputs = model.language_model(
         input_ids=None,
@@ -300,8 +289,8 @@ def forward_model(
         attention_mask=attention_mask,
         past_key_values=past_key_values,
         inputs_embeds=inputs_embeds,
-        visual_pos_masks=visual_pos_masks,
-        deepstack_visual_embeds=deepstack_visual_embeds
+        visual_pos_masks=None,
+        deepstack_visual_embeds=None
     )
     return outputs
 
