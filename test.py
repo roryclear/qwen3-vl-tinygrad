@@ -191,25 +191,11 @@ def forward(
             deepstack_feature = model.visual.deepstack_merger_list[model.visual.deepstack_visual_indexes.index(i)](hidden_states)
             deepstack_feature_lists.append(deepstack_feature)
 
-    merged_hidden_states = model.visual.merger(hidden_states)
-
-    vision_output = [merged_hidden_states, deepstack_feature_lists]
-
-    image_embeds = vision_output[0]
-    split_sizes = (image_grid_thw.prod(-1) // model.visual.spatial_merge_size**2).tolist()
-    image_embeds = torch.split(image_embeds, split_sizes)
-    vision_output[0] = image_embeds
-    image_outputs = vision_output
-    deepstack_image_embeds = image_outputs[1]
-    image_embeds = image_embeds[0]
+    image_embeds = model.visual.merger(hidden_states)
     image_mask, _ = model.get_placeholder_mask(input_ids, inputs_embeds=inputs_embeds, image_features=image_embeds)
-
     inputs_embeds[image_mask] = image_embeds.view(-1)
-
     image_mask = image_mask[..., 0]
-
     position_ids = position_ids[1:]
-
 
     hidden_states = inputs_embeds
     position_embeddings = model.language_model.rotary_emb(hidden_states, position_ids)
@@ -257,7 +243,7 @@ def forward(
         hidden_states = model.language_model.layers[i].mlp(hidden_states)
         hidden_states = residual + hidden_states
    
-        if i < len(deepstack_image_embeds): hidden_states[image_mask, :] += deepstack_image_embeds[i]
+        if i < len(deepstack_feature_lists): hidden_states[image_mask, :] += deepstack_feature_lists[i]
     hidden_states = model.language_model.norm(hidden_states)
     return hidden_states
 
