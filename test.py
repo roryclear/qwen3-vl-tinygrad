@@ -258,43 +258,22 @@ def forward_atn(
     key_states, value_states = past_key_values.update(key_states, value_states, atn.layer_idx)
 
 
-    attn_output = sdpa_attention_forward(
-        atn,
+
+    attn_output = torch.nn.functional.scaled_dot_product_attention(
         query_states,
         key_states,
         value_states,
-        attention_mask,
-        dropout=0.0,
-        scaling=atn.scaling,
-    )
-
-    attn_output = attn_output.reshape(*input_shape, -1).contiguous()
-    attn_output = atn.o_proj(attn_output)
-    return attn_output
-
-def sdpa_attention_forward(
-    module: torch.nn.Module,
-    query: torch.Tensor,
-    key: torch.Tensor,
-    value: torch.Tensor,
-    attention_mask: torch.Tensor | None,
-    dropout: float = 0.0,
-    scaling: float | None = None,
-) -> tuple[torch.Tensor, None]:
-
-
-    attn_output = torch.nn.functional.scaled_dot_product_attention(
-        query,
-        key,
-        value,
         attn_mask=attention_mask,
-        dropout_p=dropout,
-        scale=scaling,
+        dropout_p=0.0,
+        scale=atn.scaling,
         is_causal=True,
         enable_gqa=True
     )
     attn_output = attn_output.transpose(1, 2).contiguous()
 
+
+    attn_output = attn_output.reshape(*input_shape, -1).contiguous()
+    attn_output = atn.o_proj(attn_output)
     return attn_output
 
 def _prefill(
