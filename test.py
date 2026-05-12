@@ -303,8 +303,7 @@ def _sample(
 
     while not this_peer_finished:
         if prefill_consumed:
-            model_inputs = {"input_ids": input_ids[:, -1:], "past_key_values": past_key_values, "position_ids": position_ids}
-            outputs = model.model(**model_inputs)
+            outputs = model.model(input_ids=input_ids[:, -1:], past_key_values=past_key_values, position_ids=position_ids)
             hidden_states = outputs[0]
             outputs = model.lm_head(hidden_states[:, -1:, :])
 
