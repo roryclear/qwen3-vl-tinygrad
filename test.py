@@ -216,12 +216,37 @@ def forward(
     for i in range(len(model.language_model.layers)):
         residual = hidden_states
         hidden_states = model.language_model.layers[i].input_layernorm(hidden_states)
-        hidden_states = forward_atn(model.language_model.layers[i].self_attn,
-            hidden_states=hidden_states,
-            attention_mask=attention_mask,
-            past_key_values=past_key_values,
-            position_embeddings=position_embeddings
+
+        input_shape = hidden_states.shape[:-1]
+        hidden_shape = (*input_shape, -1, model.language_model.layers[i].self_attn.head_dim)
+
+        query_states = model.language_model.layers[i].self_attn.q_norm(model.language_model.layers[i].self_attn.q_proj(hidden_states).view(hidden_shape)).transpose(1, 2)
+        key_states = model.language_model.layers[i].self_attn.k_norm(model.language_model.layers[i].self_attn.k_proj(hidden_states).view(hidden_shape)).transpose(1, 2)
+        value_states = model.language_model.layers[i].self_attn.v_proj(hidden_states).view(hidden_shape).transpose(1, 2)
+
+        cos, sin = position_embeddings
+        query_states = (query_states * cos) + (rotate_half(query_states) * sin)
+        key_states = (key_states * cos) + (rotate_half(key_states) * sin)
+
+        key_states, value_states = past_key_values.update(key_states, value_states, i)
+
+
+        attn_output = torch.nn.functional.scaled_dot_product_attention(
+            query_states,
+            key_states,
+            value_states,
+            attn_mask=attention_mask,
+            dropout_p=0.0,
+            scale=model.language_model.layers[i].self_attn.scaling,
+            is_causal=True,
+            enable_gqa=True
         )
+        attn_output = attn_output.transpose(1, 2).contiguous()
+
+
+        attn_output = attn_output.reshape(*input_shape, -1).contiguous()
+        hidden_states = model.language_model.layers[i].self_attn.o_proj(attn_output)
+
         hidden_states = residual + hidden_states
         residual = hidden_states
         hidden_states = model.language_model.layers[i].post_attention_layernorm(hidden_states)
@@ -236,45 +261,6 @@ def forward(
             )
     hidden_states = model.language_model.norm(hidden_states)
     return hidden_states
-
-def forward_atn(
-    atn,
-    hidden_states: torch.Tensor,
-    position_embeddings: tuple[torch.Tensor, torch.Tensor],
-    attention_mask: torch.Tensor | None,
-    past_key_values,
-) -> tuple[torch.Tensor, torch.Tensor | None]:
-    input_shape = hidden_states.shape[:-1]
-    hidden_shape = (*input_shape, -1, atn.head_dim)
-
-    query_states = atn.q_norm(atn.q_proj(hidden_states).view(hidden_shape)).transpose(1, 2)
-    key_states = atn.k_norm(atn.k_proj(hidden_states).view(hidden_shape)).transpose(1, 2)
-    value_states = atn.v_proj(hidden_states).view(hidden_shape).transpose(1, 2)
-
-    cos, sin = position_embeddings
-    query_states = (query_states * cos) + (rotate_half(query_states) * sin)
-    key_states = (key_states * cos) + (rotate_half(key_states) * sin)
-
-    key_states, value_states = past_key_values.update(key_states, value_states, atn.layer_idx)
-
-
-
-    attn_output = torch.nn.functional.scaled_dot_product_attention(
-        query_states,
-        key_states,
-        value_states,
-        attn_mask=attention_mask,
-        dropout_p=0.0,
-        scale=atn.scaling,
-        is_causal=True,
-        enable_gqa=True
-    )
-    attn_output = attn_output.transpose(1, 2).contiguous()
-
-
-    attn_output = attn_output.reshape(*input_shape, -1).contiguous()
-    attn_output = atn.o_proj(attn_output)
-    return attn_output
 
 def _prefill(
     model,
