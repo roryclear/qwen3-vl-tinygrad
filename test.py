@@ -368,6 +368,70 @@ def forward_layer(
 
     return hidden_states
 
+def apply_rotary_pos_emb(q, k, cos, sin, unsqueeze_dim=1):
+    cos = cos.unsqueeze(unsqueeze_dim)
+    sin = sin.unsqueeze(unsqueeze_dim)
+    q_embed = (q * cos) + (rotate_half(q) * sin)
+    k_embed = (k * cos) + (rotate_half(k) * sin)
+    return q_embed, k_embed
+
+def sdpa_attention_forward(
+    module: torch.nn.Module,
+    query: torch.Tensor,
+    key: torch.Tensor,
+    value: torch.Tensor,
+    attention_mask: torch.Tensor | None,
+    dropout: float = 0.0,
+    scaling: float | None = None) -> tuple[torch.Tensor, None]:
+    sdpa_kwargs = {}
+    if hasattr(module, "num_key_value_groups"): sdpa_kwargs = {"enable_gqa": True}
+    attn_output = torch.nn.functional.scaled_dot_product_attention(
+        query,
+        key,
+        value,
+        attn_mask=attention_mask,
+        dropout_p=dropout,
+        scale=scaling,
+        is_causal=False,
+        **sdpa_kwargs,
+    )
+    attn_output = attn_output.transpose(1, 2).contiguous()
+
+    return attn_output
+
+def forward_atn(
+    model,
+    hidden_states: torch.Tensor,
+    position_embeddings: tuple[torch.Tensor, torch.Tensor],
+    attention_mask: torch.Tensor | None,
+    past_key_values= None):
+    input_shape = hidden_states.shape[:-1]
+    hidden_shape = (*input_shape, -1, model.head_dim)
+
+    query_states = model.q_norm(model.q_proj(hidden_states).view(hidden_shape)).transpose(1, 2)
+    key_states = model.k_norm(model.k_proj(hidden_states).view(hidden_shape)).transpose(1, 2)
+    value_states = model.v_proj(hidden_states).view(hidden_shape).transpose(1, 2)
+
+    cos, sin = position_embeddings
+    query_states, key_states = apply_rotary_pos_emb(query_states, key_states, cos, sin)
+
+    if past_key_values is not None:
+        key_states, value_states = past_key_values.update(key_states, value_states, model.layer_idx)
+
+    attn_output = sdpa_attention_forward(
+        model,
+        query_states,
+        key_states,
+        value_states,
+        attention_mask,
+        dropout=0.0,
+        scaling=model.scaling)
+
+    attn_output = attn_output.reshape(*input_shape, -1).contiguous()
+    attn_output = model.o_proj(attn_output)
+    return attn_output
+
+
 def forward2(
     model,
     input_ids: torch.LongTensor | None = None,
@@ -400,12 +464,11 @@ def forward2(
     for i in range(len(model.layers)):        
         residual = hidden_states
         hidden_states = model.layers[i].input_layernorm(hidden_states)
-        hidden_states, _ = model.layers[i].self_attn(
+        
+        hidden_states = forward_atn(model.layers[i].self_attn,
             hidden_states=hidden_states,
             attention_mask=attention_mask,
-            position_ids=position_ids,
             past_key_values=past_key_values,
-            use_cache=use_cache,
             position_embeddings=position_embeddings
         )
         hidden_states = residual + hidden_states
