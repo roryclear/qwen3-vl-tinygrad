@@ -356,6 +356,18 @@ def _update_model_kwargs_for_generation(
         + 1
     )
 
+def forward_layer(
+    layer,
+    hidden_states: torch.Tensor,
+    attention_mask: torch.Tensor | None = None,
+    position_ids: torch.LongTensor | None = None,
+    past_key_values= None,
+    use_cache: bool | None = False,
+    position_embeddings: tuple[torch.Tensor, torch.Tensor] | None = None,
+) -> torch.Tensor:
+
+    return hidden_states
+
 def forward2(
     model,
     input_ids: torch.LongTensor | None = None,
@@ -382,19 +394,27 @@ def forward2(
 
     hidden_states = inputs_embeds
 
-    # create position embeddings to be shared across the decoder layers
     position_embeddings = model.rotary_emb(hidden_states, position_ids)
 
     # decoder layers
-    for layer_idx, decoder_layer in enumerate(model.layers):
-        hidden_states = decoder_layer( # this works with no mask????
-            hidden_states,
+    for i in range(len(model.layers)):        
+        residual = hidden_states
+        hidden_states = model.layers[i].input_layernorm(hidden_states)
+        hidden_states, _ = model.layers[i].self_attn(
+            hidden_states=hidden_states,
             attention_mask=attention_mask,
-            position_ids=text_position_ids,
+            position_ids=position_ids,
             past_key_values=past_key_values,
-            position_embeddings=position_embeddings,
-            **kwargs,
+            use_cache=use_cache,
+            position_embeddings=position_embeddings
         )
+        hidden_states = residual + hidden_states
+        residual = hidden_states
+        hidden_states = model.layers[i].post_attention_layernorm(hidden_states)
+        hidden_states = model.layers[i].mlp(hidden_states)
+        hidden_states = residual + hidden_states
+
+        
 
     hidden_states = model.norm(hidden_states)
 
