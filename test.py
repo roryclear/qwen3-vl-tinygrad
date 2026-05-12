@@ -272,28 +272,6 @@ def _update_model_kwargs_for_generation(
         + 1
     )
 
-def forward_model(
-    model,
-    input_ids: torch.LongTensor = None,
-    attention_mask: torch.Tensor | None = None,
-    position_ids: torch.LongTensor | None = None,
-    past_key_values=None,
-    inputs_embeds: torch.FloatTensor | None = None,
-):
-
-    inputs_embeds = model.get_input_embeddings()(input_ids)
-
-    outputs = model.language_model(
-        input_ids=None,
-        position_ids=position_ids,
-        attention_mask=attention_mask,
-        past_key_values=past_key_values,
-        inputs_embeds=inputs_embeds,
-        visual_pos_masks=None,
-        deepstack_visual_embeds=None
-    )
-    return outputs
-
 def _sample(
     model,
     input_ids: torch.LongTensor,
@@ -320,7 +298,16 @@ def _sample(
 
     while not this_peer_finished:
         if prefill_consumed:
-            outputs = forward_model(model.model, input_ids=input_ids[:, -1:], past_key_values=past_key_values, position_ids=position_ids)
+            inputs_embeds = model.model.get_input_embeddings()(input_ids[:, -1:])
+            outputs = model.model.language_model(
+                input_ids=None,
+                position_ids=position_ids,
+                attention_mask=None,
+                past_key_values=past_key_values,
+                inputs_embeds=inputs_embeds,
+                visual_pos_masks=None,
+                deepstack_visual_embeds=None
+            )
             hidden_states = outputs[0]
             outputs = model.lm_head(hidden_states[:, -1:, :])
 
