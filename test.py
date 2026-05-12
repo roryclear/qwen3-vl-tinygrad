@@ -261,15 +261,6 @@ def _prefill(
     logits = model.lm_head(hidden_states[:, -1:, :])
     return logits
 
-def _update_model_kwargs_for_generation(
-    position_ids,
-    num_new_tokens=1):
-    required_dim = [1] * (position_ids.dim() - 1) + [-1]
-    return (
-        torch.arange(num_new_tokens, dtype=position_ids.dtype, device=position_ids.device).view(*required_dim)
-        + position_ids[..., -1:]
-        + 1
-    )
 
 def forward2(
     model,
@@ -376,7 +367,7 @@ def _sample(
             outputs = model.lm_head(hidden_states[:, -1:, :])
 
         prefill_consumed = True
-        position_ids = _update_model_kwargs_for_generation(position_ids)
+        position_ids = position_ids[..., -1:] + 1
         
         temp = 0.7
         top_k = 20
