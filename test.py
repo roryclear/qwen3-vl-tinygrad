@@ -368,29 +368,6 @@ def forward_layer(
 
     return hidden_states
 
-def sdpa_attention_forward(
-    module: torch.nn.Module,
-    query: torch.Tensor,
-    key: torch.Tensor,
-    value: torch.Tensor,
-    attention_mask: torch.Tensor | None,
-    dropout: float = 0.0,
-    scaling: float | None = None) -> tuple[torch.Tensor, None]:
-    sdpa_kwargs = {}
-    if hasattr(module, "num_key_value_groups"): sdpa_kwargs = {"enable_gqa": True}
-    attn_output = torch.nn.functional.scaled_dot_product_attention(
-        query,
-        key,
-        value,
-        attn_mask=attention_mask,
-        dropout_p=dropout,
-        scale=scaling,
-        is_causal=False,
-        **sdpa_kwargs,
-    )
-    attn_output = attn_output.transpose(1, 2).contiguous()
-
-    return attn_output
 
 def forward_atn(
     model,
@@ -410,15 +387,19 @@ def forward_atn(
     key_states = (key_states * cos) + (rotate_half(key_states) * sin)
 
     key_states, value_states = past_key_values.update(key_states, value_states, model.layer_idx)
-
-    attn_output = sdpa_attention_forward(
-        model,
+    attn_output = torch.nn.functional.scaled_dot_product_attention(
         query_states,
         key_states,
         value_states,
-        attention_mask,
-        dropout=0.0,
-        scaling=model.scaling)
+        attn_mask=attention_mask,
+        dropout_p=0,
+        scale=model.scaling,
+        is_causal=False,
+        enable_gqa=True
+    )
+
+
+    attn_output = attn_output.transpose(1, 2).contiguous()
 
     attn_output = attn_output.reshape(*input_shape, -1).contiguous()
     attn_output = model.o_proj(attn_output)
@@ -689,5 +670,6 @@ for url, expected_output, prompt in zip(urls, expected_outputs, prompts):
     output = output.replace("<|im_end|>","") # todo hack
     print(output)
     assert output == expected_output
+
 
 
