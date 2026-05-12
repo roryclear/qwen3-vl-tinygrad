@@ -216,7 +216,7 @@ def forward(
     for i in range(len(model.language_model.layers)):
         residual = hidden_states
         hidden_states = model.language_model.layers[i].input_layernorm(hidden_states)
-        hidden_states, _ = model.language_model.layers[i].self_attn(
+        hidden_states, _ = forward_atn(model.language_model.layers[i].self_attn,
             hidden_states=hidden_states,
             attention_mask=attention_mask,
             position_ids=position_ids,
@@ -238,6 +238,96 @@ def forward(
             )
     hidden_states = model.language_model.norm(hidden_states)
     return hidden_states
+
+def apply_rotary_pos_emb(q, k, cos, sin, unsqueeze_dim=1):
+    q_type, k_type = q.dtype, k.dtype
+    cos = cos.unsqueeze(unsqueeze_dim)
+    sin = sin.unsqueeze(unsqueeze_dim)
+    q_embed = (q * cos) + (rotate_half(q) * sin)
+    k_embed = (k * cos) + (rotate_half(k) * sin)
+    return q_embed.to(q_type), k_embed.to(k_type)
+
+def forward_atn(
+    atn,
+    hidden_states: torch.Tensor,
+    position_embeddings: tuple[torch.Tensor, torch.Tensor],
+    attention_mask: torch.Tensor | None,
+    past_key_values,
+    **kwargs,
+) -> tuple[torch.Tensor, torch.Tensor | None]:
+    input_shape = hidden_states.shape[:-1]
+    hidden_shape = (*input_shape, -1, atn.head_dim)
+
+    query_states = atn.q_norm(atn.q_proj(hidden_states).view(hidden_shape)).transpose(1, 2)
+    key_states = atn.k_norm(atn.k_proj(hidden_states).view(hidden_shape)).transpose(1, 2)
+    value_states = atn.v_proj(hidden_states).view(hidden_shape).transpose(1, 2)
+
+    cos, sin = position_embeddings
+    query_states, key_states = apply_rotary_pos_emb(query_states, key_states, cos, sin)
+
+    if past_key_values is not None:
+        key_states, value_states = past_key_values.update(key_states, value_states, atn.layer_idx)
+
+
+    attn_output, attn_weights = sdpa_attention_forward(
+        atn,
+        query_states,
+        key_states,
+        value_states,
+        attention_mask,
+        dropout=0.0,
+        scaling=atn.scaling,
+        **kwargs,
+    )
+
+    attn_output = attn_output.reshape(*input_shape, -1).contiguous()
+    attn_output = atn.o_proj(attn_output)
+    return attn_output, attn_weights
+
+def sdpa_attention_forward(
+    module: torch.nn.Module,
+    query: torch.Tensor,
+    key: torch.Tensor,
+    value: torch.Tensor,
+    attention_mask: torch.Tensor | None,
+    dropout: float = 0.0,
+    scaling: float | None = None,
+    is_causal: bool | None = None,
+    **kwargs,
+) -> tuple[torch.Tensor, None]:
+    sdpa_kwargs = {}
+    sdpa_kwargs = {"enable_gqa": True}
+
+    # Instead of relying on the value set in the module directly, we use the is_causal passed in kwargs if it is presented
+    is_causal = is_causal if is_causal is not None else getattr(module, "is_causal", True)
+
+    # SDPA's Flash Attention (and cuDNN) kernels rely on the `is_causal` flag. However, there are certain conditions:
+    # - Not in decoding phase (otherwise we want full attention on the single query token)
+    # - Attention mask is not to be provided (even if it is a causal pattern)
+    # - Internally, we marked this as compatible with causal, i.e. it is a decoder attention type
+    #
+    # Quirks on the conditionals:
+    # - We avoid inline passing this to the SDPA function directly to support both torch.compile's dynamic shapes and
+    #   full graph options. Otherwise, dynamic shapes are prevented from compiling.
+    # - It is important to check first for the shape, otherwise compile will fail with
+    #   `argument 'is_causal' must be bool, not SymBool`.
+    is_causal = query.shape[2] > 1 and attention_mask is None and is_causal
+
+
+
+    attn_output = torch.nn.functional.scaled_dot_product_attention(
+        query,
+        key,
+        value,
+        attn_mask=attention_mask,
+        dropout_p=dropout,
+        scale=scaling,
+        is_causal=is_causal,
+        **sdpa_kwargs,
+    )
+    attn_output = attn_output.transpose(1, 2).contiguous()
+
+    return attn_output, None
 
 def _prefill(
     model,
