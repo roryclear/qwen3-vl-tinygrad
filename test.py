@@ -125,43 +125,52 @@ def rotate_half(x):
     x2 = x[..., x.shape[-1] // 2 :]
     return torch.cat((-x2, x1), dim=-1)
 
-
 def forward(
     model,
-    input_ids: torch.LongTensor = None,
-    position_ids: torch.LongTensor | None = None,
-    past_key_values= None,
-    pixel_values: torch.Tensor | None = None,
-    image_grid_thw: torch.LongTensor | None = None):
-    inputs_embeds = model.language_model.embed_tokens(input_ids)
-    position_ids = torch.arange(input_ids.shape[-1]).unsqueeze(0).unsqueeze(0).repeat(4, 1, 1)
-    pixel_values = pixel_values.type(model.visual.dtype)
+    input_ids: torch.LongTensor,
+    _pad_token_tensor,
+    pixel_values,
+    past_key_values,
+    position_ids,
+    image_grid_thw,
+):
+    pad_token_id = _pad_token_tensor
+    scores = None
+    batch_size = input_ids.shape[0]
+    this_peer_finished = False
+    unfinished_sequences = torch.ones(batch_size, dtype=torch.long, device=input_ids.device)
 
-    hidden_states = model.visual.patch_embed(pixel_values)
+    prefill_consumed = False
+
+    inputs_embeds = model.model.language_model.embed_tokens(input_ids)
+    position_ids = torch.arange(input_ids.shape[-1]).unsqueeze(0).unsqueeze(0).repeat(4, 1, 1)
+    pixel_values = pixel_values.type(model.model.visual.dtype)
+
+    hidden_states = model.model.visual.patch_embed(pixel_values)
 
     grid_thw_list = image_grid_thw.tolist()
     grid_ts = [row[0] for row in grid_thw_list]
     grid_hs = [row[1] for row in grid_thw_list]
     grid_ws = [row[2] for row in grid_thw_list]
-    device = model.visual.pos_embed.weight.device
+    device = model.model.visual.pos_embed.weight.device
 
     idx_list = [[] for _ in range(4)]
     weight_list = [[] for _ in range(4)]
 
     for t, h, w in grid_thw_list:
-        h_idxs = torch.linspace(0, model.visual.num_grid_per_side - 1, h)
-        w_idxs = torch.linspace(0, model.visual.num_grid_per_side - 1, w)
+        h_idxs = torch.linspace(0, model.model.visual.num_grid_per_side - 1, h)
+        w_idxs = torch.linspace(0, model.model.visual.num_grid_per_side - 1, w)
 
         h_idxs_floor = h_idxs.int()
         w_idxs_floor = w_idxs.int()
-        h_idxs_ceil = (h_idxs.int() + 1).clip(max=model.visual.num_grid_per_side - 1)
-        w_idxs_ceil = (w_idxs.int() + 1).clip(max=model.visual.num_grid_per_side - 1)
+        h_idxs_ceil = (h_idxs.int() + 1).clip(max=model.model.visual.num_grid_per_side - 1)
+        w_idxs_ceil = (w_idxs.int() + 1).clip(max=model.model.visual.num_grid_per_side - 1)
 
         dh = h_idxs - h_idxs_floor
         dw = w_idxs - w_idxs_floor
 
-        base_h = h_idxs_floor * model.visual.num_grid_per_side
-        base_h_ceil = h_idxs_ceil * model.visual.num_grid_per_side
+        base_h = h_idxs_floor * model.model.visual.num_grid_per_side
+        base_h_ceil = h_idxs_ceil * model.model.visual.num_grid_per_side
 
         indices = [
             (base_h[None].T + w_idxs_floor[None]).flatten(),
@@ -182,14 +191,14 @@ def forward(
             weight_list[i].extend(weights[i].tolist())
 
     idx_tensor = torch.tensor(idx_list, dtype=torch.long, device=device)
-    weight_tensor = torch.tensor(weight_list, dtype=model.visual.pos_embed.weight.dtype, device=device)
-    pos_embeds = model.visual.pos_embed(idx_tensor) * weight_tensor[:, :, None]
+    weight_tensor = torch.tensor(weight_list, dtype=model.model.visual.pos_embed.weight.dtype, device=device)
+    pos_embeds = model.model.visual.pos_embed(idx_tensor) * weight_tensor[:, :, None]
     patch_pos_embeds = pos_embeds[0] + pos_embeds[1] + pos_embeds[2] + pos_embeds[3]
 
     patch_pos_embeds = patch_pos_embeds.split([h * w for h, w in zip(grid_hs, grid_ws)])
 
     patch_pos_embeds_permute = []
-    merge_size = model.visual.config.spatial_merge_size
+    merge_size = model.model.visual.config.spatial_merge_size
     for pos_embed, t, h, w in zip(patch_pos_embeds, grid_ts, grid_hs, grid_ws):
         pos_embed = pos_embed.repeat(t, 1)
         pos_embed = (
@@ -203,7 +212,7 @@ def forward(
 
     hidden_states = hidden_states + pos_embeds
 
-    rotary_pos_emb = model.visual.rot_pos_emb(image_grid_thw)
+    rotary_pos_emb = model.model.visual.rot_pos_emb(image_grid_thw)
 
     seq_len, _ = hidden_states.size()
     hidden_states = hidden_states.reshape(seq_len, -1)
@@ -218,12 +227,12 @@ def forward(
     cu_seqlens = F.pad(cu_seqlens, (1, 0), value=0)
 
     deepstack_feature_lists = []
-    for i in range(len(model.visual.blocks)):
+    for i in range(len(model.model.visual.blocks)):
         
-        hidden_states_input = model.visual.blocks[i].norm1(hidden_states)
+        hidden_states_input = model.model.visual.blocks[i].norm1(hidden_states)
         seq_length = hidden_states_input.shape[0]
         query, key, value = (
-            model.visual.blocks[i].attn.qkv(hidden_states_input).reshape(seq_length, 3, model.visual.blocks[i].attn.num_heads, -1).permute(1, 0, 2, 3).unbind(0)
+            model.model.visual.blocks[i].attn.qkv(hidden_states_input).reshape(seq_length, 3, model.model.visual.blocks[i].attn.num_heads, -1).permute(1, 0, 2, 3).unbind(0)
         )
         cos, sin = position_embeddings
         orig_q_dtype = query.dtype
@@ -245,7 +254,7 @@ def forward(
         value = value.contiguous()
         L, S = query.size(-2), key.size(-2)
         attn_bias = torch.zeros(L, S, dtype=key.dtype, device=query.device)
-        attn_weight = query @ key.transpose(-2, -1) * model.visual.blocks[i].attn.scaling
+        attn_weight = query @ key.transpose(-2, -1) * model.model.visual.blocks[i].attn.scaling
         attn_weight += attn_bias
         attn_weight = torch.softmax(attn_weight, dim=-1)
         attn_weight = torch.dropout(attn_weight, 0, train=True)
@@ -253,35 +262,34 @@ def forward(
         attn_output = attn_output.transpose(1, 2).contiguous()
 
         attn_output = attn_output.reshape(seq_length, -1).contiguous()
-        attn_output = model.visual.blocks[i].attn.proj(attn_output)
+        attn_output = model.model.visual.blocks[i].attn.proj(attn_output)
 
         hidden_states += attn_output
-        hidden_states = hidden_states + model.visual.blocks[i].mlp(model.visual.blocks[i].norm2(hidden_states))
+        hidden_states = hidden_states + model.model.visual.blocks[i].mlp(model.model.visual.blocks[i].norm2(hidden_states))
 
-        if i in model.visual.deepstack_visual_indexes:
-            layer = model.visual.deepstack_merger_list[model.visual.deepstack_visual_indexes.index(i)]
+        if i in model.model.visual.deepstack_visual_indexes:
+            layer = model.model.visual.deepstack_merger_list[model.model.visual.deepstack_visual_indexes.index(i)]
             deepstack_feature = layer.norm(hidden_states.view(-1, layer.hidden_size)).view(-1, layer.hidden_size)
             deepstack_feature = layer.linear_fc2(layer.act_fn(layer.linear_fc1(deepstack_feature)))
             deepstack_feature_lists.append(deepstack_feature)
 
-    image_embeds = model.visual.merger(hidden_states)
-    image_mask, _ = model.get_placeholder_mask(input_ids, inputs_embeds=inputs_embeds, image_features=image_embeds)
+    image_embeds = model.model.visual.merger(hidden_states)
+    image_mask, _ = model.model.get_placeholder_mask(input_ids, inputs_embeds=inputs_embeds, image_features=image_embeds)
     inputs_embeds[image_mask] = image_embeds.view(-1)
     image_mask = image_mask[..., 0]
-    position_ids = position_ids[1:]
 
     hidden_states = inputs_embeds
-    position_embeddings = model.language_model.rotary_emb(hidden_states, position_ids)
-    for i in range(len(model.language_model.layers)): # todo same block above
+    position_embeddings = model.model.language_model.rotary_emb(hidden_states, position_ids[1:])
+    for i in range(len(model.model.language_model.layers)): # todo same block above
         residual = hidden_states
-        hidden_states = model.language_model.layers[i].input_layernorm(hidden_states)
+        hidden_states = model.model.language_model.layers[i].input_layernorm(hidden_states)
 
         input_shape = hidden_states.shape[:-1]
-        hidden_shape = (*input_shape, -1, model.language_model.layers[i].self_attn.head_dim)
+        hidden_shape = (*input_shape, -1, model.model.language_model.layers[i].self_attn.head_dim)
 
-        query = model.language_model.layers[i].self_attn.q_norm(model.language_model.layers[i].self_attn.q_proj(hidden_states).view(hidden_shape)).transpose(1, 2)
-        key = model.language_model.layers[i].self_attn.k_norm(model.language_model.layers[i].self_attn.k_proj(hidden_states).view(hidden_shape)).transpose(1, 2)
-        value = model.language_model.layers[i].self_attn.v_proj(hidden_states).view(hidden_shape).transpose(1, 2)
+        query = model.model.language_model.layers[i].self_attn.q_norm(model.model.language_model.layers[i].self_attn.q_proj(hidden_states).view(hidden_shape)).transpose(1, 2)
+        key = model.model.language_model.layers[i].self_attn.k_norm(model.model.language_model.layers[i].self_attn.k_proj(hidden_states).view(hidden_shape)).transpose(1, 2)
+        value = model.model.language_model.layers[i].self_attn.v_proj(hidden_states).view(hidden_shape).transpose(1, 2)
 
         cos, sin = position_embeddings
         query = (query * cos) + (rotate_half(query) * sin)
@@ -298,7 +306,7 @@ def forward(
         key = key.repeat_interleave(query.size(-3)//key.size(-3), -3)
         value = value.repeat_interleave(query.size(-3)//value.size(-3), -3)
 
-        attn_weight = query @ key.transpose(-2, -1) * model.language_model.layers[i].self_attn.scaling
+        attn_weight = query @ key.transpose(-2, -1) * model.model.language_model.layers[i].self_attn.scaling
         attn_weight += attn_bias
         attn_weight = torch.softmax(attn_weight, dim=-1)
         attn_weight = torch.dropout(attn_weight, 0, train=True)
@@ -308,40 +316,18 @@ def forward(
 
 
         attn_output = attn_output.reshape(*input_shape, -1).contiguous()
-        hidden_states = model.language_model.layers[i].self_attn.o_proj(attn_output)
+        hidden_states = model.model.language_model.layers[i].self_attn.o_proj(attn_output)
 
         hidden_states = residual + hidden_states
         residual = hidden_states
-        hidden_states = model.language_model.layers[i].post_attention_layernorm(hidden_states)
-        hidden_states = model.language_model.layers[i].mlp(hidden_states)
+        hidden_states = model.model.language_model.layers[i].post_attention_layernorm(hidden_states)
+        hidden_states = model.model.language_model.layers[i].mlp(hidden_states)
         hidden_states = residual + hidden_states
    
         if i < len(deepstack_feature_lists): hidden_states[image_mask, :] += deepstack_feature_lists[i]
-    hidden_states = model.language_model.norm(hidden_states)
-    return hidden_states
+    hidden_states = model.model.language_model.norm(hidden_states)
 
-def _sample(
-    model,
-    input_ids: torch.LongTensor,
-    _pad_token_tensor,
-    pixel_values,
-    past_key_values,
-    position_ids,
-    image_grid_thw,
-):
-    pad_token_id = _pad_token_tensor
-    scores = None
-    batch_size = input_ids.shape[0]
-    this_peer_finished = False
-    unfinished_sequences = torch.ones(batch_size, dtype=torch.long, device=input_ids.device)
-
-    prefill_consumed = False
-    hidden_states = forward(model.model, pixel_values=pixel_values,
-                        past_key_values=past_key_values,
-                        image_grid_thw=image_grid_thw,
-                        input_ids=input_ids)
     outputs = model.lm_head(hidden_states[:, -1:, :])
-
 
     while not this_peer_finished:
         if prefill_consumed:
@@ -570,7 +556,7 @@ for image, expected_output, prompt in zip(images, expected_outputs, prompts):
     mm_token_type_ids = [0] * len(text_inputs)
     for pos in image_token_positions: mm_token_type_ids[pos:pos + int(num_image_tokens)] = [1] * int(num_image_tokens)
 
-    outputs = _sample(model=model, input_ids=torch.tensor([text_inputs]), _pad_token_tensor=151643, past_key_values=SimpleKVCache(), pixel_values=image_inputs['pixel_values'],
+    outputs = forward(model=model, input_ids=torch.tensor([text_inputs]), _pad_token_tensor=151643, past_key_values=SimpleKVCache(), pixel_values=image_inputs['pixel_values'],
             position_ids=torch.arange(torch.tensor([text_inputs]).shape[-1]).unsqueeze(0).unsqueeze(0).repeat(4, 1, 1), image_grid_thw=image_inputs['image_grid_thw'])
 
     #outputs = model.generate(**inputs, max_new_tokens=128)
