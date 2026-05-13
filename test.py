@@ -127,7 +127,7 @@ def rotate_half(x):
 
 def forward(
     model,
-    input_ids: torch.LongTensor,
+    input_ids,
     _pad_token_tensor,
     pixel_values,
     past_key_values,
@@ -138,13 +138,12 @@ def forward(
     scores = None
     batch_size = input_ids.shape[0]
     this_peer_finished = False
-    unfinished_sequences = torch.ones(batch_size, dtype=torch.long, device=input_ids.device)
+    unfinished_sequences = torch.ones(batch_size, dtype=torch.int32, device=input_ids.device)
 
     prefill_consumed = False
 
     inputs_embeds = model.model.language_model.embed_tokens(input_ids)
     position_ids = torch.arange(input_ids.shape[-1]).unsqueeze(0).unsqueeze(0).repeat(4, 1, 1)
-    pixel_values = pixel_values.type(model.model.visual.dtype)
 
     hidden_states = model.model.visual.patch_embed(pixel_values)
 
@@ -489,7 +488,7 @@ def _preprocess(images):
     processed_grids_ordered = [[[1, grid_h, grid_w]][0]]
 
     pixel_values = torch.cat(processed_images, dim=0)
-    image_grid_thw = torch.tensor(processed_grids_ordered, dtype=torch.long)
+    image_grid_thw = torch.tensor(processed_grids_ordered, dtype=torch.int32)
 
     return {"pixel_values": pixel_values, "image_grid_thw": image_grid_thw}
 
