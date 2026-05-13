@@ -320,64 +320,6 @@ def forward(
     hidden_states = model.language_model.norm(hidden_states)
     return hidden_states
 
-def forward2(
-    model,
-    position_ids: torch.LongTensor | None = None,
-    past_key_values=None,
-    inputs_embeds: torch.FloatTensor | None = None):
-
-    position_ids = position_ids[1:]
-
-
-    hidden_states = inputs_embeds
-
-    position_embeddings = model.rotary_emb(hidden_states, position_ids)
-
-    # decoder layers
-    for i in range(len(model.layers)):        
-        residual = hidden_states
-        hidden_states = model.layers[i].input_layernorm(hidden_states)
-
-        input_shape = hidden_states.shape[:-1]
-        hidden_shape = (*input_shape, -1, model.layers[i].self_attn.head_dim)
-
-        query = model.layers[i].self_attn.q_norm(model.layers[i].self_attn.q_proj(hidden_states).view(hidden_shape)).transpose(1, 2)
-        key = model.layers[i].self_attn.k_norm(model.layers[i].self_attn.k_proj(hidden_states).view(hidden_shape)).transpose(1, 2)
-        value = model.layers[i].self_attn.v_proj(hidden_states).view(hidden_shape).transpose(1, 2)
-
-        cos, sin = position_embeddings
-        query = (query * cos) + (rotate_half(query) * sin)
-        key = (key * cos) + (rotate_half(key) * sin)
-
-        key, value = past_key_values.update(key, value, i)   
-
-        key = key.repeat_interleave(query.size(-3)//key.size(-3), -3)
-        value = value.repeat_interleave(query.size(-3)//value.size(-3), -3)
-
-        attn_weight = query @ key.transpose(-2, -1) * model.layers[i].self_attn.scaling
-
-        attn_weight = torch.softmax(attn_weight, dim=-1)
-        attn_output = attn_weight @ value
-
-
-        attn_output = attn_output.transpose(1, 2).contiguous()
-
-        attn_output = attn_output.reshape(*input_shape, -1).contiguous()
-        hidden_states = model.layers[i].self_attn.o_proj(attn_output)
-
-        
-        hidden_states = residual + hidden_states
-        residual = hidden_states
-        hidden_states = model.layers[i].post_attention_layernorm(hidden_states)
-        hidden_states = model.layers[i].mlp(hidden_states)
-        hidden_states = residual + hidden_states
-
-        
-
-    hidden_states = model.norm(hidden_states)
-
-    return hidden_states
-
 def _sample(
     model,
     input_ids: torch.LongTensor,
@@ -404,11 +346,53 @@ def _sample(
     while not this_peer_finished:
         if prefill_consumed:
             inputs_embeds = model.model.get_input_embeddings()(input_ids[:, -1:])
-            hidden_states = forward2(model.model.language_model,
-                position_ids=position_ids,
-                past_key_values=past_key_values,
-                inputs_embeds=inputs_embeds,
-            )
+
+            hidden_states = inputs_embeds
+
+            position_embeddings = model.model.language_model.rotary_emb(hidden_states, position_ids[1:])
+
+            # decoder layers
+            for i in range(len(model.model.language_model.layers)):        
+                residual = hidden_states
+                hidden_states = model.model.language_model.layers[i].input_layernorm(hidden_states)
+
+                input_shape = hidden_states.shape[:-1]
+                hidden_shape = (*input_shape, -1, model.model.language_model.layers[i].self_attn.head_dim)
+
+                query = model.model.language_model.layers[i].self_attn.q_norm(model.model.language_model.layers[i].self_attn.q_proj(hidden_states).view(hidden_shape)).transpose(1, 2)
+                key = model.model.language_model.layers[i].self_attn.k_norm(model.model.language_model.layers[i].self_attn.k_proj(hidden_states).view(hidden_shape)).transpose(1, 2)
+                value = model.model.language_model.layers[i].self_attn.v_proj(hidden_states).view(hidden_shape).transpose(1, 2)
+
+                cos, sin = position_embeddings
+                query = (query * cos) + (rotate_half(query) * sin)
+                key = (key * cos) + (rotate_half(key) * sin)
+
+                key, value = past_key_values.update(key, value, i)   
+
+                key = key.repeat_interleave(query.size(-3)//key.size(-3), -3)
+                value = value.repeat_interleave(query.size(-3)//value.size(-3), -3)
+
+                attn_weight = query @ key.transpose(-2, -1) * model.model.language_model.layers[i].self_attn.scaling
+
+                attn_weight = torch.softmax(attn_weight, dim=-1)
+                attn_output = attn_weight @ value
+
+
+                attn_output = attn_output.transpose(1, 2).contiguous()
+
+                attn_output = attn_output.reshape(*input_shape, -1).contiguous()
+                hidden_states = model.model.language_model.layers[i].self_attn.o_proj(attn_output)
+
+                
+                hidden_states = residual + hidden_states
+                residual = hidden_states
+                hidden_states = model.model.language_model.layers[i].post_attention_layernorm(hidden_states)
+                hidden_states = model.model.language_model.layers[i].mlp(hidden_states)
+                hidden_states = residual + hidden_states
+
+            hidden_states = model.model.language_model.norm(hidden_states)
+
+
             outputs = model.lm_head(hidden_states[:, -1:, :])
 
         prefill_consumed = True
