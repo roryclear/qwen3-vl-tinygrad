@@ -320,22 +320,6 @@ def forward(
     hidden_states = model.language_model.norm(hidden_states)
     return hidden_states
 
-def _prefill(
-    model,
-    input_ids,
-    pixel_values,
-    past_key_values,
-    image_grid_thw):
-
-
-    hidden_states = forward(model.model, pixel_values=pixel_values,
-                        past_key_values=past_key_values,
-                        image_grid_thw=image_grid_thw,
-                        input_ids=input_ids)
-    logits = model.lm_head(hidden_states[:, -1:, :])
-    return logits
-
-
 def forward2(
     model,
     position_ids: torch.LongTensor | None = None,
@@ -410,13 +394,12 @@ def _sample(
     unfinished_sequences = torch.ones(batch_size, dtype=torch.long, device=input_ids.device)
 
     prefill_consumed = False
-    outputs = _prefill(
-        model,
-        input_ids,
-        pixel_values,
-        past_key_values,
-        image_grid_thw,
-    )
+    hidden_states = forward(model.model, pixel_values=pixel_values,
+                        past_key_values=past_key_values,
+                        image_grid_thw=image_grid_thw,
+                        input_ids=input_ids)
+    outputs = model.lm_head(hidden_states[:, -1:, :])
+
 
     while not this_peer_finished:
         if prefill_consumed:
