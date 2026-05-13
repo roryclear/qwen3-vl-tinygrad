@@ -127,6 +127,7 @@ def rotate_half(x):
 
 def forward(
     model,
+    tiny_model,
     input_ids,
     _pad_token_tensor,
     pixel_values,
@@ -189,9 +190,11 @@ def forward(
             idx_list[i].extend(indices[i].tolist())
             weight_list[i].extend(weights[i].tolist())
 
-    idx_tensor = torch.tensor(idx_list, device=device)
+    idx_tensor = torch.tensor(idx_list, device=device, dtype=torch.int32)
     weight_tensor = torch.tensor(weight_list, dtype=model.model.visual.pos_embed.weight.dtype, device=device)
-    pos_embeds = model.model.visual.pos_embed(idx_tensor)
+    idx_tensor = to_tiny(idx_tensor)
+    pos_embeds = tiny_model.model.visual.pos_embed(idx_tensor)
+    pos_embeds = to_torch(pos_embeds, type=torch.bfloat16)
     pos_embeds *= weight_tensor[:, :, None]
     patch_pos_embeds = pos_embeds[0] + pos_embeds[1] + pos_embeds[2] + pos_embeds[3]
 
@@ -493,77 +496,82 @@ def _preprocess(images):
     return {"pixel_values": pixel_values, "image_grid_thw": image_grid_thw}
 
 
-model = AutoModelForImageTextToText.from_pretrained("Qwen/Qwen3-VL-2B-Instruct")
-
 from tinygrad import Tensor as tinyTensor
 from torch import Tensor
 from tinygrad.helpers import fetch
 from tinygrad.nn.state import safe_load, load_state_dict
-
-def to_tiny(x): return tinyTensor(x.detach().numpy())
-
-def to_torch(x): return Tensor(x.numpy())
-
-class blank: pass
-
-tiny_weights = safe_load(fetch(f'https://huggingface.co/Qwen/Qwen3-VL-2B-Instruct/resolve/main/model.safetensors'))
-
-print(model)
-print(model.model.visual.pos_embed)
-print(model.model.visual.pos_embed.weight.shape)
-
-tiny_model = blank()
-tiny_model.model = blank()
-tiny_model.model.visual = blank()
-tiny_model.model.visual.pos_embed = tiny_nn.Embedding(2304, 1024)
-load_state_dict(tiny_model, tiny_weights)
+from tinygrad import dtypes
+if __name__ == "__main__":
+    model = AutoModelForImageTextToText.from_pretrained("Qwen/Qwen3-VL-2B-Instruct")
 
 
-#print(model.model.visual.pos_embed.bias) no bias
-#model.model.visual.pos_embed_tiny = to_tiny(model.model.visual.pos_embed)
+    def to_tiny(x): return tinyTensor(x.detach().numpy())
+
+    def to_torch(x, type=None): return torch.tensor(x.numpy()) if type is None else torch.tensor(x.numpy(), dtype=type)
+
+    class blank: pass
+
+    tiny_weights = safe_load(fetch(f'https://huggingface.co/Qwen/Qwen3-VL-2B-Instruct/resolve/main/model.safetensors'))
+
+    print(model)
+    print(model.model.visual.pos_embed)
+    print(model.model.visual.pos_embed.weight.shape)
+
+    tiny_model = blank()
+    tiny_model.model = blank()
+    tiny_model.model.visual = blank()
+    tiny_model.model.visual.pos_embed = tiny_nn.Embedding(2304, 1024)
+    tiny_model.model.visual.pos_embed.weight.cast(dtypes.bfloat16)
+    print(tiny_model.model.visual.pos_embed.weight.dtype)
+    print(model.model.visual.pos_embed.weight.dtype)
+    load_state_dict(tiny_model, tiny_weights)
 
 
-images = [Image.open(BytesIO(requests.get("https://img.wort.lu/public/luxemburg/vfka4n-picture-title-binary/alternates/ONE_ONE_256/Picture%20title%20binary").content)).convert("RGB"),
-          Image.open(BytesIO(requests.get("https://www.cartell.ie/car_check/wp-content/uploads/2012/03/Nissan-Micra-_4b.jpg").content)).convert("RGB"),
-          Image.open("test_img.jpg").convert("RGB")]
+    #print(model.model.visual.pos_embed.bias) no bias
+    #model.model.visual.pos_embed_tiny = to_tiny(model.model.visual.pos_embed)
 
-expected_outputs = ["This is a Ferrari F40, a legendary sports car produced by Ferrari from 1987 to 1992. It is renowned for its sleek design and high performance, making it one of the most iconic cars in automotive history.",
-                    "This is a Nissan Micra, a compact car produced by the Japanese automaker Nissan. The Micra is a popular and affordable car, known for its reliability and efficiency.\n\nThe Nissan Micra was first introduced in 1990 as a small, affordable car. It was designed to compete with other small cars in the market, such as the Toyota Corolla and Honda Civic. The Micra was produced in various versions, including the 1.0L and 1.3L engines, and was available in different body styles, including the hatchback and estate.\n\nThe Micra has been produced in various markets around the",
-                    "A person wearing a grey hoodie and light-colored pants is standing next to a silver car with the driver's side door open."]
 
-prompts = ["<|im_start|>user\n<|vision_start|><|image_pad|><|vision_end|>\nWhat car is this?<|im_end|>\n<|im_start|>assistant\n",
-           "<|im_start|>user\n<|vision_start|><|image_pad|><|vision_end|>\nTell me the history of this car<|im_end|>\n<|im_start|>assistant\n",
-           "<|im_start|>user\n<|vision_start|><|image_pad|><|vision_end|>\nWhat has been detected on my CCTV camera? Write in one short sentence, only info about the object(s) detected.<|im_end|>\n<|im_start|>assistant\n"]
+    images = [Image.open(BytesIO(requests.get("https://img.wort.lu/public/luxemburg/vfka4n-picture-title-binary/alternates/ONE_ONE_256/Picture%20title%20binary").content)).convert("RGB"),
+            Image.open(BytesIO(requests.get("https://www.cartell.ie/car_check/wp-content/uploads/2012/03/Nissan-Micra-_4b.jpg").content)).convert("RGB"),
+            Image.open("test_img.jpg").convert("RGB")]
 
-import pickle
-tok = pickle.load(open("tok.pkl", "rb"))
+    expected_outputs = ["This is a Ferrari F40, a legendary sports car produced by Ferrari from 1987 to 1992. It is renowned for its sleek design and high performance, making it one of the most iconic cars in automotive history.",
+                        "This is a Nissan Micra, a compact car produced by the Japanese automaker Nissan. The Micra is a popular and affordable car, known for its reliability and efficiency.\n\nThe Nissan Micra was first introduced in 1990 as a small, affordable car. It was designed to compete with other small cars in the market, such as the Toyota Corolla and Honda Civic. The Micra was produced in various versions, including the 1.0L and 1.3L engines, and was available in different body styles, including the hatchback and estate.\n\nThe Micra has been produced in various markets around the",
+                        "A person wearing a grey hoodie and light-colored pants is standing next to a silver car with the driver's side door open."]
 
-for image, expected_output, prompt in zip(images, expected_outputs, prompts):
-    text_inputs = tok.encode(prompt)
-    image = [tvF.pil_to_tensor(image)]
-    image_inputs = _preprocess(images=image)
-    merge_size = 2
-    image_grid_thw = image_inputs["image_grid_thw"]  # [batch, 3] -> [t, h, w]
-    num_image_tokens = (image_grid_thw.prod(dim=-1) / (merge_size ** 2)).item()
+    prompts = ["<|im_start|>user\n<|vision_start|><|image_pad|><|vision_end|>\nWhat car is this?<|im_end|>\n<|im_start|>assistant\n",
+            "<|im_start|>user\n<|vision_start|><|image_pad|><|vision_end|>\nTell me the history of this car<|im_end|>\n<|im_start|>assistant\n",
+            "<|im_start|>user\n<|vision_start|><|image_pad|><|vision_end|>\nWhat has been detected on my CCTV camera? Write in one short sentence, only info about the object(s) detected.<|im_end|>\n<|im_start|>assistant\n"]
 
-    image_token_id = 151655
-    image_token_positions = [i for i, tid in enumerate(text_inputs) if tid == image_token_id]
+    import pickle
+    tok = pickle.load(open("tok.pkl", "rb"))
 
-    for pos in reversed(image_token_positions):  # reversed to maintain indices
-        text_inputs[pos:pos+1] = [image_token_id] * int(num_image_tokens)
+    for image, expected_output, prompt in zip(images, expected_outputs, prompts):
+        text_inputs = tok.encode(prompt)
+        image = [tvF.pil_to_tensor(image)]
+        image_inputs = _preprocess(images=image)
+        merge_size = 2
+        image_grid_thw = image_inputs["image_grid_thw"]  # [batch, 3] -> [t, h, w]
+        num_image_tokens = (image_grid_thw.prod(dim=-1) / (merge_size ** 2)).item()
 
-    mm_token_type_ids = [0] * len(text_inputs)
-    for pos in image_token_positions: mm_token_type_ids[pos:pos + int(num_image_tokens)] = [1] * int(num_image_tokens)
+        image_token_id = 151655
+        image_token_positions = [i for i, tid in enumerate(text_inputs) if tid == image_token_id]
 
-    outputs = forward(model=model, input_ids=torch.tensor([text_inputs]), _pad_token_tensor=151643, past_key_values=SimpleKVCache(), pixel_values=image_inputs['pixel_values'],
-            position_ids=torch.arange(torch.tensor([text_inputs]).shape[-1]).unsqueeze(0).unsqueeze(0).repeat(4, 1, 1), image_grid_thw=image_inputs['image_grid_thw'])
+        for pos in reversed(image_token_positions):  # reversed to maintain indices
+            text_inputs[pos:pos+1] = [image_token_id] * int(num_image_tokens)
 
-    #outputs = model.generate(**inputs, max_new_tokens=128)
-    generated_ids = outputs[0][len(text_inputs):]
-    output = tok.decode(generated_ids.detach().numpy())
-    output = output.replace("<|im_end|>","") # todo hack
-    print(output)
-    assert output == expected_output
+        mm_token_type_ids = [0] * len(text_inputs)
+        for pos in image_token_positions: mm_token_type_ids[pos:pos + int(num_image_tokens)] = [1] * int(num_image_tokens)
+
+        outputs = forward(model=model, tiny_model=tiny_model, input_ids=torch.tensor([text_inputs]), _pad_token_tensor=151643, past_key_values=SimpleKVCache(), pixel_values=image_inputs['pixel_values'],
+                position_ids=torch.arange(torch.tensor([text_inputs]).shape[-1]).unsqueeze(0).unsqueeze(0).repeat(4, 1, 1), image_grid_thw=image_inputs['image_grid_thw'])
+
+        #outputs = model.generate(**inputs, max_new_tokens=128)
+        generated_ids = outputs[0][len(text_inputs):]
+        output = tok.decode(generated_ids.detach().numpy())
+        output = output.replace("<|im_end|>","") # todo hack
+        print(output)
+        assert output == expected_output
 
 
 
