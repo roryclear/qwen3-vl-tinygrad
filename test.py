@@ -9,7 +9,7 @@ import torch.nn.functional as F
 import importlib
 import random
 import numpy as np
-from tinygrad import Tensor
+from tinygrad import Tensor, nn as tiny_nn
 import math
 import copy
 from functools import partial
@@ -190,9 +190,10 @@ def forward(
             idx_list[i].extend(indices[i].tolist())
             weight_list[i].extend(weights[i].tolist())
 
-    idx_tensor = torch.tensor(idx_list, dtype=torch.long, device=device)
+    idx_tensor = torch.tensor(idx_list, device=device)
     weight_tensor = torch.tensor(weight_list, dtype=model.model.visual.pos_embed.weight.dtype, device=device)
-    pos_embeds = model.model.visual.pos_embed(idx_tensor) * weight_tensor[:, :, None]
+    pos_embeds = model.model.visual.pos_embed(idx_tensor)
+    pos_embeds *= weight_tensor[:, :, None]
     patch_pos_embeds = pos_embeds[0] + pos_embeds[1] + pos_embeds[2] + pos_embeds[3]
 
     patch_pos_embeds = patch_pos_embeds.split([h * w for h, w in zip(grid_hs, grid_ws)])
@@ -493,7 +494,6 @@ def _preprocess(images):
     return {"pixel_values": pixel_values, "image_grid_thw": image_grid_thw}
 
 
-
 model = AutoModelForImageTextToText.from_pretrained("Qwen/Qwen3-VL-2B-Instruct")
 
 from tinygrad import Tensor as tinyTensor
@@ -516,9 +516,9 @@ print(model.model.visual.pos_embed.weight.shape)
 tiny_model = blank()
 tiny_model.model = blank()
 tiny_model.model.visual = blank()
-tiny_model.model.visual.pos_embed = blank()
-tiny_model.model.visual.pos_embed.weight = tinyTensor.zeros(2304, 1024)
+tiny_model.model.visual.pos_embed = tiny_nn.Embedding(2304, 1024)
 load_state_dict(tiny_model, tiny_weights)
+
 
 #print(model.model.visual.pos_embed.bias) no bias
 #model.model.visual.pos_embed_tiny = to_tiny(model.model.visual.pos_embed)
