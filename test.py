@@ -293,8 +293,16 @@ def forward(
 
         hidden_shape = (*input_shape, -1, model.model.language_model.layers[i].self_attn.head_dim)
 
-        query = model.model.language_model.layers[i].self_attn.q_norm(model.model.language_model.layers[i].self_attn.q_proj(hidden_states).view(hidden_shape)).transpose(1, 2)
-        key = model.model.language_model.layers[i].self_attn.k_norm(model.model.language_model.layers[i].self_attn.k_proj(hidden_states).view(hidden_shape)).transpose(1, 2)
+        query = model.model.language_model.layers[i].self_attn.q_proj(hidden_states).view(hidden_shape)
+        key = model.model.language_model.layers[i].self_attn.k_proj(hidden_states).view(hidden_shape)
+
+        query = to_tiny(query)
+        key = to_tiny(key)
+        query = tiny_model.model.language_model.layers[i].self_attn.q_norm(query).transpose(1, 2)
+        key = tiny_model.model.language_model.layers[i].self_attn.k_norm(key).transpose(1, 2)
+        query = to_torch(query, type=torch.bfloat16)
+        key = to_torch(key, type=torch.bfloat16)
+
         value = model.model.language_model.layers[i].self_attn.v_proj(hidden_states).view(hidden_shape).transpose(1, 2)
 
         cos, sin = position_embeddings
@@ -333,7 +341,10 @@ def forward(
         hidden_states = residual + hidden_states
    
         if i < len(deepstack_feature_lists): hidden_states[image_mask, :] += deepstack_feature_lists[i]
-    hidden_states = model.model.language_model.norm(hidden_states)
+    
+    hidden_states = to_tiny(hidden_states)
+    hidden_states = tiny_model.model.language_model.norm(hidden_states)
+    hidden_states = to_torch(hidden_states, type=torch.bfloat16)
 
     outputs = model.lm_head(hidden_states[:, -1:, :])
 
@@ -353,8 +364,16 @@ def forward(
                 input_shape = hidden_states.shape[:-1]
                 hidden_shape = (*input_shape, -1, model.model.language_model.layers[i].self_attn.head_dim)
 
-                query = model.model.language_model.layers[i].self_attn.q_norm(model.model.language_model.layers[i].self_attn.q_proj(hidden_states).view(hidden_shape)).transpose(1, 2)
-                key = model.model.language_model.layers[i].self_attn.k_norm(model.model.language_model.layers[i].self_attn.k_proj(hidden_states).view(hidden_shape)).transpose(1, 2)
+                query = model.model.language_model.layers[i].self_attn.q_proj(hidden_states).view(hidden_shape)
+                key = model.model.language_model.layers[i].self_attn.k_proj(hidden_states).view(hidden_shape)
+
+                query = to_tiny(query)
+                key = to_tiny(key)
+                query = tiny_model.model.language_model.layers[i].self_attn.q_norm(query).transpose(1, 2)
+                key = tiny_model.model.language_model.layers[i].self_attn.k_norm(key).transpose(1, 2)
+                query = to_torch(query, type=torch.bfloat16)
+                key = to_torch(key, type=torch.bfloat16)
+
                 value = model.model.language_model.layers[i].self_attn.v_proj(hidden_states).view(hidden_shape).transpose(1, 2)
 
                 cos, sin = position_embeddings
@@ -552,12 +571,14 @@ if __name__ == "__main__":
     print(model.model.language_model.layers[0].input_layernorm)
     print(model.model.language_model.layers[0].input_layernorm.weight.shape, model.model.language_model.layers[0].input_layernorm.variance_epsilon)
     # todo
+    tiny_model.model.language_model.norm = Qwen3VLTextRMSNorm_tiny(size=2048)
     for i in range(len(model.model.language_model.layers)):
        tiny_model.model.language_model.layers.append(blank())
+       tiny_model.model.language_model.layers[i].self_attn = blank()
+       tiny_model.model.language_model.layers[i].self_attn.q_norm = Qwen3VLTextRMSNorm_tiny(size=128)
+       tiny_model.model.language_model.layers[i].self_attn.k_norm = Qwen3VLTextRMSNorm_tiny(size=128)
        tiny_model.model.language_model.layers[i].input_layernorm = Qwen3VLTextRMSNorm_tiny(size=2048)
-       tiny_model.model.language_model.layers[i].input_layernorm.weight.cast(dtypes.bfloat16)
        tiny_model.model.language_model.layers[i].post_attention_layernorm = Qwen3VLTextRMSNorm_tiny(size=2048)
-       tiny_model.model.language_model.layers[i].post_attention_layernorm.weight.cast(dtypes.bfloat16)
        
     load_state_dict(tiny_model, tiny_weights)
 
@@ -568,8 +589,8 @@ if __name__ == "__main__":
     images = [Image.open(BytesIO(requests.get("https://img.wort.lu/public/luxemburg/vfka4n-picture-title-binary/alternates/ONE_ONE_256/Picture%20title%20binary").content)).convert("RGB"),
             Image.open(BytesIO(requests.get("https://www.cartell.ie/car_check/wp-content/uploads/2012/03/Nissan-Micra-_4b.jpg").content)).convert("RGB"),
             Image.open("test_img.jpg").convert("RGB")]
-    expected_outputs = ["This is a Ferrari F40, a legendary sports car produced by Ferrari from 1987 to 1992. It is known for its sleek design and powerful performance, making it one of the most iconic cars in automotive history.",
-                        "This is a Nissan Micra, a compact car produced by the Japanese automaker Nissan. The Micra is a popular and affordable car, known for its reliability and efficiency.\n\nThe Nissan Micra was first introduced in 1990 as a small, affordable car. It was designed to compete with other small cars in the market, and it quickly gained popularity due to its fuel efficiency and low cost.\n\nThe Micra was produced in several different versions, including the 1.0L and 1.3L engines, which were available in different configurations. The Micra was also available with different body styles, including the standard",
+    expected_outputs = ["This is a Ferrari F40, a legendary sports car produced by Ferrari from 1987 to 1992. It is renowned for its sleek design and high performance, making it one of the most iconic cars in automotive history.",
+                        "This is a Nissan Micra, a compact car produced by the Japanese automaker Nissan. The Micra is a popular and affordable car, known for its reliability and efficiency.\n\nThe Nissan Micra was first introduced in 1990 as a small, affordable car. It was designed to compete with other small cars in the market, such as the Toyota Corolla and Honda Civic. The Micra was produced in various versions, including the 1.0L and 1.3L engines, and was available in different body styles, including the hatchback and estate.\n\nThe Micra was known for its low price and high",
                         "A person wearing a grey hoodie and light-colored pants is standing next to a silver car with the driver's side door open."]
 
     prompts = ["<|im_start|>user\n<|vision_start|><|image_pad|><|vision_end|>\nWhat car is this?<|im_end|>\n<|im_start|>assistant\n",
