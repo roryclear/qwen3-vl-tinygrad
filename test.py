@@ -382,15 +382,15 @@ def forward(
 
             position_embeddings = model.model.language_model.rotary_emb(hidden_states, position_ids[1:])
 
+            hidden_states = to_tiny(hidden_states)
             # decoder layers
-            for i in range(len(model.model.language_model.layers)):        
+            for i in range(len(tiny_model.model.language_model.layers)):        
                 residual = hidden_states
-                hidden_states = model.model.language_model.layers[i].input_layernorm(hidden_states)
+                hidden_states = tiny_model.model.language_model.layers[i].input_layernorm(hidden_states)
 
                 input_shape = hidden_states.shape[:-1]
                 hidden_shape = (*input_shape, -1, model.model.language_model.layers[i].self_attn.head_dim)
                 
-                hidden_states = to_tiny(hidden_states)
                 query = tiny_model.model.language_model.layers[i].self_attn.q_proj(hidden_states).view(hidden_shape)
                 key = tiny_model.model.language_model.layers[i].self_attn.k_proj(hidden_states).view(hidden_shape)
                 query = tiny_model.model.language_model.layers[i].self_attn.q_norm(query).transpose(1, 2)
@@ -420,23 +420,21 @@ def forward(
                 attn_output = attn_output.transpose(1, 2).contiguous()
 
                 attn_output = attn_output.reshape(*input_shape, -1).contiguous()
-                hidden_states = model.model.language_model.layers[i].self_attn.o_proj(attn_output)
 
-                
+                attn_output = to_tiny(attn_output)
+
+                hidden_states = tiny_model.model.language_model.layers[i].self_attn.o_proj(attn_output)                
                 hidden_states = residual + hidden_states
                 residual = hidden_states
-                hidden_states = model.model.language_model.layers[i].post_attention_layernorm(hidden_states)
-
-                hidden_states = to_tiny(hidden_states)
-
+                hidden_states = tiny_model.model.language_model.layers[i].post_attention_layernorm(hidden_states)
                 gate = tiny_model.model.language_model.layers[i].mlp.gate_proj(hidden_states)
                 up = tiny_model.model.language_model.layers[i].mlp.up_proj(hidden_states)
                 activated = tinyTensor.silu(gate)
                 combined = activated * up
                 hidden_states = tiny_model.model.language_model.layers[i].mlp.down_proj(combined)
-                hidden_states = to_torch(hidden_states)
                 hidden_states = residual + hidden_states
 
+            hidden_states = to_torch(hidden_states)
             hidden_states = model.model.language_model.norm(hidden_states)
 
 
@@ -477,6 +475,7 @@ def forward(
         next_tokens = next_tokens * unfinished_sequences + pad_token_id * (1 - unfinished_sequences)
 
         input_ids = torch.cat([input_ids, next_tokens[:, None]], dim=-1)
+        print(len(input_ids[0]))
         this_peer_finished = input_ids[0][-1] == 151645 or len(input_ids[0]) == 406
         del outputs
 
@@ -632,7 +631,7 @@ if __name__ == "__main__":
             Image.open(BytesIO(requests.get("https://www.cartell.ie/car_check/wp-content/uploads/2012/03/Nissan-Micra-_4b.jpg").content)).convert("RGB"),
             Image.open("test_img.jpg").convert("RGB")]
     expected_outputs = ["This is a Ferrari F40, a legendary sports car produced by Ferrari from 1987 to 1992. It is renowned for its sleek design and high performance, making it one of the most iconic cars in automotive history.",
-                        "This is a Nissan Micra, a compact car produced by the Japanese automaker Nissan. The Micra is a popular and affordable car, known for its reliability and efficiency.\n\nThe Micra was first introduced in 1992 as a compact hatchback. It was designed to be a practical and economical car for everyday use, with a focus on fuel efficiency and low maintenance costs. The Micra was produced in various versions, including the 1.0L and 1.3L engines, and was available in different trim levels.\n\nThe Micra was particularly popular in Europe, where it was often compared to other compact cars",
+                        "This is a Nissan Micra, a compact car produced by the Japanese automaker Nissan. The Micra is a popular and affordable car, known for its reliability and efficiency.\n\nThe Micra was first introduced in 1992 as a small, economical car. It was designed to be a practical and efficient vehicle for everyday use, and it quickly gained popularity in Japan and other markets.\n\nOver the years, the Micra has undergone several redesigns and updates. The most recent model, the 2019 version, features a more modern design and improved safety features.\n\nThe Micra is known for its low price, high",
                         "A person wearing a grey hoodie and light-colored pants is standing next to a silver car with the driver's side door open."]
 
     prompts = ["<|im_start|>user\n<|vision_start|><|image_pad|><|vision_end|>\nWhat car is this?<|im_end|>\n<|im_start|>assistant\n",
