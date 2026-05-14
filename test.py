@@ -160,19 +160,19 @@ def forward(
     weight_list = [[] for _ in range(4)]
 
     for t, h, w in grid_thw_list:
-        h_idxs = torch.linspace(0, model.model.visual.num_grid_per_side - 1, h)
-        w_idxs = torch.linspace(0, model.model.visual.num_grid_per_side - 1, w)
+        h_idxs = torch.linspace(0, tiny_model.model.visual.num_grid_per_side - 1, h)
+        w_idxs = torch.linspace(0, tiny_model.model.visual.num_grid_per_side - 1, w)
 
         h_idxs_floor = h_idxs.int()
         w_idxs_floor = w_idxs.int()
-        h_idxs_ceil = (h_idxs.int() + 1).clip(max=model.model.visual.num_grid_per_side - 1)
-        w_idxs_ceil = (w_idxs.int() + 1).clip(max=model.model.visual.num_grid_per_side - 1)
+        h_idxs_ceil = (h_idxs.int() + 1).clip(max=tiny_model.model.visual.num_grid_per_side - 1)
+        w_idxs_ceil = (w_idxs.int() + 1).clip(max=tiny_model.model.visual.num_grid_per_side - 1)
 
         dh = h_idxs - h_idxs_floor
         dw = w_idxs - w_idxs_floor
 
-        base_h = h_idxs_floor * model.model.visual.num_grid_per_side
-        base_h_ceil = h_idxs_ceil * model.model.visual.num_grid_per_side
+        base_h = h_idxs_floor * tiny_model.model.visual.num_grid_per_side
+        base_h_ceil = h_idxs_ceil * tiny_model.model.visual.num_grid_per_side
 
         indices = [
             (base_h[None].T + w_idxs_floor[None]).flatten(),
@@ -203,7 +203,7 @@ def forward(
     patch_pos_embeds = patch_pos_embeds.split([h * w for h, w in zip(grid_hs, grid_ws)])
 
     patch_pos_embeds_permute = []
-    merge_size = model.model.visual.config.spatial_merge_size
+    merge_size = tiny_model.model.visual.config.spatial_merge_size
     for pos_embed, t, h, w in zip(patch_pos_embeds, grid_ts, grid_hs, grid_ws):
         pos_embed = pos_embed.repeat(t, 1)
         pos_embed = (
@@ -216,7 +216,7 @@ def forward(
 
 
     hidden_states = hidden_states + pos_embeds
-
+    
     rotary_pos_emb = model.model.visual.rot_pos_emb(image_grid_thw)
 
     seq_len, _ = hidden_states.size()
@@ -611,6 +611,9 @@ if __name__ == "__main__":
     tiny_model = blank()
     tiny_model.model = blank()
     tiny_model.model.visual = blank()
+    tiny_model.model.visual.config = blank()
+    tiny_model.model.visual.config.spatial_merge_size = 2
+    tiny_model.model.visual.num_grid_per_side = 48
     tiny_model.model.visual.pos_embed = tiny_nn.Embedding(2304, 1024)
     tiny_model.model.language_model = blank()
     tiny_model.model.language_model.layers = []
