@@ -194,7 +194,7 @@ def forward(
     weight_tensor = torch.tensor(weight_list, dtype=model.model.visual.pos_embed.weight.dtype, device=device)
     idx_tensor = to_tiny(idx_tensor)
     pos_embeds = tiny_model.model.visual.pos_embed(idx_tensor)
-    pos_embeds = to_torch(pos_embeds, type=torch.bfloat16)
+    pos_embeds = to_torch(pos_embeds)
     pos_embeds *= weight_tensor[:, :, None]
     patch_pos_embeds = pos_embeds[0] + pos_embeds[1] + pos_embeds[2] + pos_embeds[3]
 
@@ -306,7 +306,7 @@ def forward(
         hidden_states = to_tiny(hidden_states)
         hidden_states = tiny_model.model.language_model.layers[i].input_layernorm(hidden_states)
         input_shape = hidden_states.shape[:-1]
-        hidden_states = to_torch(hidden_states, type=torch.bfloat16)
+        hidden_states = to_torch(hidden_states)
 
         hidden_shape = (*input_shape, -1, model.model.language_model.layers[i].self_attn.head_dim)
 
@@ -317,8 +317,8 @@ def forward(
         key = to_tiny(key)
         query = tiny_model.model.language_model.layers[i].self_attn.q_norm(query).transpose(1, 2)
         key = tiny_model.model.language_model.layers[i].self_attn.k_norm(key).transpose(1, 2)
-        query = to_torch(query, type=torch.bfloat16)
-        key = to_torch(key, type=torch.bfloat16)
+        query = to_torch(query)
+        key = to_torch(key)
 
         value = model.model.language_model.layers[i].self_attn.v_proj(hidden_states).view(hidden_shape).transpose(1, 2)
 
@@ -353,7 +353,7 @@ def forward(
         residual = hidden_states
         hidden_states = to_tiny(hidden_states)
         hidden_states = tiny_model.model.language_model.layers[i].post_attention_layernorm(hidden_states)
-        hidden_states = to_torch(hidden_states, type=torch.bfloat16)
+        hidden_states = to_torch(hidden_states)
         
         
         gate = model.model.language_model.layers[i].mlp.gate_proj(hidden_states)
@@ -367,7 +367,7 @@ def forward(
     
     hidden_states = to_tiny(hidden_states)
     hidden_states = tiny_model.model.language_model.norm(hidden_states)
-    hidden_states = to_torch(hidden_states, type=torch.bfloat16)
+    hidden_states = to_torch(hidden_states)
 
     outputs = model.lm_head(hidden_states[:, -1:, :])
 
@@ -394,8 +394,8 @@ def forward(
                 key = to_tiny(key)
                 query = tiny_model.model.language_model.layers[i].self_attn.q_norm(query).transpose(1, 2)
                 key = tiny_model.model.language_model.layers[i].self_attn.k_norm(key).transpose(1, 2)
-                query = to_torch(query, type=torch.bfloat16)
-                key = to_torch(key, type=torch.bfloat16)
+                query = to_torch(query)
+                key = to_torch(key)
 
                 value = model.model.language_model.layers[i].self_attn.v_proj(hidden_states).view(hidden_shape).transpose(1, 2)
 
@@ -574,7 +574,9 @@ if __name__ == "__main__":
        if x.dtype == torch.bfloat16: return tinyTensor(x.detach().to(torch.float16).numpy()).cast(dtypes.bfloat16)
        return tinyTensor(x.detach().numpy())
 
-    def to_torch(x, type=None): return torch.tensor(x.numpy()) if type is None else torch.tensor(x.numpy(), dtype=type)
+    def to_torch(x):
+      if x.dtype == dtypes.bfloat16: return torch.tensor(x.numpy(), dtype=torch.bfloat16)
+      return torch.tensor(x.numpy())
 
     class blank: pass
 
