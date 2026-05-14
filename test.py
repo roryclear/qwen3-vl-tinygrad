@@ -285,9 +285,12 @@ def forward(
     position_embeddings = model.model.language_model.rotary_emb(hidden_states, position_ids[1:])
     for i in range(len(model.model.language_model.layers)): # todo same block above
         residual = hidden_states
-        hidden_states = model.model.language_model.layers[i].input_layernorm(hidden_states)
 
+        hidden_states = to_tiny(hidden_states)
+        hidden_states = tiny_model.model.language_model.layers[i].input_layernorm(hidden_states)
         input_shape = hidden_states.shape[:-1]
+        hidden_states = to_torch(hidden_states, type=torch.bfloat16)
+
         hidden_shape = (*input_shape, -1, model.model.language_model.layers[i].self_attn.head_dim)
 
         query = model.model.language_model.layers[i].self_attn.q_norm(model.model.language_model.layers[i].self_attn.q_proj(hidden_states).view(hidden_shape)).transpose(1, 2)
@@ -323,7 +326,9 @@ def forward(
 
         hidden_states = residual + hidden_states
         residual = hidden_states
-        hidden_states = model.model.language_model.layers[i].post_attention_layernorm(hidden_states)
+        hidden_states = to_tiny(hidden_states)
+        hidden_states = tiny_model.model.language_model.layers[i].post_attention_layernorm(hidden_states)
+        hidden_states = to_torch(hidden_states, type=torch.bfloat16)
         hidden_states = model.model.language_model.layers[i].mlp(hidden_states)
         hidden_states = residual + hidden_states
    
@@ -497,15 +502,31 @@ def _preprocess(images):
 
 
 from tinygrad import Tensor as tinyTensor
+tinyTensor.manual_seed(42)
 from torch import Tensor
 from tinygrad.helpers import fetch
 from tinygrad.nn.state import safe_load, load_state_dict
 from tinygrad import dtypes
+
+class Qwen3VLTextRMSNorm_tiny():
+    def __init__(self, size):
+        self.variance_epsilon = 1e-06
+        self.weight = tinyTensor.zeros(size)
+
+    def __call__(self, hidden_states):
+        variance = hidden_states.pow(2).mean(-1, keepdim=True)
+        hidden_states = hidden_states * tinyTensor.rsqrt(variance + self.variance_epsilon)
+        return self.weight * hidden_states
+    
+
+
 if __name__ == "__main__":
     model = AutoModelForImageTextToText.from_pretrained("Qwen/Qwen3-VL-2B-Instruct")
 
 
-    def to_tiny(x): return tinyTensor(x.detach().numpy())
+    def to_tiny(x):
+       if x.dtype == torch.bfloat16: return tinyTensor(x.detach().to(torch.float16).numpy()).cast(dtypes.bfloat16)
+       return tinyTensor(x.detach().numpy())
 
     def to_torch(x, type=None): return torch.tensor(x.numpy()) if type is None else torch.tensor(x.numpy(), dtype=type)
 
@@ -521,11 +542,24 @@ if __name__ == "__main__":
     tiny_model.model = blank()
     tiny_model.model.visual = blank()
     tiny_model.model.visual.pos_embed = tiny_nn.Embedding(2304, 1024)
+    tiny_model.model.language_model = blank()
+    tiny_model.model.language_model.layers = []
+
     tiny_model.model.visual.pos_embed.weight.cast(dtypes.bfloat16)
     print(tiny_model.model.visual.pos_embed.weight.dtype)
+    print(len(model.model.language_model.layers))
     print(model.model.visual.pos_embed.weight.dtype)
+    print(model.model.language_model.layers[0].input_layernorm)
+    print(model.model.language_model.layers[0].input_layernorm.weight.shape, model.model.language_model.layers[0].input_layernorm.variance_epsilon)
+    # todo
+    for i in range(len(model.model.language_model.layers)):
+       tiny_model.model.language_model.layers.append(blank())
+       tiny_model.model.language_model.layers[i].input_layernorm = Qwen3VLTextRMSNorm_tiny(size=2048)
+       tiny_model.model.language_model.layers[i].input_layernorm.weight.cast(dtypes.bfloat16)
+       tiny_model.model.language_model.layers[i].post_attention_layernorm = Qwen3VLTextRMSNorm_tiny(size=2048)
+       tiny_model.model.language_model.layers[i].post_attention_layernorm.weight.cast(dtypes.bfloat16)
+       
     load_state_dict(tiny_model, tiny_weights)
-
 
     #print(model.model.visual.pos_embed.bias) no bias
     #model.model.visual.pos_embed_tiny = to_tiny(model.model.visual.pos_embed)
@@ -534,9 +568,8 @@ if __name__ == "__main__":
     images = [Image.open(BytesIO(requests.get("https://img.wort.lu/public/luxemburg/vfka4n-picture-title-binary/alternates/ONE_ONE_256/Picture%20title%20binary").content)).convert("RGB"),
             Image.open(BytesIO(requests.get("https://www.cartell.ie/car_check/wp-content/uploads/2012/03/Nissan-Micra-_4b.jpg").content)).convert("RGB"),
             Image.open("test_img.jpg").convert("RGB")]
-
-    expected_outputs = ["This is a Ferrari F40, a legendary sports car produced by Ferrari from 1987 to 1992. It is renowned for its sleek design and high performance, making it one of the most iconic cars in automotive history.",
-                        "This is a Nissan Micra, a compact car produced by the Japanese automaker Nissan. The Micra is a popular and affordable car, known for its reliability and efficiency.\n\nThe Nissan Micra was first introduced in 1990 as a small, affordable car. It was designed to compete with other small cars in the market, such as the Toyota Corolla and Honda Civic. The Micra was produced in various versions, including the 1.0L and 1.3L engines, and was available in different body styles, including the hatchback and estate.\n\nThe Micra has been produced in various markets around the",
+    expected_outputs = ["This is a Ferrari F40, a legendary sports car produced by Ferrari from 1987 to 1992. It is known for its sleek design and powerful performance, making it one of the most iconic cars in automotive history.",
+                        "This is a Nissan Micra, a compact car produced by the Japanese automaker Nissan. The Micra is a popular and affordable car, known for its reliability and efficiency.\n\nThe Nissan Micra was first introduced in 1990 as a small, affordable car. It was designed to compete with other small cars in the market, and it quickly gained popularity due to its fuel efficiency and low cost.\n\nThe Micra was produced in several different versions, including the 1.0L and 1.3L engines, which were available in different configurations. The Micra was also available with different body styles, including the standard",
                         "A person wearing a grey hoodie and light-colored pants is standing next to a silver car with the driver's side door open."]
 
     prompts = ["<|im_start|>user\n<|vision_start|><|image_pad|><|vision_end|>\nWhat car is this?<|im_end|>\n<|im_start|>assistant\n",
@@ -572,6 +605,7 @@ if __name__ == "__main__":
         output = output.replace("<|im_end|>","") # todo hack
         print(output)
         assert output == expected_output
+
 
 
 
