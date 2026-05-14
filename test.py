@@ -354,10 +354,11 @@ def forward(
         hidden_states = to_tiny(hidden_states)
         hidden_states = tiny_model.model.language_model.layers[i].post_attention_layernorm(hidden_states)
         hidden_states = to_torch(hidden_states, type=torch.bfloat16)
-
+        
+        
         gate = model.model.language_model.layers[i].mlp.gate_proj(hidden_states)
         up = model.model.language_model.layers[i].mlp.up_proj(hidden_states)
-        activated = model.model.language_model.layers[i].mlp.act_fn(gate)
+        activated = F.silu(gate)
         combined = activated * up
         hidden_states = model.model.language_model.layers[i].mlp.down_proj(combined)
         hidden_states = residual + hidden_states
@@ -425,7 +426,7 @@ def forward(
 
                 gate = model.model.language_model.layers[i].mlp.gate_proj(hidden_states)
                 up = model.model.language_model.layers[i].mlp.up_proj(hidden_states)
-                activated = model.model.language_model.layers[i].mlp.act_fn(gate)
+                activated = F.silu(gate)
                 combined = activated * up
                 hidden_states = model.model.language_model.layers[i].mlp.down_proj(combined)
                 hidden_states = residual + hidden_states
@@ -599,13 +600,16 @@ if __name__ == "__main__":
     # todo
     tiny_model.model.language_model.norm = Qwen3VLTextRMSNorm_tiny(size=2048)
     for i in range(len(model.model.language_model.layers)):
-       tiny_model.model.language_model.layers.append(blank())
-       tiny_model.model.language_model.layers[i].self_attn = blank()
-       tiny_model.model.language_model.layers[i].self_attn.q_norm = Qwen3VLTextRMSNorm_tiny(size=128)
-       tiny_model.model.language_model.layers[i].self_attn.k_norm = Qwen3VLTextRMSNorm_tiny(size=128)
-       tiny_model.model.language_model.layers[i].input_layernorm = Qwen3VLTextRMSNorm_tiny(size=2048)
-       tiny_model.model.language_model.layers[i].post_attention_layernorm = Qwen3VLTextRMSNorm_tiny(size=2048)
-       
+      tiny_model.model.language_model.layers.append(blank())
+      tiny_model.model.language_model.layers[i].self_attn = blank()
+      tiny_model.model.language_model.layers[i].self_attn.q_norm = Qwen3VLTextRMSNorm_tiny(size=128)
+      tiny_model.model.language_model.layers[i].self_attn.k_norm = Qwen3VLTextRMSNorm_tiny(size=128)
+      tiny_model.model.language_model.layers[i].input_layernorm = Qwen3VLTextRMSNorm_tiny(size=2048)
+      tiny_model.model.language_model.layers[i].post_attention_layernorm = Qwen3VLTextRMSNorm_tiny(size=2048)
+      tiny_model.model.language_model.layers[i].mlp = blank()
+      tiny_model.model.language_model.layers[i].mlp.gate_proj = tiny_nn.Linear(2048, 6144, bias=False)
+      tiny_model.model.language_model.layers[i].mlp.up_proj = tiny_nn.Linear(2048, 6144, bias=False)
+      tiny_model.model.language_model.layers[i].mlp.down_proj = tiny_nn.Linear(6144, 2048, bias=False)
     load_state_dict(tiny_model, tiny_weights)
 
     #print(model.model.visual.pos_embed.bias) no bias
