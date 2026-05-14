@@ -142,11 +142,11 @@ def forward(
     scores = None
     batch_size = input_ids.shape[0]
     this_peer_finished = False
-    unfinished_sequences = torch.ones(batch_size, dtype=torch.int32, device=input_ids.device)
+    unfinished_sequences = torch.ones(batch_size, dtype=torch.int32)
 
     prefill_consumed = False
 
-    inputs_embeds = model.model.language_model.embed_tokens(input_ids)
+    inputs_embeds = model.model.language_model.embed_tokens.weight[input_ids] # todo indexing not in tinygrad!
     position_ids = torch.arange(input_ids.shape[-1]).unsqueeze(0).unsqueeze(0).repeat(4, 1, 1)
 
     hidden_states = model.model.visual.patch_embed(pixel_values)
@@ -155,7 +155,6 @@ def forward(
     grid_ts = [row[0] for row in grid_thw_list]
     grid_hs = [row[1] for row in grid_thw_list]
     grid_ws = [row[2] for row in grid_thw_list]
-    device = model.model.visual.pos_embed.weight.device
 
     idx_list = [[] for _ in range(4)]
     weight_list = [[] for _ in range(4)]
@@ -193,8 +192,8 @@ def forward(
             idx_list[i].extend(indices[i].tolist())
             weight_list[i].extend(weights[i].tolist())
 
-    idx_tensor = torch.tensor(idx_list, device=device, dtype=torch.int32)
-    weight_tensor = torch.tensor(weight_list, dtype=model.model.visual.pos_embed.weight.dtype, device=device)
+    idx_tensor = torch.tensor(idx_list, dtype=torch.int32)
+    weight_tensor = torch.tensor(weight_list, dtype=model.model.visual.pos_embed.weight.dtype)
     idx_tensor = to_tiny(idx_tensor)
     pos_embeds = tiny_model.model.visual.pos_embed(idx_tensor)
     pos_embeds = to_torch(pos_embeds)
@@ -259,7 +258,7 @@ def forward(
         key = key.contiguous()
         value = value.contiguous()
         L, S = query.size(-2), key.size(-2)
-        attn_bias = torch.zeros(L, S, dtype=key.dtype, device=query.device)
+        attn_bias = torch.zeros(L, S, dtype=key.dtype)
         attn_weight = query @ key.transpose(-2, -1) * model.model.visual.blocks[i].attn.scaling
         attn_weight += attn_bias
         attn_weight = torch.softmax(attn_weight, dim=-1)
@@ -333,7 +332,7 @@ def forward(
         key, value = past_key_values.update(key, value, i)
     
         L, S = query.size(-2), key.size(-2)
-        attn_bias = torch.zeros(L, S, dtype=query.dtype, device=query.device)
+        attn_bias = torch.zeros(L, S, dtype=query.dtype)
 
         temp_mask = torch.ones(L, S, dtype=torch.bool).tril(diagonal=0)
         attn_bias.masked_fill_(temp_mask.logical_not(), float("-inf"))
@@ -456,7 +455,7 @@ def forward(
         min_tokens_to_keep = 1
         top_p = 0.8
 
-        next_token_logits = outputs[:, -1, :].to(copy=True, dtype=torch.float32, device=input_ids.device)
+        next_token_logits = outputs[:, -1, :].to(copy=True, dtype=torch.float32)
         scores = next_token_logits / temp
 
 
@@ -631,6 +630,8 @@ if __name__ == "__main__":
       tiny_model.model.language_model.layers[i].mlp.gate_proj = tiny_nn.Linear(2048, 6144, bias=False)
       tiny_model.model.language_model.layers[i].mlp.up_proj = tiny_nn.Linear(2048, 6144, bias=False)
       tiny_model.model.language_model.layers[i].mlp.down_proj = tiny_nn.Linear(6144, 2048, bias=False)
+      tiny_model.model.language_model.embed_tokens = blank()
+      tiny_model.model.language_model.embed_tokens.weight = tinyTensor.zeros(151936, 2048) # todo not used yet
     load_state_dict(tiny_model, tiny_weights)
 
     tiny_model.lm_head = tiny_nn.Linear(2048, 151936, bias=False)
