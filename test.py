@@ -193,7 +193,7 @@ def forward(
             weight_list[i].extend(weights[i].tolist())
 
     idx_tensor = torch.tensor(idx_list, dtype=torch.int32)
-    weight_tensor = torch.tensor(weight_list, dtype=model.model.visual.pos_embed.weight.dtype)
+    weight_tensor = torch.tensor(weight_list, dtype=torch.bfloat16)
     idx_tensor = to_tiny(idx_tensor)
     pos_embeds = tiny_model.model.visual.pos_embed(idx_tensor)
     pos_embeds = to_torch(pos_embeds)
