@@ -353,14 +353,14 @@ def forward(
         residual = hidden_states
         hidden_states = to_tiny(hidden_states)
         hidden_states = tiny_model.model.language_model.layers[i].post_attention_layernorm(hidden_states)
-        hidden_states = to_torch(hidden_states)
         
         
-        gate = model.model.language_model.layers[i].mlp.gate_proj(hidden_states)
-        up = model.model.language_model.layers[i].mlp.up_proj(hidden_states)
-        activated = F.silu(gate)
+        gate = tiny_model.model.language_model.layers[i].mlp.gate_proj(hidden_states)
+        up = tiny_model.model.language_model.layers[i].mlp.up_proj(hidden_states)
+        activated = tinyTensor.silu(gate)
         combined = activated * up
-        hidden_states = model.model.language_model.layers[i].mlp.down_proj(combined)
+        hidden_states = tiny_model.model.language_model.layers[i].mlp.down_proj(combined)
+        hidden_states = to_torch(hidden_states)
         hidden_states = residual + hidden_states
    
         if i < len(deepstack_feature_lists): hidden_states[image_mask, :] += deepstack_feature_lists[i]
@@ -424,11 +424,14 @@ def forward(
                 residual = hidden_states
                 hidden_states = model.model.language_model.layers[i].post_attention_layernorm(hidden_states)
 
-                gate = model.model.language_model.layers[i].mlp.gate_proj(hidden_states)
-                up = model.model.language_model.layers[i].mlp.up_proj(hidden_states)
-                activated = F.silu(gate)
+                hidden_states = to_tiny(hidden_states)
+
+                gate = tiny_model.model.language_model.layers[i].mlp.gate_proj(hidden_states)
+                up = tiny_model.model.language_model.layers[i].mlp.up_proj(hidden_states)
+                activated = tinyTensor.silu(gate)
                 combined = activated * up
-                hidden_states = model.model.language_model.layers[i].mlp.down_proj(combined)
+                hidden_states = tiny_model.model.language_model.layers[i].mlp.down_proj(combined)
+                hidden_states = to_torch(hidden_states)
                 hidden_states = residual + hidden_states
 
             hidden_states = model.model.language_model.norm(hidden_states)
@@ -621,9 +624,9 @@ if __name__ == "__main__":
     images = [Image.open(BytesIO(requests.get("https://img.wort.lu/public/luxemburg/vfka4n-picture-title-binary/alternates/ONE_ONE_256/Picture%20title%20binary").content)).convert("RGB"),
             Image.open(BytesIO(requests.get("https://www.cartell.ie/car_check/wp-content/uploads/2012/03/Nissan-Micra-_4b.jpg").content)).convert("RGB"),
             Image.open("test_img.jpg").convert("RGB")]
-    expected_outputs = ["This is a Ferrari F40, a legendary sports car produced by Ferrari from 1987 to 1992. It is renowned for its sleek design and high performance, making it one of the most iconic cars in automotive history.",
-                        "This is a Nissan Micra, a compact car produced by the Japanese automaker Nissan. The Micra is a popular and affordable car, known for its reliability and efficiency.\n\nThe Nissan Micra was first introduced in 1990 as a small, affordable car. It was designed to compete with other small cars in the market, such as the Toyota Corolla and Honda Civic. The Micra was produced in various versions, including the 1.0L and 1.3L engines, and was available in different body styles, including the hatchback and estate.\n\nThe Micra was known for its low price and high",
-                        "A person wearing a grey hoodie and light-colored pants is standing next to a silver car with the driver's side door open."]
+    expected_outputs = ["This is a Ferrari F40, a legendary sports car produced by Ferrari from 1987 to 1992. It is renowned for its sleek design and high performance, making it one of the most iconic cars in automotive history. The F40 was a groundbreaking vehicle that pushed the boundaries of automotive engineering and design, and it has become a symbol of speed, elegance, and innovation.",
+                        "The car in the image is the **Nissan Micra**, a compact car produced by Nissan. It was first introduced in 1990 and has been a popular choice in the UK and other markets.\n\nThe Nissan Micra is known for its affordability and practicality, making it a favorite among younger drivers and families. It was developed to meet the growing demand for small, efficient vehicles in the UK market.\n\nThe Micra has been produced in several generations, with the most recent being the **Nissan Micra (2006–2015)**, which was a significant model in the UK market. It",
+                        "A person wearing a grey hoodie is standing by the open driver's side door of a silver car."]
 
     prompts = ["<|im_start|>user\n<|vision_start|><|image_pad|><|vision_end|>\nWhat car is this?<|im_end|>\n<|im_start|>assistant\n",
             "<|im_start|>user\n<|vision_start|><|image_pad|><|vision_end|>\nTell me the history of this car<|im_end|>\n<|im_start|>assistant\n",
