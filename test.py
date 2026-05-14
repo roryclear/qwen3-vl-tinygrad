@@ -278,12 +278,14 @@ def forward(
             deepstack_feature = layer.linear_fc2(layer.act_fn(layer.linear_fc1(deepstack_feature)))
             deepstack_feature_lists.append(deepstack_feature)
 
-    
-    image_embeds = model.model.visual.merger.norm(hidden_states)
-    image_embeds = image_embeds.view(-1, model.model.visual.merger.hidden_size)
-    image_embeds = model.model.visual.merger.linear_fc1(image_embeds)
-    image_embeds = F.gelu(image_embeds)
-    image_embeds = model.model.visual.merger.linear_fc2(image_embeds)
+
+    hidden_states = to_tiny(hidden_states)
+    image_embeds = tiny_model.model.visual.merger.norm(hidden_states)
+    image_embeds = image_embeds.view(-1, tiny_model.model.visual.merger.hidden_size)
+    image_embeds = tiny_model.model.visual.merger.linear_fc1(image_embeds)
+    image_embeds = tinyTensor.gelu(image_embeds)
+    image_embeds = tiny_model.model.visual.merger.linear_fc2(image_embeds)
+    image_embeds = to_torch(image_embeds)
 
     image_mask, _ = model.model.get_placeholder_mask(input_ids, inputs_embeds=inputs_embeds, image_features=image_embeds)
     inputs_embeds[image_mask] = image_embeds.view(-1)
@@ -638,6 +640,12 @@ if __name__ == "__main__":
       tiny_model.model.language_model.layers[i].mlp.down_proj = tiny_nn.Linear(6144, 2048, bias=False)
       tiny_model.model.language_model.embed_tokens = blank()
       tiny_model.model.language_model.embed_tokens.weight = tinyTensor.zeros(151936, 2048) # todo not used yet
+
+    tiny_model.model.visual.merger = blank()
+    tiny_model.model.visual.merger.hidden_size = 4096
+    tiny_model.model.visual.merger.norm = tiny_nn.LayerNorm(1024, eps=1e-6, elementwise_affine=True)
+    tiny_model.model.visual.merger.linear_fc1 = tiny_nn.Linear(4096, 4096, bias=True)
+    tiny_model.model.visual.merger.linear_fc2 = tiny_nn.Linear(4096, 2048, bias=True)
     load_state_dict(tiny_model, tiny_weights)
 
     tiny_model.lm_head = tiny_nn.Linear(2048, 151936, bias=False)
@@ -651,7 +659,7 @@ if __name__ == "__main__":
             Image.open(BytesIO(requests.get("https://www.cartell.ie/car_check/wp-content/uploads/2012/03/Nissan-Micra-_4b.jpg").content)).convert("RGB"),
             Image.open("test_img.jpg").convert("RGB")]
     expected_outputs = ["This is a Ferrari F40, a legendary sports car produced by Ferrari from 1987 to 1992. It is renowned for its sleek design and high performance, making it one of the most iconic cars in automotive history.",
-                        "This is a Nissan Micra, a compact car produced by the Japanese automaker Nissan. The Micra is a popular and affordable car, known for its reliability and efficiency.\n\nThe Micra was first introduced in 1992 as a small, economical car. It was designed to be a practical and efficient vehicle for everyday use, and it quickly gained popularity in Japan and other markets.\n\nOver the years, the Micra has undergone several redesigns and updates. The most recent model, the 2019 version, features a more modern design and improved safety features.\n\nThe Micra is known for its low price, high",
+                        "This is a Nissan Micra, a compact car produced by the Japanese automaker Nissan. The Micra is a popular and affordable car, known for its reliability and efficiency.\n\nThe Nissan Micra was first introduced in 1990 as a small, affordable hatchback. It was designed to compete with other popular compact cars like the Toyota Corolla and Honda Civic. The Micra was initially available in a range of engine sizes, including a 1.0-liter petrol engine and a 1.3-liter petrol engine.\n\nThe Micra was produced in several different versions over the years, with the most common being the 1",
                         "A person wearing a grey hoodie and light-colored pants is standing next to a silver car with the driver's side door open."]
 
     prompts = ["<|im_start|>user\n<|vision_start|><|image_pad|><|vision_end|>\nWhat car is this?<|im_end|>\n<|im_start|>assistant\n",
