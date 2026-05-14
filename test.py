@@ -278,9 +278,12 @@ def forward(
             deepstack_feature = layer.linear_fc2(layer.act_fn(layer.linear_fc1(deepstack_feature)))
             deepstack_feature_lists.append(deepstack_feature)
 
-
-    image_embeds = model.model.visual.merger.norm(hidden_states).view(-1, model.model.visual.merger.hidden_size)
-    image_embeds = model.model.visual.merger.linear_fc2(model.model.visual.merger.act_fn(model.model.visual.merger.linear_fc1(image_embeds)))
+    
+    image_embeds = model.model.visual.merger.norm(hidden_states)
+    image_embeds = image_embeds.view(-1, model.model.visual.merger.hidden_size)
+    image_embeds = model.model.visual.merger.linear_fc1(image_embeds)
+    image_embeds = F.gelu(image_embeds)
+    image_embeds = model.model.visual.merger.linear_fc2(image_embeds)
 
     image_mask, _ = model.model.get_placeholder_mask(input_ids, inputs_embeds=inputs_embeds, image_features=image_embeds)
     inputs_embeds[image_mask] = image_embeds.view(-1)
