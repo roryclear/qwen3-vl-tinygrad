@@ -354,7 +354,12 @@ def forward(
         hidden_states = to_tiny(hidden_states)
         hidden_states = tiny_model.model.language_model.layers[i].post_attention_layernorm(hidden_states)
         hidden_states = to_torch(hidden_states, type=torch.bfloat16)
-        hidden_states = model.model.language_model.layers[i].mlp(hidden_states)
+
+        gate = model.model.language_model.layers[i].mlp.gate_proj(hidden_states)
+        up = model.model.language_model.layers[i].mlp.up_proj(hidden_states)
+        activated = model.model.language_model.layers[i].mlp.act_fn(gate)
+        combined = activated * up
+        hidden_states = model.model.language_model.layers[i].mlp.down_proj(combined)
         hidden_states = residual + hidden_states
    
         if i < len(deepstack_feature_lists): hidden_states[image_mask, :] += deepstack_feature_lists[i]
@@ -417,7 +422,12 @@ def forward(
                 hidden_states = residual + hidden_states
                 residual = hidden_states
                 hidden_states = model.model.language_model.layers[i].post_attention_layernorm(hidden_states)
-                hidden_states = model.model.language_model.layers[i].mlp(hidden_states)
+
+                gate = model.model.language_model.layers[i].mlp.gate_proj(hidden_states)
+                up = model.model.language_model.layers[i].mlp.up_proj(hidden_states)
+                activated = model.model.language_model.layers[i].mlp.act_fn(gate)
+                combined = activated * up
+                hidden_states = model.model.language_model.layers[i].mlp.down_proj(combined)
                 hidden_states = residual + hidden_states
 
             hidden_states = model.model.language_model.norm(hidden_states)
