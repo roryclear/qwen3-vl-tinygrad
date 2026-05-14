@@ -16,6 +16,7 @@ from functools import partial
 from torchvision.transforms.v2 import functional as tvF
 from dataclasses import dataclass, fields
 import typing
+import sys
 
 class SimpleKVCache:
     def __init__(self):
@@ -134,7 +135,9 @@ def forward(
     past_key_values,
     position_ids,
     image_grid_thw,
+    expected # todo for testing
 ):
+    toks_out = [] # todo for testing
     pad_token_id = _pad_token_tensor
     scores = None
     batch_size = input_ids.shape[0]
@@ -475,7 +478,9 @@ def forward(
         next_tokens = next_tokens * unfinished_sequences + pad_token_id * (1 - unfinished_sequences)
 
         input_ids = torch.cat([input_ids, next_tokens[:, None]], dim=-1)
-        print(len(input_ids[0]))
+
+        toks_out.append(int(input_ids[0][-1]))
+        if not input_ids[0][-1] == 151645: assert toks_out == expected[:len(toks_out)]
         this_peer_finished = input_ids[0][-1] == 151645 or len(input_ids[0]) == 406
         del outputs
 
@@ -659,7 +664,7 @@ if __name__ == "__main__":
         for pos in image_token_positions: mm_token_type_ids[pos:pos + int(num_image_tokens)] = [1] * int(num_image_tokens)
 
         outputs = forward(model=model, tiny_model=tiny_model, input_ids=torch.tensor([text_inputs]), _pad_token_tensor=151643, past_key_values=SimpleKVCache(), pixel_values=image_inputs['pixel_values'],
-                position_ids=torch.arange(torch.tensor([text_inputs]).shape[-1]).unsqueeze(0).unsqueeze(0).repeat(4, 1, 1), image_grid_thw=image_inputs['image_grid_thw'])
+                position_ids=torch.arange(torch.tensor([text_inputs]).shape[-1]).unsqueeze(0).unsqueeze(0).repeat(4, 1, 1), image_grid_thw=image_inputs['image_grid_thw'], expected=tok.encode(expected_output))
 
         #outputs = model.generate(**inputs, max_new_tokens=128)
         generated_ids = outputs[0][len(text_inputs):]
