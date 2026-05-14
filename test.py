@@ -282,7 +282,24 @@ def forward(
     image_mask = image_mask[..., 0]
 
     hidden_states = inputs_embeds
-    position_embeddings = model.model.language_model.rotary_emb(hidden_states, position_ids[1:])
+
+    pos_id = position_ids[1:]
+    inv_freq_expanded = model.model.language_model.rotary_emb.inv_freq[None, None, :, None].float().expand(3, pos_id.shape[1], -1, 1)
+    position_ids_expanded = pos_id[:, :, None, :].float()
+    freqs = (inv_freq_expanded.float() @ position_ids_expanded.float()).transpose(2, 3)
+
+    freqs_t = freqs[0]  # just overwrite the first dimension T
+    for dim, offset in enumerate((1, 2), start=1):  # H, W
+        length = model.model.language_model.rotary_emb.mrope_section[dim] * 3
+        idx = slice(offset, length, 3)
+        freqs_t[..., idx] = freqs[dim, ..., idx]
+    freqs = freqs_t
+
+    emb = torch.cat((freqs, freqs), dim=-1)
+    cos = emb.cos() * model.model.language_model.rotary_emb.attention_scaling
+    sin = emb.sin() * model.model.language_model.rotary_emb.attention_scaling
+    position_embeddings = cos.to(dtype=hidden_states.dtype), sin.to(dtype=hidden_states.dtype)
+
     for i in range(len(model.model.language_model.layers)): # todo same block above
         residual = hidden_states
 
@@ -538,7 +555,6 @@ class Qwen3VLTextRMSNorm_tiny():
         return self.weight * hidden_states
     
 
-
 if __name__ == "__main__":
     model = AutoModelForImageTextToText.from_pretrained("Qwen/Qwen3-VL-2B-Instruct")
 
@@ -626,6 +642,7 @@ if __name__ == "__main__":
         output = output.replace("<|im_end|>","") # todo hack
         print(output)
         assert output == expected_output
+
 
 
 
