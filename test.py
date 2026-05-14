@@ -373,9 +373,11 @@ def forward(
     
     hidden_states = to_tiny(hidden_states)
     hidden_states = tiny_model.model.language_model.norm(hidden_states)
-    hidden_states = to_torch(hidden_states)
 
-    outputs = model.lm_head(hidden_states[:, -1:, :])
+    outputs = tiny_model.lm_head(hidden_states[:, -1:, :])
+
+    outputs = to_torch(outputs)
+    hidden_states = to_torch(hidden_states)
 
     while not this_peer_finished:
         if prefill_consumed:
@@ -440,8 +442,10 @@ def forward(
             hidden_states = to_torch(hidden_states)
             hidden_states = model.model.language_model.norm(hidden_states)
 
-
-            outputs = model.lm_head(hidden_states[:, -1:, :])
+            hidden_states = to_tiny(hidden_states)
+            outputs = tiny_model.lm_head(hidden_states[:, -1:, :])
+            #hidden_states = to_torch(hidden_states)
+            outputs = to_torch(outputs)
 
         prefill_consumed = True
         position_ids = position_ids[..., -1:] + 1
@@ -480,6 +484,7 @@ def forward(
         input_ids = torch.cat([input_ids, next_tokens[:, None]], dim=-1)
 
         toks_out.append(int(input_ids[0][-1]))
+        print(toks_out,expected[:len(toks_out)])
         if not input_ids[0][-1] == 151645: assert toks_out == expected[:len(toks_out)]
         this_peer_finished = input_ids[0][-1] == 151645 or len(input_ids[0]) == 406
         del outputs
@@ -627,6 +632,9 @@ if __name__ == "__main__":
       tiny_model.model.language_model.layers[i].mlp.up_proj = tiny_nn.Linear(2048, 6144, bias=False)
       tiny_model.model.language_model.layers[i].mlp.down_proj = tiny_nn.Linear(6144, 2048, bias=False)
     load_state_dict(tiny_model, tiny_weights)
+
+    tiny_model.lm_head = tiny_nn.Linear(2048, 151936, bias=False)
+    tiny_model.lm_head.weight = to_tiny(model.lm_head.weight) # todo how is this inited?
 
     #print(model.model.visual.pos_embed.bias) no bias
     #model.model.visual.pos_embed_tiny = to_tiny(model.model.visual.pos_embed)
