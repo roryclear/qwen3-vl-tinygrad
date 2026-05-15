@@ -32,24 +32,6 @@ class SimpleKVCache:
             self.cache[layer_idx] = (key, value)
         return key, value
 
-def get_vision_position_ids(
-    grid_thw, spatial_merge_size) -> torch.Tensor:
-    device = grid_thw.device
-    if isinstance(spatial_merge_size, int):
-        spatial_merge_size = torch.tensor([spatial_merge_size], device=device).expand(len(grid_thw))
-
-    position_ids = []
-    for (t, h, w), merge_size in zip(grid_thw.tolist(), spatial_merge_size.tolist()):
-        t, h, w, merge_size = int(t), int(h), int(w), int(merge_size)
-        hpos_ids = torch.arange(h, device=device).unsqueeze(1).expand(-1, w)
-        hpos_ids = hpos_ids.reshape(h // merge_size, merge_size, w // merge_size, merge_size).transpose(1, 2).flatten()
-
-        wpos_ids = torch.arange(w, device=device).unsqueeze(0).expand(h, -1)
-        wpos_ids = wpos_ids.reshape(h // merge_size, merge_size, w // merge_size, merge_size).transpose(1, 2).flatten()
-        position_ids.append(torch.stack([hpos_ids, wpos_ids], dim=-1).repeat(t, 1))
-
-    return torch.cat(position_ids, dim=0)
-
 class SimpleTokenizer:
   def __init__(self, normal_tokens:dict[str, int], special_tokens:dict[str, int], preset:str="llama3",
                bos_id:int|None=None, eos_id:int=0, eot_id:int|None=None):
@@ -273,8 +255,21 @@ def forward(
     hidden_states = hidden_states + pos_embeds
     
 
-    pos_ids = get_vision_position_ids(image_grid_thw, model.model.visual.spatial_merge_size)
-    rotary_pos_emb = (pos_ids.unsqueeze(-1) * model.model.visual.rotary_pos_emb.inv_freq).flatten(1)
+    spatial_merge_size = torch.tensor([tiny_model.model.visual.spatial_merge_size]).expand(len(image_grid_thw))
+
+    pos_ids = []
+    for (t, h, w), merge_size in zip(image_grid_thw.tolist(), spatial_merge_size.tolist()):
+        t, h, w, merge_size = int(t), int(h), int(w), int(merge_size)
+        hpos_ids = torch.arange(h).unsqueeze(1).expand(-1, w)
+        hpos_ids = hpos_ids.reshape(h // merge_size, merge_size, w // merge_size, merge_size).transpose(1, 2).flatten()
+
+        wpos_ids = torch.arange(w).unsqueeze(0).expand(h, -1)
+        wpos_ids = wpos_ids.reshape(h // merge_size, merge_size, w // merge_size, merge_size).transpose(1, 2).flatten()
+        pos_ids.append(torch.stack([hpos_ids, wpos_ids], dim=-1).repeat(t, 1))
+
+    pos_ids = torch.cat(pos_ids, dim=0)
+
+    rotary_pos_emb = (pos_ids.unsqueeze(-1) * tiny_model.model.visual.rotary_pos_emb.inv_freq).flatten(1)
 
     seq_len, _ = hidden_states.size()
     hidden_states = hidden_states.reshape(seq_len, -1)
@@ -355,7 +350,7 @@ def forward(
     image_embeds = to_torch(image_embeds)
 
     image_mask = input_ids == tiny_model.model.config.image_token_id
-    
+
     inputs_embeds = model.model.language_model.embed_tokens.weight[input_ids] # todo indexing not in tinygrad!
     image_mask = image_mask.unsqueeze(-1).expand_as(inputs_embeds)
 
@@ -696,6 +691,12 @@ if __name__ == "__main__":
     tiny_model.model.config = blank()
     tiny_model.model.config.image_token_id = 151655
     tiny_model.model.visual = blank()
+    tiny_model.model.visual.rotary_pos_emb = blank()
+    tiny_model.model.visual.rotary_pos_emb.dim = 32
+    tiny_model.model.visual.rotary_pos_emb.theta = 10000.0
+    tiny_model.model.visual.spatial_merge_size = 2
+    # todo torch!!
+    tiny_model.model.visual.rotary_pos_emb.inv_freq = 1.0 / (tiny_model.model.visual.rotary_pos_emb.theta ** (torch.arange(0, tiny_model.model.visual.rotary_pos_emb.dim, 2, dtype=torch.float) / tiny_model.model.visual.rotary_pos_emb.dim))
     tiny_model.model.visual.patch_embed = blank()
     tiny_model.model.visual.patch_embed.embed_dim = 1024
     tiny_model.model.visual.patch_embed.in_channels = 3
