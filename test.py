@@ -186,8 +186,8 @@ def forward(
         groups=tiny_model.model.visual.patch_embed.proj.groups
     )
 
+    hidden_states = hidden_states.view(-1, tiny_model.model.visual.patch_embed.embed_dim)
     hidden_states = to_torch(hidden_states)
-    hidden_states = hidden_states.view(-1, model.model.visual.patch_embed.embed_dim)
 
     grid_thw_list = image_grid_thw.tolist()
     grid_ts = [row[0] for row in grid_thw_list]
@@ -673,6 +673,7 @@ if __name__ == "__main__":
     tiny_model.model.config.image_token_id = 151655
     tiny_model.model.visual = blank()
     tiny_model.model.visual.patch_embed = blank()
+    tiny_model.model.visual.patch_embed.embed_dim = 1024
     tiny_model.model.visual.patch_embed.in_channels = 3
     tiny_model.model.visual.patch_embed.temporal_patch_size = 2
     tiny_model.model.visual.patch_embed.patch_size = 16
