@@ -120,35 +120,28 @@ def set_seed(seed: int, deterministic: bool = False):
 
 set_seed(42)
 
-def rotate_half(x):
-    """Rotates half the hidden dims of the input."""
-    x1 = x[..., : x.shape[-1] // 2]
-    x2 = x[..., x.shape[-1] // 2 :]
-    return torch.cat((-x2, x1), dim=-1)
-
 def rotary_emb(obj, x, position_ids):
     # In contrast to other models, Qwen3VL has different position ids for the grids
     # So we expand the inv_freq to shape (3, ...)
     if position_ids.ndim == 2:
         position_ids = position_ids[None, ...].expand(3, position_ids.shape[0], -1)
     inv_freq_expanded = (
-        obj.inv_freq[None, None, :, None].float().expand(3, position_ids.shape[1], -1, 1)
+        obj.inv_freq[None, None, :, None].float().expand(3, position_ids.shape[1], -1, 1).to(x.device)
     )
     position_ids_expanded = position_ids[:, :, None, :].float()  # shape (3, bs, 1, positions)
 
     freqs = (inv_freq_expanded.float() @ position_ids_expanded.float()).transpose(2, 3)
-    
-    freqs_t = freqs[0]
-    for dim, offset in enumerate((1, 2), start=1):  # H, W
-        length = obj.mrope_section[dim] * 3
-        idx = slice(offset, length, 3)
-        freqs_t[..., idx] = freqs[dim, ..., idx]
-    freqs = freqs_t
-
+    freqs = obj.apply_interleaved_mrope(freqs, obj.mrope_section)
     emb = torch.cat((freqs, freqs), dim=-1)
     cos = emb.cos() * obj.attention_scaling
     sin = emb.sin() * obj.attention_scaling
     return cos.to(dtype=x.dtype), sin.to(dtype=x.dtype)
+
+def rotate_half(x):
+    """Rotates half the hidden dims of the input."""
+    x1 = x[..., : x.shape[-1] // 2]
+    x2 = x[..., x.shape[-1] // 2 :]
+    return torch.cat((-x2, x1), dim=-1)
 
 def forward(
     model,
@@ -318,20 +311,20 @@ def forward(
     hidden_states = inputs_embeds
 
     pos_id = position_ids[1:]
-    inv_freq_expanded = model.model.language_model.rotary_emb.inv_freq[None, None, :, None].float().expand(3, pos_id.shape[1], -1, 1)
+    inv_freq_expanded = tiny_model.model.language_model.rotary_emb.inv_freq[None, None, :, None].float().expand(3, pos_id.shape[1], -1, 1)
     position_ids_expanded = pos_id[:, :, None, :].float()
     freqs = (inv_freq_expanded.float() @ position_ids_expanded.float()).transpose(2, 3)
 
     freqs_t = freqs[0]  # just overwrite the first dimension T
     for dim, offset in enumerate((1, 2), start=1):  # H, W
-        length = model.model.language_model.rotary_emb.mrope_section[dim] * 3
+        length = tiny_model.model.language_model.rotary_emb.mrope_section[dim] * 3
         idx = slice(offset, length, 3)
         freqs_t[..., idx] = freqs[dim, ..., idx]
     freqs = freqs_t
 
     emb = torch.cat((freqs, freqs), dim=-1)
-    cos = emb.cos() * model.model.language_model.rotary_emb.attention_scaling
-    sin = emb.sin() * model.model.language_model.rotary_emb.attention_scaling
+    cos = emb.cos() * tiny_model.model.language_model.rotary_emb.attention_scaling
+    sin = emb.sin() * tiny_model.model.language_model.rotary_emb.attention_scaling
     position_embeddings = cos.to(dtype=hidden_states.dtype), sin.to(dtype=hidden_states.dtype)
 
     for i in range(len(model.model.language_model.layers)): # todo same block above
@@ -416,21 +409,21 @@ def forward(
 
             hidden_states = inputs_embeds
             pos_ids = position_ids[1:]
-            inv_freq_expanded = (model.model.language_model.rotary_emb.inv_freq[None, None, :, None].float().expand(3, pos_ids.shape[1], -1, 1))
+            inv_freq_expanded = (tiny_model.model.language_model.rotary_emb.inv_freq[None, None, :, None].float().expand(3, pos_ids.shape[1], -1, 1))
             position_ids_expanded = pos_ids[:, :, None, :].float()  # shape (3, bs, 1, positions)
 
             freqs = (inv_freq_expanded.float() @ position_ids_expanded.float()).transpose(2, 3)
             
             freqs_t = freqs[0]
             for dim, offset in enumerate((1, 2), start=1):  # H, W
-                length = model.model.language_model.rotary_emb.mrope_section[dim] * 3
+                length = tiny_model.model.language_model.rotary_emb.mrope_section[dim] * 3
                 idx = slice(offset, length, 3)
                 freqs_t[..., idx] = freqs[dim, ..., idx]
             freqs = freqs_t
 
             emb = torch.cat((freqs, freqs), dim=-1)
-            cos = emb.cos() * model.model.language_model.rotary_emb.attention_scaling
-            sin = emb.sin() * model.model.language_model.rotary_emb.attention_scaling
+            cos = emb.cos() * tiny_model.model.language_model.rotary_emb.attention_scaling
+            sin = emb.sin() * tiny_model.model.language_model.rotary_emb.attention_scaling
             position_embeddings = cos.to(dtype=hidden_states.dtype), sin.to(dtype=hidden_states.dtype)
 
             hidden_states = to_tiny(hidden_states)
@@ -656,6 +649,12 @@ if __name__ == "__main__":
     tiny_model.model.visual.pos_embed = tiny_nn.Embedding(2304, 1024)
     tiny_model.model.language_model = blank()
     tiny_model.model.language_model.layers = []
+    tiny_model.model.language_model.rotary_emb = blank()
+    tiny_model.model.language_model.rotary_emb.inv_freq = 1.0 / (5000000 ** (torch.arange(0, 128, 2, dtype=torch.int64) / 128)) # todo tiny!
+    tiny_model.model.language_model.rotary_emb.mrope_section = [24, 20, 20]
+    tiny_model.model.language_model.rotary_emb.attention_scaling = 1
+    #tiny_model.model.language_model.rotary_emb.theta
+    #tiny_model.model.language_model.rotary_emb.inv_freq = tinyTensor.zeros(64)
 
     tiny_model.model.visual.pos_embed.weight.cast(dtypes.bfloat16)
     print(tiny_model.model.visual.pos_embed.weight.dtype)
