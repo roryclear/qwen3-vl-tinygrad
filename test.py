@@ -337,17 +337,14 @@ def forward(
     sin = emb.sin() * tiny_model.model.language_model.rotary_emb.attention_scaling
     position_embeddings = cos.to(dtype=hidden_states.dtype), sin.to(dtype=hidden_states.dtype)
 
-    for i in range(len(model.model.language_model.layers)): # todo same block above
+    for i in range(len(tiny_model.model.language_model.layers)): # todo same block above
         residual = hidden_states
 
         hidden_states = to_tiny(hidden_states)
         hidden_states = tiny_model.model.language_model.layers[i].input_layernorm(hidden_states)
         input_shape = hidden_states.shape[:-1]
-        hidden_states = to_torch(hidden_states)
 
-        hidden_shape = (*input_shape, -1, model.model.language_model.layers[i].self_attn.head_dim)
-
-        hidden_states = to_tiny(hidden_states)
+        hidden_shape = (*input_shape, -1, tiny_model.model.language_model.layers[i].self_attn.head_dim)
         query = tiny_model.model.language_model.layers[i].self_attn.q_proj(hidden_states).view(hidden_shape)
         key = tiny_model.model.language_model.layers[i].self_attn.k_proj(hidden_states).view(hidden_shape)
 
@@ -375,7 +372,7 @@ def forward(
         key = key.repeat_interleave(query.size(-3)//key.size(-3), -3)
         value = value.repeat_interleave(query.size(-3)//value.size(-3), -3)
 
-        attn_weight = query @ key.transpose(-2, -1) * model.model.language_model.layers[i].self_attn.scaling
+        attn_weight = query @ key.transpose(-2, -1) * tiny_model.model.language_model.layers[i].self_attn.scaling
         attn_weight += attn_bias
         attn_weight = torch.softmax(attn_weight, dim=-1)
         attn_weight = torch.dropout(attn_weight, 0, train=True)
@@ -443,7 +440,7 @@ def forward(
                 hidden_states = tiny_model.model.language_model.layers[i].input_layernorm(hidden_states)
 
                 input_shape = hidden_states.shape[:-1]
-                hidden_shape = (*input_shape, -1, model.model.language_model.layers[i].self_attn.head_dim)
+                hidden_shape = (*input_shape, -1, tiny_model.model.language_model.layers[i].self_attn.head_dim)
                 
                 query = tiny_model.model.language_model.layers[i].self_attn.q_proj(hidden_states).view(hidden_shape)
                 key = tiny_model.model.language_model.layers[i].self_attn.k_proj(hidden_states).view(hidden_shape)
@@ -465,7 +462,7 @@ def forward(
                 key = key.repeat_interleave(query.size(-3)//key.size(-3), -3)
                 value = value.repeat_interleave(query.size(-3)//value.size(-3), -3)
 
-                attn_weight = query @ key.transpose(-2, -1) * model.model.language_model.layers[i].self_attn.scaling
+                attn_weight = query @ key.transpose(-2, -1) * tiny_model.model.language_model.layers[i].self_attn.scaling
 
                 attn_weight = torch.softmax(attn_weight, dim=-1)
                 attn_output = attn_weight @ value
@@ -488,10 +485,7 @@ def forward(
                 hidden_states = tiny_model.model.language_model.layers[i].mlp.down_proj(combined)
                 hidden_states = residual + hidden_states
 
-            hidden_states = to_torch(hidden_states)
-            hidden_states = model.model.language_model.norm(hidden_states)
-
-            hidden_states = to_tiny(hidden_states)
+            hidden_states = tiny_model.model.language_model.norm(hidden_states)
             outputs = tiny_model.lm_head(hidden_states[:, -1:, :])
             #hidden_states = to_torch(hidden_states)
             outputs = to_torch(outputs)
@@ -696,6 +690,8 @@ if __name__ == "__main__":
     for i in range(len(model.model.language_model.layers)):
       tiny_model.model.language_model.layers.append(blank())
       tiny_model.model.language_model.layers[i].self_attn = blank()
+      tiny_model.model.language_model.layers[i].self_attn.scaling = 0.08838834764831845
+      tiny_model.model.language_model.layers[i].self_attn.head_dim = 128
       tiny_model.model.language_model.layers[i].self_attn.q_proj = tiny_nn.Linear(2048, 2048, bias=False)
       tiny_model.model.language_model.layers[i].self_attn.k_proj = tiny_nn.Linear(2048, 1024, bias=False)
       tiny_model.model.language_model.layers[i].self_attn.v_proj = tiny_nn.Linear(2048, 1024, bias=False)
@@ -728,9 +724,9 @@ if __name__ == "__main__":
     images = [Image.open(BytesIO(requests.get("https://img.wort.lu/public/luxemburg/vfka4n-picture-title-binary/alternates/ONE_ONE_256/Picture%20title%20binary").content)).convert("RGB"),
             Image.open(BytesIO(requests.get("https://www.cartell.ie/car_check/wp-content/uploads/2012/03/Nissan-Micra-_4b.jpg").content)).convert("RGB"),
             Image.open("test_img.jpg").convert("RGB")]
-    expected_outputs = ["This is a Ferrari F40, a legendary sports car produced by Ferrari from 1987 to 1992. It is renowned for its sleek design and high performance, making it one of the most iconic cars in automotive history.",
-                        "This is a Nissan Micra, a compact car produced by the Japanese automaker Nissan. The Micra is a popular and affordable car, known for its reliability and efficiency.\n\nThe Nissan Micra was first introduced in 1990 as a small, affordable hatchback. It was designed to compete with other popular compact cars like the Toyota Corolla and Honda Civic. The Micra was initially available in a range of engine sizes, including a 1.0-liter petrol engine and a 1.3-liter petrol engine.\n\nThe Micra was produced in several generations, with the first generation being produced from 1990",
-                        "A person wearing a grey hoodie and light-colored pants is standing next to a silver car with the driver's side door open."]
+    expected_outputs = ["This is a Ferrari F40, a legendary sports car produced by Ferrari from 1987 to 1992. It is renowned for its sleek design, powerful engine, and status as a symbol of Italian automotive excellence. The F40 was a significant milestone in Ferrari's history, marking the brand's transition from a manufacturer of luxury cars to a leader in high-performance vehicles. It was also the first Ferrari to feature a 3.0-liter V8 engine, which was later replaced by a 4.0-liter V8 in the F50. The F40 was highly regarded for its exceptional handling, speed, and performance, making it a favorite among car enthusiasts and collectors worldwide.",
+                        "This is a Nissan Micra, a compact car produced by the Japanese automaker Nissan. The Micra was introduced in 1995 and is known for its affordability, compact size, and reliability. It was designed to be a practical and economical choice for city driving and everyday use.\n\nThe Micra has undergone several generations, with the first generation being produced from 1995 to 2004. The second generation, which was produced from 2005 to 2011, featured a more modern design and improved fuel efficiency. The third generation, produced from 2012 to",
+                        "A person is standing in front of a silver car with their back to the camera."]
 
     prompts = ["<|im_start|>user\n<|vision_start|><|image_pad|><|vision_end|>\nWhat car is this?<|im_end|>\n<|im_start|>assistant\n",
             "<|im_start|>user\n<|vision_start|><|image_pad|><|vision_end|>\nTell me the history of this car<|im_end|>\n<|im_start|>assistant\n",
