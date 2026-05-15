@@ -169,22 +169,24 @@ def forward(
     hidden_states = pixel_values.view(-1, tiny_model.model.visual.patch_embed.in_channels, tiny_model.model.visual.patch_embed.temporal_patch_size, tiny_model.model.visual.patch_embed.patch_size, tiny_model.model.visual.patch_embed.patch_size)
     hidden_states = hidden_states.to(dtype=torch.bfloat16)
     
+    hidden_states = to_tiny(hidden_states)
+
     B, C, D, H, W = hidden_states.shape
     x = hidden_states.reshape(B, C * D, H, W)
-    w = model.model.visual.patch_embed.proj.weight
+    w = tiny_model.model.visual.patch_embed.proj.weight
     out_C, in_C, kD, kH, kW = w.shape
     w2d = w.reshape(out_C, in_C * kD, kH, kW)
 
-    hidden_states = F.conv2d(
-        x,
-        w2d,
-        model.model.visual.patch_embed.proj.bias,
-        stride=model.model.visual.patch_embed.proj.stride[1:],
-        padding=model.model.visual.patch_embed.proj.padding[1:],
-        dilation=model.model.visual.patch_embed.proj.dilation[1:],
-        groups=model.model.visual.patch_embed.proj.groups
+    hidden_states = x.conv2d(
+        weight=w2d,
+        bias=tiny_model.model.visual.patch_embed.proj.bias,
+        stride=tiny_model.model.visual.patch_embed.proj.stride[1:],
+        padding=tiny_model.model.visual.patch_embed.proj.padding[1:],
+        dilation=tiny_model.model.visual.patch_embed.proj.dilation[1:],
+        groups=tiny_model.model.visual.patch_embed.proj.groups
     )
 
+    hidden_states = to_torch(hidden_states)
     hidden_states = hidden_states.view(-1, model.model.visual.patch_embed.embed_dim)
 
     grid_thw_list = image_grid_thw.tolist()
@@ -759,7 +761,7 @@ if __name__ == "__main__":
             Image.open(BytesIO(requests.get("https://www.cartell.ie/car_check/wp-content/uploads/2012/03/Nissan-Micra-_4b.jpg").content)).convert("RGB"),
             Image.open("test_img.jpg").convert("RGB")]
     expected_outputs = ["This is a Ferrari F40, a legendary sports car produced by Ferrari from 1987 to 1992. It is renowned for its sleek design, powerful engine, and status as a symbol of Italian automotive excellence. The F40 was a significant milestone in Ferrari's history, marking the brand's transition from a manufacturer of luxury cars to a leader in high-performance vehicles. It was also the first Ferrari to feature a 3.0-liter V8 engine, which was later replaced by a 4.0-liter V8 in the F50. The F40 was highly regarded for its exceptional handling, speed, and performance, making it a favorite among car enthusiasts and collectors worldwide.",
-                        "This is a Nissan Micra, a compact car produced by the Japanese automaker Nissan. The Micra was introduced in 1995 and is known for its affordability, compact size, and reliability. It was designed to be a practical and economical choice for city driving and everyday use.\n\nThe Micra has undergone several generations, with the first generation being produced from 1995 to 2004. The second generation, which was produced from 2005 to 2011, featured a more modern design and improved fuel efficiency. The third generation, produced from 2012 to",
+                        "This is a Nissan Micra, a compact car produced by the Japanese automaker Nissan. The Micra was introduced in 1995 and is known for its affordability, compact size, and reliability. It was designed to be a practical and economical choice for city driving and everyday use.\n\nThe Nissan Micra has undergone several generations, with the first generation being the 1995 model. The second generation was released in 2001 and continued through 2011, featuring improved design and technology. The third generation was introduced in 2012, with a more modern design and advanced features.",
                         "A person is standing in front of a silver car with their back to the camera."]
 
     prompts = ["<|im_start|>user\n<|vision_start|><|image_pad|><|vision_end|>\nWhat car is this?<|im_end|>\n<|im_start|>assistant\n",
