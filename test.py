@@ -249,9 +249,11 @@ def forward(
     cu_seqlens = F.pad(cu_seqlens, (1, 0), value=0)
 
     deepstack_feature_lists = []
-    for i in range(len(model.model.visual.blocks)):
+    for i in range(len(tiny_model.model.visual.blocks)):
         
-        hidden_states_input = model.model.visual.blocks[i].norm1(hidden_states)
+        hidden_states = to_tiny(hidden_states)
+        hidden_states_input = tiny_model.model.visual.blocks[i].norm1(hidden_states)
+        hidden_states = to_torch(hidden_states)
         seq_length = hidden_states_input.shape[0]
         hidden_states_input = to_tiny(hidden_states_input)
         qkv = tiny_model.model.visual.blocks[i].attn.qkv(hidden_states_input)
@@ -292,7 +294,11 @@ def forward(
         attn_output = to_torch(attn_output)
 
         hidden_states += attn_output
-        hidden_states = hidden_states + model.model.visual.blocks[i].mlp(model.model.visual.blocks[i].norm2(hidden_states))
+        hidden_states = to_tiny(hidden_states)
+        norm = tiny_model.model.visual.blocks[i].norm2(hidden_states)
+        norm = to_torch(norm)
+        hidden_states = to_torch(hidden_states)
+        hidden_states = hidden_states + model.model.visual.blocks[i].mlp(norm)
 
         if i in model.model.visual.deepstack_visual_indexes:
             layer = model.model.visual.deepstack_merger_list[model.model.visual.deepstack_visual_indexes.index(i)]
@@ -656,6 +662,8 @@ if __name__ == "__main__":
        tiny_model.model.visual.blocks[i].attn.qkv = tiny_nn.Linear(1024, 3072)
        tiny_model.model.visual.blocks[i].attn.num_heads = 16
        tiny_model.model.visual.blocks[i].attn.scaling = 0.125
+       tiny_model.model.visual.blocks[i].norm1 = tiny_nn.LayerNorm(1024, eps=1e-6, elementwise_affine=True)
+       tiny_model.model.visual.blocks[i].norm2 = tiny_nn.LayerNorm(1024, eps=1e-6, elementwise_affine=True)
     tiny_model.model.visual.config = blank()
     tiny_model.model.visual.config.spatial_merge_size = 2
     tiny_model.model.visual.num_grid_per_side = 48
@@ -712,9 +720,9 @@ if __name__ == "__main__":
     images = [Image.open(BytesIO(requests.get("https://img.wort.lu/public/luxemburg/vfka4n-picture-title-binary/alternates/ONE_ONE_256/Picture%20title%20binary").content)).convert("RGB"),
             Image.open(BytesIO(requests.get("https://www.cartell.ie/car_check/wp-content/uploads/2012/03/Nissan-Micra-_4b.jpg").content)).convert("RGB"),
             Image.open("test_img.jpg").convert("RGB")]
-    expected_outputs = ["This is a Ferrari F40, a legendary sports car produced by Ferrari from 1987 to 1992. It is renowned for its sleek design and high performance, making it one of the most iconic cars in automotive history. The F40 was a groundbreaking vehicle that helped establish Ferrari's reputation for engineering excellence and innovation.",
-                        "This is a 1997 Nissan Micra, a compact car that was introduced in the UK in 1996. The Micra was designed as a practical and affordable vehicle, and it was one of the first models to be produced in the UK by Nissan.\n\nThe Micra was developed to meet the needs of the UK market, which has a strong tradition of small, economical vehicles. The car was designed with a focus on fuel efficiency and low maintenance, making it a popular choice among UK drivers.\n\nThe 1997 model year saw the Micra in its second generation, with improvements in both design and",
-                        "A person is standing next to a silver car, with the car's door open."]
+    expected_outputs = ["This is a Ferrari F40, a legendary sports car produced by Ferrari from 1987 to 1992. It is renowned for its sleek design and high performance, making it one of the most iconic cars in automotive history. The F40 was a groundbreaking vehicle that pushed the boundaries of what was possible in terms of speed and handling.",
+                        "This is a 1999 Nissan Micra, a compact hatchback that was a popular choice for its affordability and practicality. It was first introduced in 1998 and was produced until 2005.\n\nThe Micra was designed to be a cost-effective, fuel-efficient, and reliable car for everyday use. It was a significant success, selling over 1 million units in its first year and becoming a favorite among younger drivers and families.\n\nThe 1999 model year saw several improvements to the Micra, including a revised interior, a more modern design, and a more powerful engine. The",
+                        "A person wearing a grey hoodie is standing next to a silver car, with the car's door open."]
 
     prompts = ["<|im_start|>user\n<|vision_start|><|image_pad|><|vision_end|>\nWhat car is this?<|im_end|>\n<|im_start|>assistant\n",
             "<|im_start|>user\n<|vision_start|><|image_pad|><|vision_end|>\nTell me the history of this car<|im_end|>\n<|im_start|>assistant\n",
