@@ -166,9 +166,9 @@ def forward(
     inputs_embeds = model.model.language_model.embed_tokens.weight[input_ids] # todo indexing not in tinygrad!
     position_ids = torch.arange(input_ids.shape[-1]).unsqueeze(0).unsqueeze(0).repeat(4, 1, 1)
 
-    hidden_states = pixel_values.view(-1, model.model.visual.patch_embed.in_channels, model.model.visual.patch_embed.temporal_patch_size, model.model.visual.patch_embed.patch_size, model.model.visual.patch_embed.patch_size)
+    hidden_states = pixel_values.view(-1, tiny_model.model.visual.patch_embed.in_channels, tiny_model.model.visual.patch_embed.temporal_patch_size, tiny_model.model.visual.patch_embed.patch_size, tiny_model.model.visual.patch_embed.patch_size)
     hidden_states = hidden_states.to(dtype=torch.bfloat16)
-    hidden_states = model.model.visual.patch_embed.proj(hidden_states)
+    hidden_states = F.conv3d(hidden_states, model.model.visual.patch_embed.proj.weight, model.model.visual.patch_embed.proj.bias, model.model.visual.patch_embed.proj.stride, model.model.visual.patch_embed.proj.padding, model.model.visual.patch_embed.proj.dilation, model.model.visual.patch_embed.proj.groups)
     hidden_states = hidden_states.view(-1, model.model.visual.patch_embed.embed_dim)
 
     grid_thw_list = image_grid_thw.tolist()
@@ -654,6 +654,17 @@ if __name__ == "__main__":
     tiny_model.model.config = blank()
     tiny_model.model.config.image_token_id = 151655
     tiny_model.model.visual = blank()
+    tiny_model.model.visual.patch_embed = blank()
+    tiny_model.model.visual.patch_embed.in_channels = 3
+    tiny_model.model.visual.patch_embed.temporal_patch_size = 2
+    tiny_model.model.visual.patch_embed.patch_size = 16
+    tiny_model.model.visual.patch_embed.proj = blank()
+    tiny_model.model.visual.patch_embed.proj.weight = tinyTensor.zeros(1024, 3, 2, 16, 16)
+    tiny_model.model.visual.patch_embed.proj.bias = tinyTensor.zeros(1024)
+    tiny_model.model.visual.patch_embed.proj.stride = (2, 16, 16)
+    tiny_model.model.visual.patch_embed.proj.padding = (0, 0, 0)
+    tiny_model.model.visual.patch_embed.proj.dilation = (1, 1, 1)
+    tiny_model.model.visual.patch_embed.proj.groups = 1
     tiny_model.model.visual.deepstack_merger_list = []
     for i in range(len(model.model.visual.deepstack_merger_list)):
        tiny_model.model.visual.deepstack_merger_list.append(blank())
