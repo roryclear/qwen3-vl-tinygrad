@@ -166,7 +166,10 @@ def forward(
     inputs_embeds = model.model.language_model.embed_tokens.weight[input_ids] # todo indexing not in tinygrad!
     position_ids = torch.arange(input_ids.shape[-1]).unsqueeze(0).unsqueeze(0).repeat(4, 1, 1)
 
-    hidden_states = model.model.visual.patch_embed(pixel_values)
+    hidden_states = pixel_values.view(-1, model.model.visual.patch_embed.in_channels, model.model.visual.patch_embed.temporal_patch_size, model.model.visual.patch_embed.patch_size, model.model.visual.patch_embed.patch_size)
+    hidden_states = hidden_states.to(dtype=torch.bfloat16)
+    hidden_states = model.model.visual.patch_embed.proj(hidden_states)
+    hidden_states = hidden_states.view(-1, model.model.visual.patch_embed.embed_dim)
 
     grid_thw_list = image_grid_thw.tolist()
     grid_ts = [row[0] for row in grid_thw_list]
