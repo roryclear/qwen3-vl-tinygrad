@@ -132,12 +132,19 @@ def rotary_emb(obj, x, position_ids):
     if position_ids.ndim == 2:
         position_ids = position_ids[None, ...].expand(3, position_ids.shape[0], -1)
     inv_freq_expanded = (
-        obj.inv_freq[None, None, :, None].float().expand(3, position_ids.shape[1], -1, 1).to(x.device)
+        obj.inv_freq[None, None, :, None].float().expand(3, position_ids.shape[1], -1, 1)
     )
     position_ids_expanded = position_ids[:, :, None, :].float()  # shape (3, bs, 1, positions)
 
     freqs = (inv_freq_expanded.float() @ position_ids_expanded.float()).transpose(2, 3)
-    freqs = obj.apply_interleaved_mrope(freqs, obj.mrope_section)
+    
+    freqs_t = freqs[0]
+    for dim, offset in enumerate((1, 2), start=1):  # H, W
+        length = obj.mrope_section[dim] * 3
+        idx = slice(offset, length, 3)
+        freqs_t[..., idx] = freqs[dim, ..., idx]
+    freqs = freqs_t
+
     emb = torch.cat((freqs, freqs), dim=-1)
     cos = emb.cos() * obj.attention_scaling
     sin = emb.sin() * obj.attention_scaling
@@ -408,7 +415,23 @@ def forward(
             inputs_embeds = model.model.get_input_embeddings()(input_ids[:, -1:])
 
             hidden_states = inputs_embeds
-            position_embeddings = rotary_emb(model.model.language_model.rotary_emb, hidden_states, position_ids[1:])
+            pos_ids = position_ids[1:]
+            inv_freq_expanded = (model.model.language_model.rotary_emb.inv_freq[None, None, :, None].float().expand(3, pos_ids.shape[1], -1, 1))
+            position_ids_expanded = pos_ids[:, :, None, :].float()  # shape (3, bs, 1, positions)
+
+            freqs = (inv_freq_expanded.float() @ position_ids_expanded.float()).transpose(2, 3)
+            
+            freqs_t = freqs[0]
+            for dim, offset in enumerate((1, 2), start=1):  # H, W
+                length = model.model.language_model.rotary_emb.mrope_section[dim] * 3
+                idx = slice(offset, length, 3)
+                freqs_t[..., idx] = freqs[dim, ..., idx]
+            freqs = freqs_t
+
+            emb = torch.cat((freqs, freqs), dim=-1)
+            cos = emb.cos() * model.model.language_model.rotary_emb.attention_scaling
+            sin = emb.sin() * model.model.language_model.rotary_emb.attention_scaling
+            position_embeddings = cos.to(dtype=hidden_states.dtype), sin.to(dtype=hidden_states.dtype)
 
             hidden_states = to_tiny(hidden_states)
             # decoder layers
