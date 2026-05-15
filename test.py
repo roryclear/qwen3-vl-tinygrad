@@ -168,7 +168,23 @@ def forward(
 
     hidden_states = pixel_values.view(-1, tiny_model.model.visual.patch_embed.in_channels, tiny_model.model.visual.patch_embed.temporal_patch_size, tiny_model.model.visual.patch_embed.patch_size, tiny_model.model.visual.patch_embed.patch_size)
     hidden_states = hidden_states.to(dtype=torch.bfloat16)
-    hidden_states = F.conv3d(hidden_states, model.model.visual.patch_embed.proj.weight, model.model.visual.patch_embed.proj.bias, model.model.visual.patch_embed.proj.stride, model.model.visual.patch_embed.proj.padding, model.model.visual.patch_embed.proj.dilation, model.model.visual.patch_embed.proj.groups)
+    
+    B, C, D, H, W = hidden_states.shape
+    x = hidden_states.reshape(B, C * D, H, W)
+    w = model.model.visual.patch_embed.proj.weight
+    out_C, in_C, kD, kH, kW = w.shape
+    w2d = w.reshape(out_C, in_C * kD, kH, kW)
+
+    hidden_states = F.conv2d(
+        x,
+        w2d,
+        model.model.visual.patch_embed.proj.bias,
+        stride=model.model.visual.patch_embed.proj.stride[1:],
+        padding=model.model.visual.patch_embed.proj.padding[1:],
+        dilation=model.model.visual.patch_embed.proj.dilation[1:],
+        groups=model.model.visual.patch_embed.proj.groups
+    )
+
     hidden_states = hidden_states.view(-1, model.model.visual.patch_embed.embed_dim)
 
     grid_thw_list = image_grid_thw.tolist()
