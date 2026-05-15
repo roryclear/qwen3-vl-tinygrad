@@ -126,6 +126,23 @@ def rotate_half(x):
     x2 = x[..., x.shape[-1] // 2 :]
     return torch.cat((-x2, x1), dim=-1)
 
+def rotary_emb(obj, x, position_ids):
+    # In contrast to other models, Qwen3VL has different position ids for the grids
+    # So we expand the inv_freq to shape (3, ...)
+    if position_ids.ndim == 2:
+        position_ids = position_ids[None, ...].expand(3, position_ids.shape[0], -1)
+    inv_freq_expanded = (
+        obj.inv_freq[None, None, :, None].float().expand(3, position_ids.shape[1], -1, 1).to(x.device)
+    )
+    position_ids_expanded = position_ids[:, :, None, :].float()  # shape (3, bs, 1, positions)
+
+    freqs = (inv_freq_expanded.float() @ position_ids_expanded.float()).transpose(2, 3)
+    freqs = obj.apply_interleaved_mrope(freqs, obj.mrope_section)
+    emb = torch.cat((freqs, freqs), dim=-1)
+    cos = emb.cos() * obj.attention_scaling
+    sin = emb.sin() * obj.attention_scaling
+    return cos.to(dtype=x.dtype), sin.to(dtype=x.dtype)
+
 def forward(
     model,
     tiny_model,
@@ -391,8 +408,7 @@ def forward(
             inputs_embeds = model.model.get_input_embeddings()(input_ids[:, -1:])
 
             hidden_states = inputs_embeds
-
-            position_embeddings = model.model.language_model.rotary_emb(hidden_states, position_ids[1:])
+            position_embeddings = rotary_emb(model.model.language_model.rotary_emb, hidden_states, position_ids[1:])
 
             hidden_states = to_tiny(hidden_states)
             # decoder layers
