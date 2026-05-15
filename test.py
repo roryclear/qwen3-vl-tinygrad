@@ -253,9 +253,11 @@ def forward(
         
         hidden_states_input = model.model.visual.blocks[i].norm1(hidden_states)
         seq_length = hidden_states_input.shape[0]
-        query, key, value = (
-            model.model.visual.blocks[i].attn.qkv(hidden_states_input).reshape(seq_length, 3, model.model.visual.blocks[i].attn.num_heads, -1).permute(1, 0, 2, 3).unbind(0)
-        )
+        hidden_states_input = to_tiny(hidden_states_input)
+        qkv = tiny_model.model.visual.blocks[i].attn.qkv(hidden_states_input)
+        qkv = to_torch(qkv)
+        #hidden_states_input = to_torch(hidden_states_input)
+        query, key, value = (qkv.reshape(seq_length, 3, tiny_model.model.visual.blocks[i].attn.num_heads, -1).permute(1, 0, 2, 3).unbind(0))
         cos, sin = position_embeddings
         orig_q_dtype = query.dtype
         orig_k_dtype = key.dtype
@@ -276,7 +278,7 @@ def forward(
         value = value.contiguous()
         L, S = query.size(-2), key.size(-2)
         attn_bias = torch.zeros(L, S, dtype=key.dtype)
-        attn_weight = query @ key.transpose(-2, -1) * model.model.visual.blocks[i].attn.scaling
+        attn_weight = query @ key.transpose(-2, -1) * tiny_model.model.visual.blocks[i].attn.scaling
         attn_weight += attn_bias
         attn_weight = torch.softmax(attn_weight, dim=-1)
         attn_weight = torch.dropout(attn_weight, 0, train=True)
@@ -284,7 +286,10 @@ def forward(
         attn_output = attn_output.transpose(1, 2).contiguous()
 
         attn_output = attn_output.reshape(seq_length, -1).contiguous()
-        attn_output = model.model.visual.blocks[i].attn.proj(attn_output)
+
+        attn_output = to_tiny(attn_output)
+        attn_output = tiny_model.model.visual.blocks[i].attn.proj(attn_output)
+        attn_output = to_torch(attn_output)
 
         hidden_states += attn_output
         hidden_states = hidden_states + model.model.visual.blocks[i].mlp(model.model.visual.blocks[i].norm2(hidden_states))
@@ -643,6 +648,14 @@ if __name__ == "__main__":
     tiny_model = blank()
     tiny_model.model = blank()
     tiny_model.model.visual = blank()
+    tiny_model.model.visual.blocks = []
+    for i in range(len(model.model.visual.blocks)):
+       tiny_model.model.visual.blocks.append(blank())
+       tiny_model.model.visual.blocks[i].attn = blank()
+       tiny_model.model.visual.blocks[i].attn.proj = tiny_nn.Linear(1024, 1024)
+       tiny_model.model.visual.blocks[i].attn.qkv = tiny_nn.Linear(1024, 3072)
+       tiny_model.model.visual.blocks[i].attn.num_heads = 16
+       tiny_model.model.visual.blocks[i].attn.scaling = 0.125
     tiny_model.model.visual.config = blank()
     tiny_model.model.visual.config.spatial_merge_size = 2
     tiny_model.model.visual.num_grid_per_side = 48
@@ -699,9 +712,9 @@ if __name__ == "__main__":
     images = [Image.open(BytesIO(requests.get("https://img.wort.lu/public/luxemburg/vfka4n-picture-title-binary/alternates/ONE_ONE_256/Picture%20title%20binary").content)).convert("RGB"),
             Image.open(BytesIO(requests.get("https://www.cartell.ie/car_check/wp-content/uploads/2012/03/Nissan-Micra-_4b.jpg").content)).convert("RGB"),
             Image.open("test_img.jpg").convert("RGB")]
-    expected_outputs = ["This is a Ferrari F40, a legendary sports car produced by Ferrari from 1987 to 1992. It is renowned for its sleek design and high performance, making it one of the most iconic cars in automotive history.",
-                        "This is a Nissan Micra, a compact car produced by the Japanese automaker Nissan. The Micra is a popular and affordable car, known for its reliability and efficiency.\n\nThe Nissan Micra was first introduced in 1990 as a small, affordable hatchback. It was designed to compete with other popular compact cars like the Toyota Corolla and Honda Civic. The Micra was initially available in a range of engine sizes, including a 1.0-liter petrol engine and a 1.3-liter petrol engine.\n\nThe Micra was produced in several different versions over the years, with the most common being the 1",
-                        "A person wearing a grey hoodie and light-colored pants is standing next to a silver car with the driver's side door open."]
+    expected_outputs = ["This is a Ferrari F40, a legendary sports car produced by Ferrari from 1987 to 1992. It is renowned for its sleek design and high performance, making it one of the most iconic cars in automotive history. The F40 was a groundbreaking vehicle that helped establish Ferrari's reputation for engineering excellence and innovation.",
+                        "This is a 1997 Nissan Micra, a compact car that was introduced in the UK in 1996. The Micra was designed as a practical and affordable vehicle, and it was one of the first models to be produced in the UK by Nissan.\n\nThe Micra was developed to meet the needs of the UK market, which has a strong tradition of small, economical vehicles. The car was designed with a focus on fuel efficiency and low maintenance, making it a popular choice among UK drivers.\n\nThe 1997 model year saw the Micra in its second generation, with improvements in both design and",
+                        "A person is standing next to a silver car, with the car's door open."]
 
     prompts = ["<|im_start|>user\n<|vision_start|><|image_pad|><|vision_end|>\nWhat car is this?<|im_end|>\n<|im_start|>assistant\n",
             "<|im_start|>user\n<|vision_start|><|image_pad|><|vision_end|>\nTell me the history of this car<|im_end|>\n<|im_start|>assistant\n",
