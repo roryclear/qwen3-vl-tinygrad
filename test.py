@@ -144,7 +144,6 @@ def rotate_half(x):
     return torch.cat((-x2, x1), dim=-1)
 
 def forward(
-    model,
     tiny_model,
     input_ids,
     _pad_token_tensor,
@@ -332,7 +331,13 @@ def forward(
         norm = tiny_model.model.visual.blocks[i].norm2(hidden_states)
         norm = to_torch(norm)
         hidden_states = to_torch(hidden_states)
-        hidden_states = hidden_states + model.model.visual.blocks[i].mlp(norm)
+        
+        norm = to_tiny(norm)
+        x = tiny_model.model.visual.blocks[i].mlp.linear_fc1(norm)
+        x = tinyTensor.gelu(x)
+        norm = tiny_model.model.visual.blocks[i].mlp.linear_fc2(x)
+        norm = to_torch(norm)
+        hidden_states = hidden_states + norm
 
         hidden_states = to_tiny(hidden_states)
 
@@ -351,7 +356,11 @@ def forward(
 
     image_mask = input_ids == tiny_model.model.config.image_token_id
 
-    inputs_embeds = model.model.language_model.embed_tokens.weight[input_ids] # todo indexing not in tinygrad!
+    weight_expanded = tiny_model.model.language_model.embed_tokens.weight.unsqueeze(0).expand(input_ids.shape[0], -1, -1)
+    weight_expanded = to_torch(weight_expanded)
+    inputs_embeds = torch.gather(weight_expanded, 1, 
+                                input_ids.unsqueeze(-1).expand(-1, -1, weight_expanded.shape[-1]))
+
     image_mask = image_mask.unsqueeze(-1).expand_as(inputs_embeds)
 
     inputs_embeds[image_mask] = image_embeds.view(-1)
@@ -728,6 +737,9 @@ if __name__ == "__main__":
        tiny_model.model.visual.blocks[i].attn.scaling = 0.125
        tiny_model.model.visual.blocks[i].norm1 = tiny_nn.LayerNorm(1024, eps=1e-6, elementwise_affine=True)
        tiny_model.model.visual.blocks[i].norm2 = tiny_nn.LayerNorm(1024, eps=1e-6, elementwise_affine=True)
+       tiny_model.model.visual.blocks[i].mlp = blank()
+       tiny_model.model.visual.blocks[i].mlp.linear_fc1 = tiny_nn.Linear(1024, 4096)
+       tiny_model.model.visual.blocks[i].mlp.linear_fc2 = tiny_nn.Linear(4096, 1024)
     tiny_model.model.visual.config = blank()
     tiny_model.model.visual.config.spatial_merge_size = 2
     tiny_model.model.visual.num_grid_per_side = 48
@@ -786,7 +798,7 @@ if __name__ == "__main__":
             Image.open(BytesIO(requests.get("https://www.cartell.ie/car_check/wp-content/uploads/2012/03/Nissan-Micra-_4b.jpg").content)).convert("RGB"),
             Image.open("test_img.jpg").convert("RGB")]
     expected_outputs = ["This is a Ferrari F40, a legendary sports car produced by Ferrari from 1987 to 1992. It is renowned for its sleek design, powerful engine, and status as a symbol of Italian automotive excellence. The F40 was a significant milestone in Ferrari's history, marking the brand's transition from a manufacturer of luxury cars to a leader in high-performance vehicles. It was also the first Ferrari to feature a 3.0-liter V8 engine, which was later replaced by a 4.0-liter V8 in the F50. The F40 was highly regarded for its exceptional handling, speed, and performance, making it a favorite among car enthusiasts and collectors worldwide.",
-                        "This is a Nissan Micra, a compact car produced by the Japanese automaker Nissan. The Micra was introduced in 1995 and is known for its affordability, compact size, and reliability. It was designed to be a practical and economical choice for city driving and everyday use.\n\nThe Nissan Micra has undergone several generations, with the first generation being the 1995 model. The second generation was released in 2001 and continued through 2011, featuring improved design and technology. The third generation was introduced in 2012, with a more modern design and advanced features.",
+                        "This is a Nissan Micra, a compact car produced by the Japanese automaker Nissan. The Micra was introduced in 1995 and is known for its affordability, compact size, and reliability. It was designed to be a practical and economical choice for city driving and everyday use.\n\nThe Nissan Micra has undergone several generations, with the first generation being the 1995–2005 model. The second generation, which was produced from 2006 to 2011, featured a more modern design and improved fuel efficiency. The third generation, produced from 2012 to",
                         "A person is standing in front of a silver car with their back to the camera."]
 
     prompts = ["<|im_start|>user\n<|vision_start|><|image_pad|><|vision_end|>\nWhat car is this?<|im_end|>\n<|im_start|>assistant\n",
@@ -813,7 +825,7 @@ if __name__ == "__main__":
         mm_token_type_ids = [0] * len(text_inputs)
         for pos in image_token_positions: mm_token_type_ids[pos:pos + int(num_image_tokens)] = [1] * int(num_image_tokens)
 
-        outputs = forward(model=model, tiny_model=tiny_model, input_ids=torch.tensor([text_inputs]), _pad_token_tensor=151643, past_key_values=SimpleKVCache(), pixel_values=image_inputs['pixel_values'],
+        outputs = forward(tiny_model=tiny_model, input_ids=torch.tensor([text_inputs]), _pad_token_tensor=151643, past_key_values=SimpleKVCache(), pixel_values=image_inputs['pixel_values'],
                 position_ids=torch.arange(torch.tensor([text_inputs]).shape[-1]).unsqueeze(0).unsqueeze(0).repeat(4, 1, 1), image_grid_thw=image_inputs['image_grid_thw'], expected=tok.encode(expected_output))
 
         #outputs = model.generate(**inputs, max_new_tokens=128)
@@ -822,4 +834,5 @@ if __name__ == "__main__":
         output = output.replace("<|im_end|>","") # todo hack
         print(output)
         assert output == expected_output
+
 
