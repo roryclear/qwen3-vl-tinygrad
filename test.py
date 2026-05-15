@@ -249,9 +249,8 @@ def forward(
     cu_seqlens = F.pad(cu_seqlens, (1, 0), value=0)
 
     deepstack_feature_lists = []
+    hidden_states = to_tiny(hidden_states)
     for i in range(len(tiny_model.model.visual.blocks)):
-        
-        hidden_states = to_tiny(hidden_states)
         hidden_states_input = tiny_model.model.visual.blocks[i].norm1(hidden_states)
         hidden_states = to_torch(hidden_states)
         seq_length = hidden_states_input.shape[0]
@@ -300,14 +299,14 @@ def forward(
         hidden_states = to_torch(hidden_states)
         hidden_states = hidden_states + model.model.visual.blocks[i].mlp(norm)
 
-        if i in model.model.visual.deepstack_visual_indexes:
-            layer = model.model.visual.deepstack_merger_list[model.model.visual.deepstack_visual_indexes.index(i)]
+        hidden_states = to_tiny(hidden_states)
+
+        if i in tiny_model.model.visual.deepstack_visual_indexes:
+            layer = tiny_model.model.visual.deepstack_merger_list[tiny_model.model.visual.deepstack_visual_indexes.index(i)]
             deepstack_feature = layer.norm(hidden_states.view(-1, layer.hidden_size)).view(-1, layer.hidden_size)
-            deepstack_feature = layer.linear_fc2(layer.act_fn(layer.linear_fc1(deepstack_feature)))
-            deepstack_feature_lists.append(deepstack_feature)
+            deepstack_feature = layer.linear_fc2(tinyTensor.gelu(layer.linear_fc1(deepstack_feature)))
+            deepstack_feature_lists.append(to_torch(deepstack_feature))
 
-
-    hidden_states = to_tiny(hidden_states)
     image_embeds = tiny_model.model.visual.merger.norm(hidden_states)
     image_embeds = image_embeds.view(-1, tiny_model.model.visual.merger.hidden_size)
     image_embeds = tiny_model.model.visual.merger.linear_fc1(image_embeds)
@@ -654,6 +653,15 @@ if __name__ == "__main__":
     tiny_model = blank()
     tiny_model.model = blank()
     tiny_model.model.visual = blank()
+    tiny_model.model.visual.deepstack_merger_list = []
+    for i in range(len(model.model.visual.deepstack_merger_list)):
+       tiny_model.model.visual.deepstack_merger_list.append(blank())
+       tiny_model.model.visual.deepstack_merger_list[i].norm = tiny_nn.LayerNorm(4096, eps=1e-6, elementwise_affine=True)
+       tiny_model.model.visual.deepstack_merger_list[i].hidden_size = 4096
+       tiny_model.model.visual.deepstack_merger_list[i].linear_fc1 = tiny_nn.Linear(4096, 4096)
+       tiny_model.model.visual.deepstack_merger_list[i].linear_fc2 = tiny_nn.Linear(4096, 2048)
+       
+    tiny_model.model.visual.deepstack_visual_indexes = [5, 11, 17]
     tiny_model.model.visual.blocks = []
     for i in range(len(model.model.visual.blocks)):
        tiny_model.model.visual.blocks.append(blank())
@@ -720,9 +728,9 @@ if __name__ == "__main__":
     images = [Image.open(BytesIO(requests.get("https://img.wort.lu/public/luxemburg/vfka4n-picture-title-binary/alternates/ONE_ONE_256/Picture%20title%20binary").content)).convert("RGB"),
             Image.open(BytesIO(requests.get("https://www.cartell.ie/car_check/wp-content/uploads/2012/03/Nissan-Micra-_4b.jpg").content)).convert("RGB"),
             Image.open("test_img.jpg").convert("RGB")]
-    expected_outputs = ["This is a Ferrari F40, a legendary sports car produced by Ferrari from 1987 to 1992. It is renowned for its sleek design and high performance, making it one of the most iconic cars in automotive history. The F40 was a groundbreaking vehicle that pushed the boundaries of what was possible in terms of speed and handling.",
-                        "This is a 1999 Nissan Micra, a compact hatchback that was a popular choice for its affordability and practicality. It was first introduced in 1998 and was produced until 2005.\n\nThe Micra was designed to be a cost-effective, fuel-efficient, and reliable car for everyday use. It was a significant success, selling over 1 million units in its first year and becoming a favorite among younger drivers and families.\n\nThe 1999 model year saw several improvements to the Micra, including a revised interior, a more modern design, and a more powerful engine. The",
-                        "A person wearing a grey hoodie is standing next to a silver car, with the car's door open."]
+    expected_outputs = ["This is a Ferrari F40, a legendary sports car produced by Ferrari from 1987 to 1992. It is renowned for its sleek design and high performance, making it one of the most iconic cars in automotive history.",
+                        "This is a Nissan Micra, a compact car produced by the Japanese automaker Nissan. The Micra is a popular and affordable car, known for its reliability and efficiency.\n\nThe Nissan Micra was first introduced in 1990 as a small, affordable hatchback. It was designed to compete with other popular compact cars like the Toyota Corolla and Honda Civic. The Micra was initially available in a range of engine sizes, including a 1.0-liter petrol engine and a 1.3-liter petrol engine.\n\nThe Micra was produced in several generations, with the first generation being produced from 1990",
+                        "A person wearing a grey hoodie and light-colored pants is standing next to a silver car with the driver's side door open."]
 
     prompts = ["<|im_start|>user\n<|vision_start|><|image_pad|><|vision_end|>\nWhat car is this?<|im_end|>\n<|im_start|>assistant\n",
             "<|im_start|>user\n<|vision_start|><|image_pad|><|vision_end|>\nTell me the history of this car<|im_end|>\n<|im_start|>assistant\n",
