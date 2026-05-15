@@ -32,6 +32,24 @@ class SimpleKVCache:
             self.cache[layer_idx] = (key, value)
         return key, value
 
+def get_vision_position_ids(
+    grid_thw, spatial_merge_size) -> torch.Tensor:
+    device = grid_thw.device
+    if isinstance(spatial_merge_size, int):
+        spatial_merge_size = torch.tensor([spatial_merge_size], device=device).expand(len(grid_thw))
+
+    position_ids = []
+    for (t, h, w), merge_size in zip(grid_thw.tolist(), spatial_merge_size.tolist()):
+        t, h, w, merge_size = int(t), int(h), int(w), int(merge_size)
+        hpos_ids = torch.arange(h, device=device).unsqueeze(1).expand(-1, w)
+        hpos_ids = hpos_ids.reshape(h // merge_size, merge_size, w // merge_size, merge_size).transpose(1, 2).flatten()
+
+        wpos_ids = torch.arange(w, device=device).unsqueeze(0).expand(h, -1)
+        wpos_ids = wpos_ids.reshape(h // merge_size, merge_size, w // merge_size, merge_size).transpose(1, 2).flatten()
+        position_ids.append(torch.stack([hpos_ids, wpos_ids], dim=-1).repeat(t, 1))
+
+    return torch.cat(position_ids, dim=0)
+
 class SimpleTokenizer:
   def __init__(self, normal_tokens:dict[str, int], special_tokens:dict[str, int], preset:str="llama3",
                bos_id:int|None=None, eos_id:int=0, eot_id:int|None=None):
@@ -255,7 +273,9 @@ def forward(
 
     hidden_states = hidden_states + pos_embeds
     
-    rotary_pos_emb = model.model.visual.rot_pos_emb(image_grid_thw)
+
+    pos_ids = get_vision_position_ids(image_grid_thw, model.model.visual.spatial_merge_size)
+    rotary_pos_emb = (pos_ids.unsqueeze(-1) * model.model.visual.rotary_pos_emb.inv_freq).flatten(1)
 
     seq_len, _ = hidden_states.size()
     hidden_states = hidden_states.reshape(seq_len, -1)
@@ -800,3 +820,4 @@ if __name__ == "__main__":
         output = output.replace("<|im_end|>","") # todo hack
         print(output)
         assert output == expected_output
+
