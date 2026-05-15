@@ -435,7 +435,7 @@ def forward(
 
     while not this_peer_finished:
         if prefill_consumed:
-            inputs_embeds = model.model.get_input_embeddings()(input_ids[:, -1:])
+            inputs_embeds = model.model.language_model.embed_tokens(input_ids[:, -1:])
 
             hidden_states = inputs_embeds
             pos_ids = position_ids[1:]
