@@ -314,7 +314,9 @@ def forward(
     image_embeds = tiny_model.model.visual.merger.linear_fc2(image_embeds)
     image_embeds = to_torch(image_embeds)
 
-    image_mask, _ = model.model.get_placeholder_mask(input_ids, inputs_embeds=inputs_embeds, image_features=image_embeds)
+    image_mask = input_ids == tiny_model.model.config.image_token_id
+    image_mask = image_mask.unsqueeze(-1).expand_as(inputs_embeds)
+
     inputs_embeds[image_mask] = image_embeds.view(-1)
     image_mask = image_mask[..., 0]
 
@@ -646,6 +648,8 @@ if __name__ == "__main__":
 
     tiny_model = blank()
     tiny_model.model = blank()
+    tiny_model.model.config = blank()
+    tiny_model.model.config.image_token_id = 151655
     tiny_model.model.visual = blank()
     tiny_model.model.visual.deepstack_merger_list = []
     for i in range(len(model.model.visual.deepstack_merger_list)):
