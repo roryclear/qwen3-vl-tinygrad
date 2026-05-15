@@ -435,7 +435,10 @@ def forward(
 
     while not this_peer_finished:
         if prefill_consumed:
-            inputs_embeds = model.model.language_model.embed_tokens(input_ids[:, -1:])
+            input_ids = to_tiny(input_ids)
+            inputs_embeds = tiny_model.model.language_model.embed_tokens(input_ids[:, -1:])
+            inputs_embeds = to_torch(inputs_embeds)
+            input_ids = to_torch(input_ids)
 
             hidden_states = inputs_embeds
             pos_ids = position_ids[1:]
@@ -741,8 +744,7 @@ if __name__ == "__main__":
       tiny_model.model.language_model.layers[i].mlp.gate_proj = tiny_nn.Linear(2048, 6144, bias=False)
       tiny_model.model.language_model.layers[i].mlp.up_proj = tiny_nn.Linear(2048, 6144, bias=False)
       tiny_model.model.language_model.layers[i].mlp.down_proj = tiny_nn.Linear(6144, 2048, bias=False)
-      tiny_model.model.language_model.embed_tokens = blank()
-      tiny_model.model.language_model.embed_tokens.weight = tinyTensor.zeros(151936, 2048) # todo not used yet
+      tiny_model.model.language_model.embed_tokens = tiny_nn.Embedding(vocab_size=151936, embed_size=2048)
 
     tiny_model.model.visual.merger = blank()
     tiny_model.model.visual.merger.hidden_size = 4096
