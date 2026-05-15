@@ -181,7 +181,6 @@ def forward(
 
     prefill_consumed = False
 
-    inputs_embeds = model.model.language_model.embed_tokens.weight[input_ids] # todo indexing not in tinygrad!
     position_ids = torch.arange(input_ids.shape[-1]).unsqueeze(0).unsqueeze(0).repeat(4, 1, 1)
 
     hidden_states = pixel_values.view(-1, tiny_model.model.visual.patch_embed.in_channels, tiny_model.model.visual.patch_embed.temporal_patch_size, tiny_model.model.visual.patch_embed.patch_size, tiny_model.model.visual.patch_embed.patch_size)
@@ -356,6 +355,8 @@ def forward(
     image_embeds = to_torch(image_embeds)
 
     image_mask = input_ids == tiny_model.model.config.image_token_id
+    
+    inputs_embeds = model.model.language_model.embed_tokens.weight[input_ids] # todo indexing not in tinygrad!
     image_mask = image_mask.unsqueeze(-1).expand_as(inputs_embeds)
 
     inputs_embeds[image_mask] = image_embeds.view(-1)
