@@ -189,14 +189,13 @@ def forward(
     grid_hs = grid_thw_list[0][1]
     grid_ws = grid_thw_list[0][2]
 
-    h_idxs = torch.linspace(0, tiny_model.model.visual.num_grid_per_side - 1, grid_hs)
-    w_idxs = torch.linspace(0, tiny_model.model.visual.num_grid_per_side - 1, grid_ws)
+    h_idxs = tinyTensor.linspace(0, tiny_model.model.visual.num_grid_per_side - 1, grid_hs)
+    w_idxs = tinyTensor.linspace(0, tiny_model.model.visual.num_grid_per_side - 1, grid_ws)
 
-    h_idxs_floor = h_idxs.int()
-    w_idxs_floor = w_idxs.int()
-    h_idxs_ceil = (h_idxs.int() + 1).clip(max=tiny_model.model.visual.num_grid_per_side - 1)
-    w_idxs_ceil = (w_idxs.int() + 1).clip(max=tiny_model.model.visual.num_grid_per_side - 1)
-
+    h_idxs_floor = h_idxs.cast(dtypes.int32)
+    w_idxs_floor = w_idxs.cast(dtypes.int32)
+    h_idxs_ceil = (h_idxs_floor.int() + 1).clip(tiny_model.model.visual.num_grid_per_side - 1)
+    w_idxs_ceil = (w_idxs_floor.int() + 1).clip(tiny_model.model.visual.num_grid_per_side - 1)
     dh = h_idxs - h_idxs_floor
     dw = w_idxs - w_idxs_floor
 
@@ -204,23 +203,12 @@ def forward(
     base_h_ceil = h_idxs_ceil * tiny_model.model.visual.num_grid_per_side
 
 
-    base_h = to_tiny(base_h)
-    w_idxs_floor = to_tiny(w_idxs_floor)
-    base_h_ceil = to_tiny(base_h_ceil)
-    w_idxs_ceil = to_tiny(w_idxs_ceil)
-    w_idxs_floor = to_tiny(w_idxs_floor)
-    w_idxs_ceil = to_tiny(w_idxs_ceil)
-
     idx_tensor = tinyTensor.stack(
         (base_h[None].T + w_idxs_floor[None]).flatten(),
         (base_h[None].T + w_idxs_ceil[None]).flatten(),
         (base_h_ceil[None].T + w_idxs_floor[None]).flatten(),
         (base_h_ceil[None].T + w_idxs_ceil[None]).flatten(),
     ).cast(dtypes.int32)
-
-
-    dh = to_tiny(dh)
-    dw = to_tiny(dw)
 
     weight_tensor = tinyTensor.stack(
         ((1 - dh)[None].T * (1 - dw)[None]).flatten(),
@@ -231,7 +219,6 @@ def forward(
 
     pos_embeds = tiny_model.model.visual.pos_embed(idx_tensor)
     pos_embeds *= weight_tensor[:, :, None]
-    pos_embeds = to_torch(pos_embeds)
     patch_pos_embeds = pos_embeds[0] + pos_embeds[1] + pos_embeds[2] + pos_embeds[3]
 
     patch_pos_embeds = patch_pos_embeds[:grid_hs * grid_ws]
@@ -239,7 +226,6 @@ def forward(
     merge_size = tiny_model.model.visual.config.spatial_merge_size
     pos_embeds = patch_pos_embeds.repeat(grid_ts, 1)
     pos_embeds = (pos_embeds.view(grid_ts, grid_hs // merge_size, merge_size, grid_ws // merge_size, merge_size, -1).permute(0, 1, 3, 2, 4, 5).flatten(0, 4))
-    hidden_states = to_torch(hidden_states)
     hidden_states = hidden_states + pos_embeds
     
     spatial_merge_size = torch.tensor([tiny_model.model.visual.spatial_merge_size]).expand(len(image_grid_thw))
@@ -271,10 +257,8 @@ def forward(
     cu_seqlens = F.pad(cu_seqlens, (1, 0), value=0)
 
     deepstack_feature_lists = []
-    hidden_states = to_tiny(hidden_states)
     for i in range(len(tiny_model.model.visual.blocks)):
         hidden_states_input = tiny_model.model.visual.blocks[i].norm1(hidden_states)
-        hidden_states = to_torch(hidden_states)
         seq_length = hidden_states_input.shape[0]
         hidden_states_input = to_tiny(hidden_states_input)
         qkv = tiny_model.model.visual.blocks[i].attn.qkv(hidden_states_input)
@@ -311,23 +295,14 @@ def forward(
         attn_output = attn_output.reshape(seq_length, -1).contiguous()
 
         attn_output = to_tiny(attn_output)
+        attn_output = attn_output.cast(dtypes.bfloat16)
         attn_output = tiny_model.model.visual.blocks[i].attn.proj(attn_output)
-        attn_output = to_torch(attn_output)
-
         hidden_states += attn_output
-        hidden_states = to_tiny(hidden_states)
         norm = tiny_model.model.visual.blocks[i].norm2(hidden_states)
-        norm = to_torch(norm)
-        hidden_states = to_torch(hidden_states)
-        
-        norm = to_tiny(norm)
         x = tiny_model.model.visual.blocks[i].mlp.linear_fc1(norm)
         x = tinyTensor.gelu(x)
         norm = tiny_model.model.visual.blocks[i].mlp.linear_fc2(x)
-        norm = to_torch(norm)
         hidden_states = hidden_states + norm
-
-        hidden_states = to_tiny(hidden_states)
 
         if i in tiny_model.model.visual.deepstack_visual_indexes:
             layer = tiny_model.model.visual.deepstack_merger_list[tiny_model.model.visual.deepstack_visual_indexes.index(i)]
@@ -787,9 +762,9 @@ if __name__ == "__main__":
     images = [Image.open(BytesIO(requests.get("https://img.wort.lu/public/luxemburg/vfka4n-picture-title-binary/alternates/ONE_ONE_256/Picture%20title%20binary").content)).convert("RGB"),
             Image.open(BytesIO(requests.get("https://www.cartell.ie/car_check/wp-content/uploads/2012/03/Nissan-Micra-_4b.jpg").content)).convert("RGB"),
             Image.open("test_img.jpg").convert("RGB")]
-    expected_outputs = ["This is a Ferrari F40, a legendary sports car produced by Ferrari from 1987 to 1992. It is renowned for its sleek design, powerful engine, and status as a symbol of Italian automotive excellence. The F40 was a significant milestone in Ferrari's history, marking the brand's transition from a manufacturer of luxury cars to a leader in high-performance vehicles. It was also the first Ferrari to feature a 3.0-liter V8 engine, which was later replaced by a 4.0-liter V8 in the F50. The F40 was highly regarded for its exceptional handling, speed, and performance, making it a favorite among car enthusiasts and collectors worldwide.",
-                        "This is a Nissan Micra, a compact car produced by the Japanese automaker Nissan. The Micra was introduced in 1995 and is known for its affordability, compact size, and reliability. It was designed to be a practical and economical choice for city driving and everyday use.\n\nThe Nissan Micra has undergone several generations, with the first generation being the 1995–2005 model. The second generation, which was produced from 2006 to 2011, featured a more modern design and improved fuel efficiency. The third generation, produced from 2012 to",
-                        "A person is standing in front of a silver car with their back to the camera."]
+    expected_outputs = ["This is a Ferrari F40, a legendary sports car produced by Ferrari from 1987 to 1992. It is known for its sleek design and high performance, making it one of the most iconic cars in automotive history.",
+                        "This is a Nissan Micra, a compact car produced by the Japanese automaker Nissan.\n\nThe Nissan Micra was first introduced in 1991 as a small, economical car designed for urban and suburban use. It was a significant departure from the larger, more expensive Nissan Pulsar, which was a popular model in Japan at the time.\n\nThe Micra was designed to be a cost-effective, fuel-efficient car that could be easily driven by people with limited budgets. It was also designed to be a practical car for city driving, with a focus on fuel economy and low maintenance.\n\nThe Micra was produced in several different generations",
+                        "A person is standing next to a silver car, with their back to the camera."]
 
     prompts = ["<|im_start|>user\n<|vision_start|><|image_pad|><|vision_end|>\nWhat car is this?<|im_end|>\n<|im_start|>assistant\n",
             "<|im_start|>user\n<|vision_start|><|image_pad|><|vision_end|>\nTell me the history of this car<|im_end|>\n<|im_start|>assistant\n",
