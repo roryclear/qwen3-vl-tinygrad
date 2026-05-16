@@ -336,7 +336,7 @@ def forward(
 
     position_ids = torch.arange(input_ids.shape[-1]).unsqueeze(0).unsqueeze(0).repeat(4, 1, 1)
     pos_id = position_ids[1:]
-    inv_freq_expanded = tiny_model.model.language_model.rotary_emb.inv_freq[None, None, :, None].float().expand(3, pos_id.shape[1], -1, 1)
+    inv_freq_expanded = to_torch(tiny_model.model.language_model.rotary_emb.inv_freq)[None, None, :, None].float().expand(3, pos_id.shape[1], -1, 1)
     position_ids_expanded = pos_id[:, :, None, :].float()
     freqs = (inv_freq_expanded.float() @ position_ids_expanded.float()).transpose(2, 3)
 
@@ -443,7 +443,7 @@ def forward(
 
             hidden_states = inputs_embeds
             pos_ids = position_ids[1:]
-            inv_freq_expanded = (tiny_model.model.language_model.rotary_emb.inv_freq[None, None, :, None].float().expand(3, pos_ids.shape[1], -1, 1))
+            inv_freq_expanded = (to_torch(tiny_model.model.language_model.rotary_emb.inv_freq)[None, None, :, None].float().expand(3, pos_ids.shape[1], -1, 1))
             position_ids_expanded = pos_ids[:, :, None, :].float()  # shape (3, bs, 1, positions)
 
             freqs = (inv_freq_expanded.float() @ position_ids_expanded.float()).transpose(2, 3)
@@ -663,6 +663,7 @@ if __name__ == "__main__":
 
     def to_torch(x):
       if x.dtype == dtypes.bfloat16: return torch.tensor(x.numpy(), dtype=torch.bfloat16)
+      if x.dtype == dtypes.int64: return torch.tensor(x.numpy(), dtype=torch.int64)
       return torch.tensor(x.numpy())
 
     class blank: pass
@@ -721,11 +722,9 @@ if __name__ == "__main__":
     tiny_model.model.language_model = blank()
     tiny_model.model.language_model.layers = []
     tiny_model.model.language_model.rotary_emb = blank()
-    tiny_model.model.language_model.rotary_emb.inv_freq = 1.0 / (5000000 ** (torch.arange(0, 128, 2, dtype=torch.int64) / 128)) # todo tiny!
     tiny_model.model.language_model.rotary_emb.mrope_section = [24, 20, 20]
     tiny_model.model.language_model.rotary_emb.attention_scaling = 1
     #tiny_model.model.language_model.rotary_emb.theta
-    #tiny_model.model.language_model.rotary_emb.inv_freq = tinyTensor.zeros(64)
 
     tiny_model.model.visual.pos_embed.weight.cast(dtypes.bfloat16)
     #print(tiny_model.model.visual.pos_embed.weight.dtype)
@@ -764,6 +763,7 @@ if __name__ == "__main__":
     tiny_model.lm_head = tiny_nn.Linear(2048, 151936, bias=False)
     tiny_model.lm_head.weight = to_tiny(model.lm_head.weight) # todo how is this inited?
     tiny_model.model.visual.rotary_pos_emb.inv_freq = 1.0 / (tiny_model.model.visual.rotary_pos_emb.theta ** (tinyTensor.arange(0, tiny_model.model.visual.rotary_pos_emb.dim, 2, dtype=dtypes.float) / tiny_model.model.visual.rotary_pos_emb.dim))
+    tiny_model.model.language_model.rotary_emb.inv_freq = 1.0 / (5000000 ** (tinyTensor.arange(0, 128, 2, dtype=dtypes.int64) / 128))
 
     #print(model.model.visual.pos_embed.bias) no bias
     #model.model.visual.pos_embed_tiny = to_tiny(model.model.visual.pos_embed)
@@ -772,9 +772,9 @@ if __name__ == "__main__":
     images = [Image.open(BytesIO(requests.get("https://img.wort.lu/public/luxemburg/vfka4n-picture-title-binary/alternates/ONE_ONE_256/Picture%20title%20binary").content)).convert("RGB"),
             Image.open(BytesIO(requests.get("https://www.cartell.ie/car_check/wp-content/uploads/2012/03/Nissan-Micra-_4b.jpg").content)).convert("RGB"),
             Image.open("test_img.jpg").convert("RGB")]
-    expected_outputs = ["This is a Ferrari F40, a classic sports car produced by Ferrari from 1987 to 1992. It is renowned for its sleek design and high performance, making it one of the most iconic cars in automotive history.",
-                        "This is a Nissan Micra, a compact car produced by the Japanese automaker Nissan. The Micra is a popular and affordable car, known for its reliability and efficiency. It was first introduced in 1995 and has been in production since then. The Micra has been available in various body styles and engine options, including a 1.0-liter and 1.3-liter engine. It has been praised for its fuel efficiency and low maintenance costs. The Micra has been a favorite among car enthusiasts and everyday drivers alike.",
-                        "A person wearing a grey hoodie and light-colored pants is standing near a silver car with the driver's side door open."]
+    expected_outputs = ["This is a Ferrari F40, a classic sports car produced by Ferrari from 1987 to 1992. It is renowned for its sleek design and high performance, making it one of the most iconic cars in automotive history. The F40 is known for its aggressive styling, with a low-slung body, a wide rear wing, and a powerful 3.5-liter V8 engine. It was a significant milestone in Ferrari's history, marking the brand's transition from a manufacturer of luxury sedans to a leader in high-performance sports cars.",
+                        "This is a 2002 Nissan Micra, a small, affordable, and popular compact car produced by Nissan. It was launched in 2001 and was designed as a budget-friendly alternative to more expensive Japanese cars, making it a popular choice for urban and suburban drivers.\n\nThe Micra is a front-wheel-drive, 3-door hatchback that was built on the same platform as the Nissan 1600, which was used in the Nissan 1600 and Nissan 2000. It was available in a range of engine options, including a 1.0-liter petrol engine,",
+                        "A person wearing a grey hoodie and light-colored pants is standing near a silver car."]
 
     prompts = ["<|im_start|>user\n<|vision_start|><|image_pad|><|vision_end|>\nWhat car is this?<|im_end|>\n<|im_start|>assistant\n",
             "<|im_start|>user\n<|vision_start|><|image_pad|><|vision_end|>\nTell me the history of this car<|im_end|>\n<|im_start|>assistant\n",
@@ -782,7 +782,7 @@ if __name__ == "__main__":
 
     import pickle
     tok = pickle.load(open("tok.pkl", "rb"))
-
+    
     for image, expected_output, prompt in zip(images, expected_outputs, prompts):
         text_inputs = tok.encode(prompt)
         image = [tvF.pil_to_tensor(image)]
