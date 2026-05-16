@@ -406,8 +406,18 @@ def forward(
         hidden_states = tiny_model.model.language_model.layers[i].mlp.down_proj(combined)
         hidden_states = to_torch(hidden_states)
         hidden_states = residual + hidden_states
-   
-        if i < len(deepstack_feature_lists): hidden_states[image_mask, :] += to_torch(deepstack_feature_lists[i])
+        if i < len(deepstack_feature_lists):
+            hidden_states = to_tiny(hidden_states)
+            image_mask = to_tiny(image_mask)
+            deepstack_features = deepstack_feature_lists[i]
+            mask_float = image_mask.cast(hidden_states.dtype)
+            positions = mask_float.cumsum(axis=0) - 1
+            positions = positions.clamp(0).cast(dtypes.int32)
+            expanded = deepstack_features[positions]
+            expanded = expanded * mask_float.unsqueeze(-1)
+            hidden_states = hidden_states + expanded
+            hidden_states = to_torch(hidden_states)
+
     
     hidden_states = to_tiny(hidden_states)
     hidden_states = tiny_model.model.language_model.norm(hidden_states)
@@ -755,9 +765,9 @@ if __name__ == "__main__":
     images = [Image.open(BytesIO(requests.get("https://img.wort.lu/public/luxemburg/vfka4n-picture-title-binary/alternates/ONE_ONE_256/Picture%20title%20binary").content)).convert("RGB"),
             Image.open(BytesIO(requests.get("https://www.cartell.ie/car_check/wp-content/uploads/2012/03/Nissan-Micra-_4b.jpg").content)).convert("RGB"),
             Image.open("test_img.jpg").convert("RGB")]
-    expected_outputs = ["This is a Ferrari F40, a legendary sports car produced by Ferrari from 1987 to 1992. It is known for its sleek design and powerful performance, making it one of the most iconic cars in automotive history.",
-                        "This is a Nissan Micra, a compact car produced by the Japanese automaker Nissan.\n\nThe Nissan Micra was introduced in 1995 and has been a popular and affordable choice for many drivers. It was designed to be a practical and fuel-efficient car, with a focus on comfort and ease of use.\n\nThe Micra has undergone several model updates over the years, with the most recent being the Micra 1.6 (2008-2012) and the Micra 1.6 (2013-2016) models. These updates included improvements to the engine,",
-                        "A person is standing next to a silver car."]
+    expected_outputs = ["This is a Ferrari F40, a classic sports car produced by Ferrari from 1987 to 1992. It is renowned for its sleek design and high performance, making it one of the most iconic cars in automotive history.",
+                        "This is a Nissan Micra, a compact car produced by the Japanese automaker Nissan. The Micra is a popular and affordable car, known for its reliability and efficiency. It was first introduced in 1995 and has been in production since then. The Micra has been available in various body styles and engine options, including a 1.0-liter and 1.3-liter engine. It has been praised for its fuel efficiency and low maintenance costs. The Micra has been a favorite among car enthusiasts and everyday drivers alike.",
+                        "A person wearing a grey hoodie and light-colored pants is standing near a silver car with the driver's side door open."]
 
     prompts = ["<|im_start|>user\n<|vision_start|><|image_pad|><|vision_end|>\nWhat car is this?<|im_end|>\n<|im_start|>assistant\n",
             "<|im_start|>user\n<|vision_start|><|image_pad|><|vision_end|>\nTell me the history of this car<|im_end|>\n<|im_start|>assistant\n",
@@ -792,3 +802,4 @@ if __name__ == "__main__":
         output = output.replace("<|im_end|>","") # todo hack
         print(output)
         assert output == expected_output
+
