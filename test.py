@@ -153,21 +153,18 @@ def forward(
     image_grid_thw,
     expected # todo for testing
 ):
+    pixel_values = to_tiny(pixel_values)
     toks_out = [] # todo for testing
     pad_token_id = _pad_token_tensor
     scores = None
     batch_size = input_ids.shape[0]
     this_peer_finished = False
-    unfinished_sequences = torch.ones(batch_size, dtype=torch.int32)
+    unfinished_sequences = tinyTensor.ones(batch_size, dtype=dtypes.int32)
 
     prefill_consumed = False
 
-    position_ids = torch.arange(input_ids.shape[-1]).unsqueeze(0).unsqueeze(0).repeat(4, 1, 1)
-
     hidden_states = pixel_values.view(-1, tiny_model.model.visual.patch_embed.in_channels, tiny_model.model.visual.patch_embed.temporal_patch_size, tiny_model.model.visual.patch_embed.patch_size, tiny_model.model.visual.patch_embed.patch_size)
-    hidden_states = hidden_states.to(dtype=torch.bfloat16)
-    
-    hidden_states = to_tiny(hidden_states)
+    hidden_states = hidden_states.cast(dtype=dtypes.bfloat16)
 
     B, C, D, H, W = hidden_states.shape
     x = hidden_states.reshape(B, C * D, H, W)
@@ -185,12 +182,11 @@ def forward(
     )
 
     hidden_states = hidden_states.view(-1, tiny_model.model.visual.patch_embed.embed_dim)
-    hidden_states = to_torch(hidden_states)
-
+        
     grid_thw_list = image_grid_thw.tolist()
-    grid_ts = [row[0] for row in grid_thw_list]
-    grid_hs = [row[1] for row in grid_thw_list]
-    grid_ws = [row[2] for row in grid_thw_list]
+    grid_ts = grid_thw_list[0][0]
+    grid_hs = grid_thw_list[0][1]
+    grid_ws = grid_thw_list[0][2]
 
     idx_list = [[] for _ in range(4)]
     weight_list = [[] for _ in range(4)]
@@ -236,24 +232,14 @@ def forward(
     pos_embeds *= weight_tensor[:, :, None]
     patch_pos_embeds = pos_embeds[0] + pos_embeds[1] + pos_embeds[2] + pos_embeds[3]
 
-    patch_pos_embeds = patch_pos_embeds.split([h * w for h, w in zip(grid_hs, grid_ws)])
+    patch_pos_embeds = patch_pos_embeds[:grid_hs * grid_ws]
 
-    patch_pos_embeds_permute = []
     merge_size = tiny_model.model.visual.config.spatial_merge_size
-    for pos_embed, t, h, w in zip(patch_pos_embeds, grid_ts, grid_hs, grid_ws):
-        pos_embed = pos_embed.repeat(t, 1)
-        pos_embed = (
-            pos_embed.view(t, h // merge_size, merge_size, w // merge_size, merge_size, -1)
-            .permute(0, 1, 3, 2, 4, 5)
-            .flatten(0, 4)
-        )
-        patch_pos_embeds_permute.append(pos_embed)
-    pos_embeds = torch.cat(patch_pos_embeds_permute)
-
-
+    pos_embeds = patch_pos_embeds.repeat(t, 1)
+    pos_embeds = (pos_embeds.view(grid_ts, grid_hs // merge_size, merge_size, grid_ws // merge_size, merge_size, -1).permute(0, 1, 3, 2, 4, 5).flatten(0, 4))
+    hidden_states = to_torch(hidden_states)
     hidden_states = hidden_states + pos_embeds
     
-
     spatial_merge_size = torch.tensor([tiny_model.model.visual.spatial_merge_size]).expand(len(image_grid_thw))
 
     pos_ids = []
@@ -368,6 +354,7 @@ def forward(
 
     hidden_states = inputs_embeds
 
+    position_ids = torch.arange(input_ids.shape[-1]).unsqueeze(0).unsqueeze(0).repeat(4, 1, 1)
     pos_id = position_ids[1:]
     inv_freq_expanded = tiny_model.model.language_model.rotary_emb.inv_freq[None, None, :, None].float().expand(3, pos_id.shape[1], -1, 1)
     position_ids_expanded = pos_id[:, :, None, :].float()
@@ -573,6 +560,7 @@ def forward(
         probs = nn.functional.softmax(next_token_scores, dim=-1)
         next_tokens = torch.multinomial(probs, num_samples=1).squeeze(1)
 
+        unfinished_sequences = to_torch(unfinished_sequences)
         next_tokens = next_tokens * unfinished_sequences + pad_token_id * (1 - unfinished_sequences)
 
         input_ids = torch.cat([input_ids, next_tokens[:, None]], dim=-1)
@@ -692,8 +680,8 @@ if __name__ == "__main__":
     tiny_weights = safe_load(fetch(f'https://huggingface.co/Qwen/Qwen3-VL-2B-Instruct/resolve/main/model.safetensors'))
 
     print(model)
-    print(model.model.visual.pos_embed)
-    print(model.model.visual.pos_embed.weight.shape)
+    #print(model.model.visual.pos_embed)
+    #print(model.model.visual.pos_embed.weight.shape)
 
     tiny_model = blank()
     tiny_model.model = blank()
