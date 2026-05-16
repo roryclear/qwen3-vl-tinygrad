@@ -305,29 +305,25 @@ def forward(
     image_embeds = tinyTensor.gelu(image_embeds)
     image_embeds = tiny_model.model.visual.merger.linear_fc2(image_embeds)
     
-
+    input_ids = to_tiny(input_ids)
     image_mask = input_ids == tiny_model.model.config.image_token_id
 
     weight_expanded = tiny_model.model.language_model.embed_tokens.weight.unsqueeze(0).expand(input_ids.shape[0], -1, -1)
-    weight_expanded = to_torch(weight_expanded)
-
-    input_ids = to_tiny(input_ids)
-    weight_expanded = to_tiny(weight_expanded)
 
     B, T = input_ids.shape
     batch_idx = tinyTensor.arange(B).reshape(B, 1).expand(B, T)
     inputs_embeds = weight_expanded[batch_idx, input_ids]
 
-    input_ids = to_torch(input_ids)
-    weight_expanded = to_torch(weight_expanded)
+    image_mask = image_mask.unsqueeze(-1).expand(inputs_embeds.shape)
     inputs_embeds = to_torch(inputs_embeds)
-    image_mask = image_mask.unsqueeze(-1).expand_as(inputs_embeds)
+    image_mask = to_torch(image_mask)
     image_embeds = to_torch(image_embeds)
     inputs_embeds[image_mask] = image_embeds.view(-1)
     image_mask = image_mask[..., 0]
 
     hidden_states = inputs_embeds
 
+    input_ids = to_torch(input_ids)
     position_ids = torch.arange(input_ids.shape[-1]).unsqueeze(0).unsqueeze(0).repeat(4, 1, 1)
     pos_id = position_ids[1:]
     inv_freq_expanded = tiny_model.model.language_model.rotary_emb.inv_freq[None, None, :, None].float().expand(3, pos_id.shape[1], -1, 1)
@@ -794,4 +790,3 @@ if __name__ == "__main__":
         output = output.replace("<|im_end|>","") # todo hack
         print(output)
         assert output == expected_output
-
