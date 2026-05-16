@@ -317,13 +317,21 @@ def forward(
     input_ids = to_torch(input_ids)
     weight_expanded = to_torch(weight_expanded)
     image_mask = image_mask.unsqueeze(-1).expand(inputs_embeds.shape)
-    inputs_embeds = to_torch(inputs_embeds)
-    image_mask = to_torch(image_mask)
     image_embeds = image_embeds.view(-1)
-    image_embeds = to_torch(image_embeds)
-    inputs_embeds[image_mask] = image_embeds
+
+    flat_mask = image_mask.view(-1)
+    idx = (flat_mask.cumsum(0) - 1).clamp(0)
+    
+    expanded = image_embeds[idx] * flat_mask
+
+    flat_inputs = inputs_embeds.view(-1)
+    flat_inputs = flat_inputs * (~flat_mask) + expanded
+
+    inputs_embeds = flat_inputs.view(inputs_embeds.shape)
+
     image_mask = image_mask[..., 0]
 
+    inputs_embeds = to_torch(inputs_embeds)
     hidden_states = inputs_embeds
 
     position_ids = torch.arange(input_ids.shape[-1]).unsqueeze(0).unsqueeze(0).repeat(4, 1, 1)
@@ -408,7 +416,6 @@ def forward(
         hidden_states = residual + hidden_states
         if i < len(deepstack_feature_lists):
             hidden_states = to_tiny(hidden_states)
-            image_mask = to_tiny(image_mask)
             deepstack_features = deepstack_feature_lists[i]
             mask_float = image_mask.cast(hidden_states.dtype)
             positions = mask_float.cumsum(axis=0) - 1
@@ -802,4 +809,5 @@ if __name__ == "__main__":
         output = output.replace("<|im_end|>","") # todo hack
         print(output)
         assert output == expected_output
+
 
