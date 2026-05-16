@@ -228,19 +228,15 @@ def forward(
     pos_embeds = (pos_embeds.view(grid_ts, grid_hs // merge_size, merge_size, grid_ws // merge_size, merge_size, -1).permute(0, 1, 3, 2, 4, 5).flatten(0, 4))
     hidden_states = hidden_states + pos_embeds
     
-    spatial_merge_size = torch.tensor([tiny_model.model.visual.spatial_merge_size]).expand(len(image_grid_thw))
+    merge_size = int(tiny_model.model.visual.spatial_merge_size)
 
-    pos_ids = []
-    for (t, h, w), merge_size in zip(image_grid_thw.tolist(), spatial_merge_size.tolist()):
-        t, h, w, merge_size = int(t), int(h), int(w), int(merge_size)
-        hpos_ids = torch.arange(h).unsqueeze(1).expand(-1, w)
-        hpos_ids = hpos_ids.reshape(h // merge_size, merge_size, w // merge_size, merge_size).transpose(1, 2).flatten()
+    hpos_ids = torch.arange(image_grid_thw[0][1]).unsqueeze(1).expand(-1, image_grid_thw[0][2])
+    hpos_ids = hpos_ids.reshape(image_grid_thw[0][1] // merge_size, merge_size, image_grid_thw[0][2] // merge_size, merge_size).transpose(1, 2).flatten()
 
-        wpos_ids = torch.arange(w).unsqueeze(0).expand(h, -1)
-        wpos_ids = wpos_ids.reshape(h // merge_size, merge_size, w // merge_size, merge_size).transpose(1, 2).flatten()
-        pos_ids.append(torch.stack([hpos_ids, wpos_ids], dim=-1).repeat(t, 1))
+    wpos_ids = torch.arange(image_grid_thw[0][2]).unsqueeze(0).expand(image_grid_thw[0][1], -1)
+    wpos_ids = wpos_ids.reshape(image_grid_thw[0][1] // merge_size, merge_size, image_grid_thw[0][2] // merge_size, merge_size).transpose(1, 2).flatten()
 
-    pos_ids = torch.cat(pos_ids, dim=0)
+    pos_ids = torch.stack([hpos_ids, wpos_ids], dim=-1).repeat(image_grid_thw[0][0], 1)
 
     rotary_pos_emb = (pos_ids.unsqueeze(-1) * tiny_model.model.visual.rotary_pos_emb.inv_freq).flatten(1)
 
@@ -642,6 +638,7 @@ class Qwen3VLTextRMSNorm_tiny():
 
 if __name__ == "__main__":
     model = AutoModelForImageTextToText.from_pretrained("Qwen/Qwen3-VL-2B-Instruct")
+    print(model)
 
 
     def to_tiny(x):
@@ -655,8 +652,6 @@ if __name__ == "__main__":
     class blank: pass
 
     tiny_weights = safe_load(fetch(f'https://huggingface.co/Qwen/Qwen3-VL-2B-Instruct/resolve/main/model.safetensors'))
-
-    print(model)
     #print(model.model.visual.pos_embed)
     #print(model.model.visual.pos_embed.weight.shape)
 
@@ -684,7 +679,7 @@ if __name__ == "__main__":
     tiny_model.model.visual.patch_embed.proj.dilation = (1, 1, 1)
     tiny_model.model.visual.patch_embed.proj.groups = 1
     tiny_model.model.visual.deepstack_merger_list = []
-    for i in range(len(model.model.visual.deepstack_merger_list)):
+    for i in range(3):
        tiny_model.model.visual.deepstack_merger_list.append(blank())
        tiny_model.model.visual.deepstack_merger_list[i].norm = tiny_nn.LayerNorm(4096, eps=1e-6, elementwise_affine=True)
        tiny_model.model.visual.deepstack_merger_list[i].hidden_size = 4096
@@ -693,7 +688,7 @@ if __name__ == "__main__":
        
     tiny_model.model.visual.deepstack_visual_indexes = [5, 11, 17]
     tiny_model.model.visual.blocks = []
-    for i in range(len(model.model.visual.blocks)):
+    for i in range(24):
        tiny_model.model.visual.blocks.append(blank())
        tiny_model.model.visual.blocks[i].attn = blank()
        tiny_model.model.visual.blocks[i].attn.proj = tiny_nn.Linear(1024, 1024)
@@ -719,14 +714,14 @@ if __name__ == "__main__":
     #tiny_model.model.language_model.rotary_emb.inv_freq = tinyTensor.zeros(64)
 
     tiny_model.model.visual.pos_embed.weight.cast(dtypes.bfloat16)
-    print(tiny_model.model.visual.pos_embed.weight.dtype)
-    print(len(model.model.language_model.layers))
-    print(model.model.visual.pos_embed.weight.dtype)
-    print(model.model.language_model.layers[0].input_layernorm)
-    print(model.model.language_model.layers[0].input_layernorm.weight.shape, model.model.language_model.layers[0].input_layernorm.variance_epsilon)
+    #print(tiny_model.model.visual.pos_embed.weight.dtype)
+    #print(len(model.model.language_model.layers))
+    #print(model.model.visual.pos_embed.weight.dtype)
+    #print(model.model.language_model.layers[0].input_layernorm)
+    #print(model.model.language_model.layers[0].input_layernorm.weight.shape, model.model.language_model.layers[0].input_layernorm.variance_epsilon)
     # todo
     tiny_model.model.language_model.norm = Qwen3VLTextRMSNorm_tiny(size=2048)
-    for i in range(len(model.model.language_model.layers)):
+    for i in range(28):
       tiny_model.model.language_model.layers.append(blank())
       tiny_model.model.language_model.layers[i].self_attn = blank()
       tiny_model.model.language_model.layers[i].self_attn.scaling = 0.08838834764831845
