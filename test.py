@@ -315,7 +315,6 @@ def forward(
     inputs_embeds = weight_expanded[batch_idx, input_ids]
 
     input_ids = to_torch(input_ids)
-    weight_expanded = to_torch(weight_expanded)
     image_mask = image_mask.unsqueeze(-1).expand(inputs_embeds.shape)
     image_embeds = image_embeds.view(-1)
 
