@@ -230,14 +230,16 @@ def forward(
     
     merge_size = int(tiny_model.model.visual.spatial_merge_size)
 
-    hpos_ids = torch.arange(image_grid_thw[0][1]).unsqueeze(1).expand(-1, image_grid_thw[0][2])
-    hpos_ids = hpos_ids.reshape(image_grid_thw[0][1] // merge_size, merge_size, image_grid_thw[0][2] // merge_size, merge_size).transpose(1, 2).flatten()
 
-    wpos_ids = torch.arange(image_grid_thw[0][2]).unsqueeze(0).expand(image_grid_thw[0][1], -1)
-    wpos_ids = wpos_ids.reshape(image_grid_thw[0][1] // merge_size, merge_size, image_grid_thw[0][2] // merge_size, merge_size).transpose(1, 2).flatten()
+    hpos_ids = tinyTensor.arange(image_grid_thw[0][1].item()).unsqueeze(1).expand(-1, image_grid_thw[0][2].item())
+    hpos_ids = hpos_ids.reshape(image_grid_thw[0][1].item() // merge_size, merge_size, image_grid_thw[0][2].item() // merge_size, merge_size).transpose(1, 2).flatten()
 
-    pos_ids = torch.stack([hpos_ids, wpos_ids], dim=-1).repeat(image_grid_thw[0][0], 1)
+    wpos_ids = tinyTensor.arange(image_grid_thw[0][2].item()).unsqueeze(0).expand(image_grid_thw[0][1].item(), -1)
+    wpos_ids = wpos_ids.reshape(image_grid_thw[0][1].item() // merge_size, merge_size, image_grid_thw[0][2].item() // merge_size, merge_size).transpose(1, 2).flatten()
 
+    pos_ids = tinyTensor.stack(hpos_ids, wpos_ids, dim=-1).repeat(image_grid_thw[0][0].item(), 1)
+
+    pos_ids = to_torch(pos_ids)
     rotary_pos_emb = (pos_ids.unsqueeze(-1) * tiny_model.model.visual.rotary_pos_emb.inv_freq).flatten(1)
 
     seq_len, _ = hidden_states.size()
