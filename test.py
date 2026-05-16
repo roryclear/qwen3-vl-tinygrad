@@ -239,20 +239,15 @@ def forward(
 
     pos_ids = tinyTensor.stack(hpos_ids, wpos_ids, dim=-1).repeat(image_grid_thw[0][0].item(), 1)
 
-    pos_ids = to_torch(pos_ids)
     rotary_pos_emb = (pos_ids.unsqueeze(-1) * tiny_model.model.visual.rotary_pos_emb.inv_freq).flatten(1)
 
     seq_len, _ = hidden_states.size()
     hidden_states = hidden_states.reshape(seq_len, -1)
     rotary_pos_emb = rotary_pos_emb.reshape(seq_len, -1)
-    emb = torch.cat((rotary_pos_emb, rotary_pos_emb), dim=-1)
-    position_embeddings = (emb.cos(), emb.sin())
-
-    cu_seqlens = torch.repeat_interleave(image_grid_thw[:, 1] * image_grid_thw[:, 2], image_grid_thw[:, 0]).cumsum(
-        dim=0,
-        dtype=image_grid_thw.dtype if torch.jit.is_tracing() else torch.int32,
-    )
-    cu_seqlens = F.pad(cu_seqlens, (1, 0), value=0)
+    emb = tinyTensor.cat(rotary_pos_emb, rotary_pos_emb, dim=-1)
+    emb = to_torch(emb)
+    cos, sin = emb.cos(), emb.sin()
+    cos, sin = cos.unsqueeze(-2).float(), sin.unsqueeze(-2).float()
 
     deepstack_feature_lists = []
     for i in range(len(tiny_model.model.visual.blocks)):
@@ -263,15 +258,9 @@ def forward(
         qkv = to_torch(qkv)
         #hidden_states_input = to_torch(hidden_states_input)
         query, key, value = (qkv.reshape(seq_length, 3, tiny_model.model.visual.blocks[i].attn.num_heads, -1).permute(1, 0, 2, 3).unbind(0))
-        cos, sin = position_embeddings
-        orig_q_dtype = query.dtype
-        orig_k_dtype = key.dtype
         query, key = query.float(), key.float()
-        cos, sin = cos.unsqueeze(-2).float(), sin.unsqueeze(-2).float()
-        q_embed = (query * cos) + (rotate_half(query) * sin)
-        k_embed = (key * cos) + (rotate_half(key) * sin)
-        query = q_embed.to(orig_q_dtype)
-        key = k_embed.to(orig_k_dtype)
+        query = (query * cos) + (rotate_half(query) * sin)
+        key = (key * cos) + (rotate_half(key) * sin)
 
         query = query.transpose(0, 1).unsqueeze(0)
         key = key.transpose(0, 1).unsqueeze(0)
@@ -666,8 +655,6 @@ if __name__ == "__main__":
     tiny_model.model.visual.rotary_pos_emb.dim = 32
     tiny_model.model.visual.rotary_pos_emb.theta = 10000.0
     tiny_model.model.visual.spatial_merge_size = 2
-    # todo torch!!
-    tiny_model.model.visual.rotary_pos_emb.inv_freq = 1.0 / (tiny_model.model.visual.rotary_pos_emb.theta ** (torch.arange(0, tiny_model.model.visual.rotary_pos_emb.dim, 2, dtype=torch.float) / tiny_model.model.visual.rotary_pos_emb.dim))
     tiny_model.model.visual.patch_embed = blank()
     tiny_model.model.visual.patch_embed.embed_dim = 1024
     tiny_model.model.visual.patch_embed.in_channels = 3
@@ -751,6 +738,7 @@ if __name__ == "__main__":
 
     tiny_model.lm_head = tiny_nn.Linear(2048, 151936, bias=False)
     tiny_model.lm_head.weight = to_tiny(model.lm_head.weight) # todo how is this inited?
+    tiny_model.model.visual.rotary_pos_emb.inv_freq = 1.0 / (tiny_model.model.visual.rotary_pos_emb.theta ** (tinyTensor.arange(0, tiny_model.model.visual.rotary_pos_emb.dim, 2, dtype=dtypes.float) / tiny_model.model.visual.rotary_pos_emb.dim))
 
     #print(model.model.visual.pos_embed.bias) no bias
     #model.model.visual.pos_embed_tiny = to_tiny(model.model.visual.pos_embed)
@@ -759,8 +747,8 @@ if __name__ == "__main__":
     images = [Image.open(BytesIO(requests.get("https://img.wort.lu/public/luxemburg/vfka4n-picture-title-binary/alternates/ONE_ONE_256/Picture%20title%20binary").content)).convert("RGB"),
             Image.open(BytesIO(requests.get("https://www.cartell.ie/car_check/wp-content/uploads/2012/03/Nissan-Micra-_4b.jpg").content)).convert("RGB"),
             Image.open("test_img.jpg").convert("RGB")]
-    expected_outputs = ["This is a Ferrari F40, a legendary sports car produced by Ferrari from 1987 to 1992. It is known for its sleek design and high performance, making it one of the most iconic cars in automotive history.",
-                        "This is a Nissan Micra, a compact car produced by the Japanese automaker Nissan.\n\nThe Nissan Micra was first introduced in 1991 as a small, economical car designed for urban and suburban use. It was a significant departure from the larger, more expensive Nissan Pulsar, which was a popular model in Japan at the time.\n\nThe Micra was designed to be a cost-effective, fuel-efficient car that could be easily driven by people with limited budgets. It was also designed to be a practical car for city driving, with a focus on fuel economy and low maintenance.\n\nThe Micra was produced in several different generations",
+    expected_outputs = ["This is a Ferrari F40, a legendary sports car produced by Ferrari from 1987 to 1992. It is known for its sleek design and powerful performance, making it one of the most iconic cars in automotive history.",
+                        "This is the Nissan Micra, a compact car produced by the Japanese automaker Nissan.\n\nThe Nissan Micra was first introduced in 1991 as a small, economical car designed for urban and suburban use. It was a significant departure from the larger, more expensive Nissan Pulsar, which was a popular model in Japan at the time.\n\nThe Micra was designed to be a cost-effective, fuel-efficient car that could be easily driven in city traffic. It was available in several different versions and configurations, including the standard 1.0-liter engine, the 1.3-liter engine, and the 1.6",
                         "A person is standing next to a silver car, with their back to the camera."]
 
     prompts = ["<|im_start|>user\n<|vision_start|><|image_pad|><|vision_end|>\nWhat car is this?<|im_end|>\n<|im_start|>assistant\n",
@@ -796,5 +784,3 @@ if __name__ == "__main__":
         output = output.replace("<|im_end|>","") # todo hack
         print(output)
         assert output == expected_output
-
-
