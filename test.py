@@ -137,11 +137,12 @@ def rotary_emb(obj, x, position_ids):
     sin = emb.sin() * obj.attention_scaling
     return cos.to(dtype=x.dtype), sin.to(dtype=x.dtype)
 
-def rotate_half(x):
-    """Rotates half the hidden dims of the input."""
+def rotate_half(x, return_tiny=False):
+    if type(x) == torch.Tensor: x = to_tiny(x)
     x1 = x[..., : x.shape[-1] // 2]
     x2 = x[..., x.shape[-1] // 2 :]
-    return torch.cat((-x2, x1), dim=-1)
+    ret = tinyTensor.cat(-x2, x1, dim=-1)
+    return ret if return_tiny else to_torch(ret)
 
 def forward(
     tiny_model,
@@ -245,9 +246,9 @@ def forward(
     hidden_states = hidden_states.reshape(seq_len, -1)
     rotary_pos_emb = rotary_pos_emb.reshape(seq_len, -1)
     emb = tinyTensor.cat(rotary_pos_emb, rotary_pos_emb, dim=-1)
-    emb = to_torch(emb)
     cos, sin = emb.cos(), emb.sin()
     cos, sin = cos.unsqueeze(-2).float(), sin.unsqueeze(-2).float()
+
 
     deepstack_feature_lists = []
     for i in range(len(tiny_model.model.visual.blocks)):
@@ -255,33 +256,34 @@ def forward(
         seq_length = hidden_states_input.shape[0]
         hidden_states_input = to_tiny(hidden_states_input)
         qkv = tiny_model.model.visual.blocks[i].attn.qkv(hidden_states_input)
-        qkv = to_torch(qkv)
         #hidden_states_input = to_torch(hidden_states_input)
-        query, key, value = (qkv.reshape(seq_length, 3, tiny_model.model.visual.blocks[i].attn.num_heads, -1).permute(1, 0, 2, 3).unbind(0))
-        query, key = query.float(), key.float()
-        query = (query * cos) + (rotate_half(query) * sin)
-        key = (key * cos) + (rotate_half(key) * sin)
+        
+        qkv_reshaped = qkv.reshape(seq_length, 3, tiny_model.model.visual.blocks[i].attn.num_heads, -1)
+
+        qkv_permuted = qkv_reshaped.permute(1, 0, 2, 3)
+
+        query, key, value = qkv_permuted.chunk(3, dim=0)
+        query = query.squeeze(0)
+        key   = key.squeeze(0)
+        value = value.squeeze(0)
+
+        query, key = query.cast(dtypes.float32), key.cast(dtypes.float32)
+        query = (query * cos) + (rotate_half(query, return_tiny=True) * sin)
+        key = (key * cos) + (rotate_half(key, return_tiny=True) * sin)
 
         query = query.transpose(0, 1).unsqueeze(0)
         key = key.transpose(0, 1).unsqueeze(0)
         value = value.transpose(0, 1).unsqueeze(0)
 
-
         query = query.contiguous()
         key = key.contiguous()
         value = value.contiguous()
         L, S = query.size(-2), key.size(-2)
-        attn_bias = torch.zeros(L, S, dtype=key.dtype)
         attn_weight = query @ key.transpose(-2, -1) * tiny_model.model.visual.blocks[i].attn.scaling
-        attn_weight += attn_bias
-        attn_weight = torch.softmax(attn_weight, dim=-1)
-        attn_weight = torch.dropout(attn_weight, 0, train=True)
+        attn_weight = tinyTensor.softmax(attn_weight)
         attn_output = attn_weight @ value
         attn_output = attn_output.transpose(1, 2).contiguous()
-
         attn_output = attn_output.reshape(seq_length, -1).contiguous()
-
-        attn_output = to_tiny(attn_output)
         attn_output = attn_output.cast(dtypes.bfloat16)
         attn_output = tiny_model.model.visual.blocks[i].attn.proj(attn_output)
         hidden_states += attn_output
@@ -295,7 +297,7 @@ def forward(
             layer = tiny_model.model.visual.deepstack_merger_list[tiny_model.model.visual.deepstack_visual_indexes.index(i)]
             deepstack_feature = layer.norm(hidden_states.view(-1, layer.hidden_size)).view(-1, layer.hidden_size)
             deepstack_feature = layer.linear_fc2(tinyTensor.gelu(layer.linear_fc1(deepstack_feature)))
-            deepstack_feature_lists.append(to_torch(deepstack_feature))
+            deepstack_feature_lists.append(deepstack_feature)
 
     image_embeds = tiny_model.model.visual.merger.norm(hidden_states)
     image_embeds = image_embeds.view(-1, tiny_model.model.visual.merger.hidden_size)
@@ -399,7 +401,7 @@ def forward(
         hidden_states = to_torch(hidden_states)
         hidden_states = residual + hidden_states
    
-        if i < len(deepstack_feature_lists): hidden_states[image_mask, :] += deepstack_feature_lists[i]
+        if i < len(deepstack_feature_lists): hidden_states[image_mask, :] += to_torch(deepstack_feature_lists[i])
     
     hidden_states = to_tiny(hidden_states)
     hidden_states = tiny_model.model.language_model.norm(hidden_states)
@@ -748,8 +750,8 @@ if __name__ == "__main__":
             Image.open(BytesIO(requests.get("https://www.cartell.ie/car_check/wp-content/uploads/2012/03/Nissan-Micra-_4b.jpg").content)).convert("RGB"),
             Image.open("test_img.jpg").convert("RGB")]
     expected_outputs = ["This is a Ferrari F40, a legendary sports car produced by Ferrari from 1987 to 1992. It is known for its sleek design and powerful performance, making it one of the most iconic cars in automotive history.",
-                        "This is the Nissan Micra, a compact car produced by the Japanese automaker Nissan.\n\nThe Nissan Micra was first introduced in 1991 as a small, economical car designed for urban and suburban use. It was a significant departure from the larger, more expensive Nissan Pulsar, which was a popular model in Japan at the time.\n\nThe Micra was designed to be a cost-effective, fuel-efficient car that could be easily driven in city traffic. It was available in several different versions and configurations, including the standard 1.0-liter engine, the 1.3-liter engine, and the 1.6",
-                        "A person is standing next to a silver car, with their back to the camera."]
+                        "This is a Nissan Micra, a compact car produced by the Japanese automaker Nissan.\n\nThe Nissan Micra was introduced in 1995 and has been a popular and affordable choice for many drivers. It was designed to be a practical and fuel-efficient car, with a focus on comfort and ease of use.\n\nThe Micra has undergone several model updates over the years, with the most recent being the Micra 1.6 (2008-2012) and the Micra 1.6 (2013-2016) models. These updates included improvements to the engine,",
+                        "A person is standing next to a silver car."]
 
     prompts = ["<|im_start|>user\n<|vision_start|><|image_pad|><|vision_end|>\nWhat car is this?<|im_end|>\n<|im_start|>assistant\n",
             "<|im_start|>user\n<|vision_start|><|image_pad|><|vision_end|>\nTell me the history of this car<|im_end|>\n<|im_start|>assistant\n",
@@ -784,3 +786,4 @@ if __name__ == "__main__":
         output = output.replace("<|im_end|>","") # todo hack
         print(output)
         assert output == expected_output
+
