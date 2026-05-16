@@ -314,6 +314,8 @@ def forward(
     batch_idx = tinyTensor.arange(B).reshape(B, 1).expand(B, T)
     inputs_embeds = weight_expanded[batch_idx, input_ids]
 
+    input_ids = to_torch(input_ids)
+    weight_expanded = to_torch(weight_expanded)
     image_mask = image_mask.unsqueeze(-1).expand(inputs_embeds.shape)
     inputs_embeds = to_torch(inputs_embeds)
     image_mask = to_torch(image_mask)
@@ -323,7 +325,6 @@ def forward(
 
     hidden_states = inputs_embeds
 
-    input_ids = to_torch(input_ids)
     position_ids = torch.arange(input_ids.shape[-1]).unsqueeze(0).unsqueeze(0).repeat(4, 1, 1)
     pos_id = position_ids[1:]
     inv_freq_expanded = tiny_model.model.language_model.rotary_emb.inv_freq[None, None, :, None].float().expand(3, pos_id.shape[1], -1, 1)
@@ -790,3 +791,6 @@ if __name__ == "__main__":
         output = output.replace("<|im_end|>","") # todo hack
         print(output)
         assert output == expected_output
+
+
+
