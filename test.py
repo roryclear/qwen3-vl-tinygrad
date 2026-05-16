@@ -538,7 +538,7 @@ def forward(
         input_ids = torch.cat([input_ids, next_tokens[:, None]], dim=-1)
 
         toks_out.append(int(input_ids[0][-1]))
-        print(toks_out,expected[:len(toks_out)])
+        print(tok.decode(toks_out),"\n",tok.decode(expected[:len(toks_out)]),"\n")
         if not input_ids[0][-1] == 151645: assert toks_out == expected[:len(toks_out)]
         this_peer_finished = input_ids[0][-1] == 151645 or len(input_ids[0]) == 406
         del outputs
