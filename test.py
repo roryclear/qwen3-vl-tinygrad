@@ -183,59 +183,61 @@ def forward(
 
     hidden_states = hidden_states.view(-1, tiny_model.model.visual.patch_embed.embed_dim)
         
+
     grid_thw_list = image_grid_thw.tolist()
     grid_ts = grid_thw_list[0][0]
     grid_hs = grid_thw_list[0][1]
     grid_ws = grid_thw_list[0][2]
 
-    idx_list = [[] for _ in range(4)]
-    weight_list = [[] for _ in range(4)]
+    h_idxs = torch.linspace(0, tiny_model.model.visual.num_grid_per_side - 1, grid_hs)
+    w_idxs = torch.linspace(0, tiny_model.model.visual.num_grid_per_side - 1, grid_ws)
 
-    for t, h, w in grid_thw_list:
-        h_idxs = torch.linspace(0, tiny_model.model.visual.num_grid_per_side - 1, h)
-        w_idxs = torch.linspace(0, tiny_model.model.visual.num_grid_per_side - 1, w)
+    h_idxs_floor = h_idxs.int()
+    w_idxs_floor = w_idxs.int()
+    h_idxs_ceil = (h_idxs.int() + 1).clip(max=tiny_model.model.visual.num_grid_per_side - 1)
+    w_idxs_ceil = (w_idxs.int() + 1).clip(max=tiny_model.model.visual.num_grid_per_side - 1)
 
-        h_idxs_floor = h_idxs.int()
-        w_idxs_floor = w_idxs.int()
-        h_idxs_ceil = (h_idxs.int() + 1).clip(max=tiny_model.model.visual.num_grid_per_side - 1)
-        w_idxs_ceil = (w_idxs.int() + 1).clip(max=tiny_model.model.visual.num_grid_per_side - 1)
+    dh = h_idxs - h_idxs_floor
+    dw = w_idxs - w_idxs_floor
 
-        dh = h_idxs - h_idxs_floor
-        dw = w_idxs - w_idxs_floor
+    base_h = h_idxs_floor * tiny_model.model.visual.num_grid_per_side
+    base_h_ceil = h_idxs_ceil * tiny_model.model.visual.num_grid_per_side
 
-        base_h = h_idxs_floor * tiny_model.model.visual.num_grid_per_side
-        base_h_ceil = h_idxs_ceil * tiny_model.model.visual.num_grid_per_side
 
-        indices = [
-            (base_h[None].T + w_idxs_floor[None]).flatten(),
-            (base_h[None].T + w_idxs_ceil[None]).flatten(),
-            (base_h_ceil[None].T + w_idxs_floor[None]).flatten(),
-            (base_h_ceil[None].T + w_idxs_ceil[None]).flatten(),
-        ]
+    base_h = to_tiny(base_h)
+    w_idxs_floor = to_tiny(w_idxs_floor)
+    base_h_ceil = to_tiny(base_h_ceil)
+    w_idxs_ceil = to_tiny(w_idxs_ceil)
+    w_idxs_floor = to_tiny(w_idxs_floor)
+    w_idxs_ceil = to_tiny(w_idxs_ceil)
 
-        weights = [
-            ((1 - dh)[None].T * (1 - dw)[None]).flatten(),
-            ((1 - dh)[None].T * dw[None]).flatten(),
-            (dh[None].T * (1 - dw)[None]).flatten(),
-            (dh[None].T * dw[None]).flatten(),
-        ]
+    idx_tensor = tinyTensor.stack(
+        (base_h[None].T + w_idxs_floor[None]).flatten(),
+        (base_h[None].T + w_idxs_ceil[None]).flatten(),
+        (base_h_ceil[None].T + w_idxs_floor[None]).flatten(),
+        (base_h_ceil[None].T + w_idxs_ceil[None]).flatten(),
+    ).cast(dtypes.int32)
 
-        for i in range(4):
-            idx_list[i].extend(indices[i].tolist())
-            weight_list[i].extend(weights[i].tolist())
 
-    idx_tensor = torch.tensor(idx_list, dtype=torch.int32)
-    weight_tensor = torch.tensor(weight_list, dtype=torch.bfloat16)
-    idx_tensor = to_tiny(idx_tensor)
+    dh = to_tiny(dh)
+    dw = to_tiny(dw)
+
+    weight_tensor = tinyTensor.stack(
+        ((1 - dh)[None].T * (1 - dw)[None]).flatten(),
+        ((1 - dh)[None].T * dw[None]).flatten(),
+        (dh[None].T * (1 - dw)[None]).flatten(),
+        (dh[None].T * dw[None]).flatten(),
+    ).cast(dtypes.bfloat16)
+
     pos_embeds = tiny_model.model.visual.pos_embed(idx_tensor)
-    pos_embeds = to_torch(pos_embeds)
     pos_embeds *= weight_tensor[:, :, None]
+    pos_embeds = to_torch(pos_embeds)
     patch_pos_embeds = pos_embeds[0] + pos_embeds[1] + pos_embeds[2] + pos_embeds[3]
 
     patch_pos_embeds = patch_pos_embeds[:grid_hs * grid_ws]
 
     merge_size = tiny_model.model.visual.config.spatial_merge_size
-    pos_embeds = patch_pos_embeds.repeat(t, 1)
+    pos_embeds = patch_pos_embeds.repeat(grid_ts, 1)
     pos_embeds = (pos_embeds.view(grid_ts, grid_hs // merge_size, merge_size, grid_ws // merge_size, merge_size, -1).permute(0, 1, 3, 2, 4, 5).flatten(0, 4))
     hidden_states = to_torch(hidden_states)
     hidden_states = hidden_states + pos_embeds
