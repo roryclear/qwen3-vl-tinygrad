@@ -319,8 +319,9 @@ def forward(
     image_mask = image_mask.unsqueeze(-1).expand(inputs_embeds.shape)
     inputs_embeds = to_torch(inputs_embeds)
     image_mask = to_torch(image_mask)
+    image_embeds = image_embeds.view(-1)
     image_embeds = to_torch(image_embeds)
-    inputs_embeds[image_mask] = image_embeds.view(-1)
+    inputs_embeds[image_mask] = image_embeds
     image_mask = image_mask[..., 0]
 
     hidden_states = inputs_embeds
@@ -791,6 +792,3 @@ if __name__ == "__main__":
         output = output.replace("<|im_end|>","") # todo hack
         print(output)
         assert output == expected_output
-
-
-
