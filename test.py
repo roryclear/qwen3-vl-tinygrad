@@ -18,19 +18,17 @@ from dataclasses import dataclass, fields
 import typing
 import sys
 
-class SimpleKVCache:
-    def __init__(self):
-        self.cache = {}
 
-    def update(self, key, value, layer_idx):
-        if layer_idx not in self.cache:
-            self.cache[layer_idx] = (key, value)
-        else:
-            past_key, past_value = self.cache[layer_idx]
-            key = torch.cat([past_key, key], dim=-2)
-            value = torch.cat([past_value, value], dim=-2)
-            self.cache[layer_idx] = (key, value)
-        return key, value
+
+def update(key, value, layer_idx, past_key_values):
+    if layer_idx not in past_key_values:
+        past_key_values[layer_idx] = (key, value)
+    else:
+        past_key, past_value = past_key_values[layer_idx]
+        key = torch.cat([past_key, key], dim=-2)
+        value = torch.cat([past_value, value], dim=-2)
+        past_key_values[layer_idx] = (key, value)
+    return key, value
 
 class SimpleTokenizer:
   def __init__(self, normal_tokens:dict[str, int], special_tokens:dict[str, int], preset:str="llama3",
@@ -369,7 +367,7 @@ def forward(
         query = to_torch(query)
         key = to_torch(key)
         value = to_torch(value)
-        key, value = past_key_values.update(key, value, i)
+        key, value = update(key, value, i, past_key_values)
         key = to_tiny(key)
         value = to_tiny(value)
         query = to_tiny(query)
@@ -462,7 +460,7 @@ def forward(
                 query = to_torch(query)
                 key = to_torch(key)
                 value = to_torch(value)
-                key, value = past_key_values.update(key, value, i)   
+                key, value = update(key, value, i, past_key_values)   
 
                 key = key.repeat_interleave(query.size(-3)//key.size(-3), -3)
                 value = value.repeat_interleave(query.size(-3)//value.size(-3), -3)
@@ -778,7 +776,7 @@ if __name__ == "__main__":
         mm_token_type_ids = [0] * len(text_inputs)
         for pos in image_token_positions: mm_token_type_ids[pos:pos + int(num_image_tokens)] = [1] * int(num_image_tokens)
 
-        outputs = forward(tiny_model=tiny_model, input_ids=torch.tensor([text_inputs]), _pad_token_tensor=151643, past_key_values=SimpleKVCache(), pixel_values=image_inputs['pixel_values'],
+        outputs = forward(tiny_model=tiny_model, input_ids=torch.tensor([text_inputs]), _pad_token_tensor=151643, past_key_values={}, pixel_values=image_inputs['pixel_values'],
                 position_ids=torch.arange(torch.tensor([text_inputs]).shape[-1]).unsqueeze(0).unsqueeze(0).repeat(4, 1, 1), image_grid_thw=image_inputs['image_grid_thw'], expected=tok.encode(expected_output))
 
         #outputs = model.generate(**inputs, max_new_tokens=128)
@@ -787,6 +785,3 @@ if __name__ == "__main__":
         output = output.replace("<|im_end|>","") # todo hack
         print(output)
         assert output == expected_output
-
-
-
