@@ -353,9 +353,8 @@ def forward(
     sin = emb.sin() * tiny_model.model.language_model.rotary_emb.attention_scaling
 
     for i in range(len(tiny_model.model.language_model.layers)): # todo same block above
-        residual = hidden_states
-
         hidden_states = to_tiny(hidden_states)
+        residual = hidden_states
         hidden_states = tiny_model.model.language_model.layers[i].input_layernorm(hidden_states)
         input_shape = hidden_states.shape[:-1]
 
@@ -399,10 +398,8 @@ def forward(
         attn_output = attn_output.transpose(1, 2).contiguous()
         attn_output = attn_output.reshape(*input_shape, -1).contiguous()
         hidden_states = tiny_model.model.language_model.layers[i].self_attn.o_proj(attn_output)
-        hidden_states = to_torch(hidden_states)
         hidden_states = residual + hidden_states
         residual = hidden_states
-        hidden_states = to_tiny(hidden_states)
         hidden_states = tiny_model.model.language_model.layers[i].post_attention_layernorm(hidden_states)
         
         
@@ -411,10 +408,8 @@ def forward(
         activated = tinyTensor.silu(gate)
         combined = activated * up
         hidden_states = tiny_model.model.language_model.layers[i].mlp.down_proj(combined)
-        hidden_states = to_torch(hidden_states)
         hidden_states = residual + hidden_states
         if i < len(deepstack_feature_lists):
-            hidden_states = to_tiny(hidden_states)
             deepstack_features = deepstack_feature_lists[i]
             mask_float = image_mask.cast(hidden_states.dtype)
             positions = mask_float.cumsum(axis=0) - 1
@@ -422,10 +417,8 @@ def forward(
             expanded = deepstack_features[positions]
             expanded = expanded * mask_float.unsqueeze(-1)
             hidden_states = hidden_states + expanded
-            hidden_states = to_torch(hidden_states)
 
     
-    hidden_states = to_tiny(hidden_states)
     hidden_states = tiny_model.model.language_model.norm(hidden_states)
 
     outputs = tiny_model.lm_head(hidden_states[:, -1:, :])
@@ -492,6 +485,7 @@ def forward(
                 attn_weight = query @ key.transpose(-2, -1) * tiny_model.model.language_model.layers[i].self_attn.scaling
 
                 attn_weight = torch.softmax(attn_weight, dim=-1)
+                value = value.to(torch.bfloat16)
                 attn_output = attn_weight @ value
 
 
