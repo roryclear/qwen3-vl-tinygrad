@@ -313,7 +313,6 @@ def forward(
     batch_idx = tinyTensor.arange(B).reshape(B, 1).expand(B, T)
     inputs_embeds = weight_expanded[batch_idx, input_ids]
 
-    input_ids = to_torch(input_ids)
     image_mask = image_mask.unsqueeze(-1).expand(inputs_embeds.shape)
     image_embeds = image_embeds.view(-1)
 
@@ -423,7 +422,6 @@ def forward(
         if prefill_consumed:
             input_ids = to_tiny(input_ids)
             inputs_embeds = tiny_model.model.language_model.embed_tokens(input_ids[:, -1:])
-            input_ids = to_torch(input_ids)
 
             hidden_states = inputs_embeds
             pos_ids = position_ids[1:]
@@ -535,6 +533,7 @@ def forward(
         unfinished_sequences = to_torch(unfinished_sequences)
         next_tokens = next_tokens * unfinished_sequences + pad_token_id * (1 - unfinished_sequences)
 
+        input_ids = to_torch(input_ids)
         input_ids = torch.cat([input_ids, next_tokens[:, None]], dim=-1)
 
         toks_out.append(int(input_ids[0][-1]))
