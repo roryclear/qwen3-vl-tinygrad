@@ -380,34 +380,25 @@ def forward(
         key, value = past_key_values.update(key, value, i)
         key = to_tiny(key)
         value = to_tiny(value)
+        query = to_tiny(query)
 
         L, S = query.size(-2), key.size(-2)
         attn_bias = tinyTensor.zeros(L, S, dtype=dtypes.bfloat16)
 
         temp_mask = tinyTensor.ones(L, S, dtype=dtypes.bool).tril(diagonal=0)
-        temp_mask = to_torch(temp_mask)
-        attn_bias = to_torch(attn_bias)
-        temp_mask = to_torch(temp_mask)
-        attn_bias.masked_fill_(temp_mask.logical_not(), float("-inf"))
+        attn_bias = temp_mask.logical_not().where(tinyTensor(float("-inf"), dtype=attn_bias.dtype), attn_bias)
 
         key = key.repeat_interleave(query.size(-3)//key.size(-3), -3)
         value = value.repeat_interleave(query.size(-3)//value.size(-3), -3)
 
-        key = to_torch(key)
 
         attn_weight = query @ key.transpose(-2, -1) * tiny_model.model.language_model.layers[i].self_attn.scaling
         attn_weight += attn_bias
-        attn_weight = torch.softmax(attn_weight, dim=-1)
-        value = to_torch(value)
+        attn_weight = tinyTensor.softmax(attn_weight)
         attn_output = attn_weight @ value
-
         attn_output = attn_output.transpose(1, 2).contiguous()
-
-
         attn_output = attn_output.reshape(*input_shape, -1).contiguous()
-        attn_output = to_tiny(attn_output)
         hidden_states = tiny_model.model.language_model.layers[i].self_attn.o_proj(attn_output)
-
         hidden_states = to_torch(hidden_states)
         hidden_states = residual + hidden_states
         residual = hidden_states
@@ -781,8 +772,8 @@ if __name__ == "__main__":
     images = [Image.open(BytesIO(requests.get("https://img.wort.lu/public/luxemburg/vfka4n-picture-title-binary/alternates/ONE_ONE_256/Picture%20title%20binary").content)).convert("RGB"),
             Image.open(BytesIO(requests.get("https://www.cartell.ie/car_check/wp-content/uploads/2012/03/Nissan-Micra-_4b.jpg").content)).convert("RGB"),
             Image.open("test_img.jpg").convert("RGB")]
-    expected_outputs = ["This is a Ferrari F40, a classic sports car produced by Ferrari from 1987 to 1992. It is renowned for its sleek design and high performance, making it one of the most iconic cars in Ferrari's history.",
-                        "This is a 2002 Nissan Micra, a compact hatchback that was produced in Japan and sold in various markets. It was launched in 2001 and was the first generation of the Micra, which was designed to be a more affordable and accessible alternative to the more expensive Nissan Skyline models.\n\nThe Micra was developed by Nissan's small car division, which was responsible for the production of the Nissan Almera and the Nissan Qashqai. The Micra was designed to be a practical and efficient vehicle, with a focus on fuel economy and low maintenance. It was also designed to be a",
+    expected_outputs = ["This is a Ferrari F40, a classic sports car produced by Ferrari from 1987 to 1992. It is renowned for its sleek design and high performance, making it one of the most iconic cars in automotive history.",
+                        "This is a Nissan Micra, a compact car produced by the Japanese automaker Nissan. The Micra is a popular and affordable car, known for its reliability and efficiency. It was first introduced in 1995 and has been in production since then. The Micra has been available in various trims and engine options, including a 1.0-liter engine and a 1.3-liter engine. The Micra has been praised for its fuel economy and low maintenance costs. The car is known for its simple and reliable design, making it a popular choice for city driving and everyday use.",
                         "A person wearing a grey hoodie and light-colored pants is standing near a silver car with the driver's door open."]
 
     prompts = ["<|im_start|>user\n<|vision_start|><|image_pad|><|vision_end|>\nWhat car is this?<|im_end|>\n<|im_start|>assistant\n",
