@@ -378,18 +378,27 @@ def forward(
         key = to_torch(key)
         value = to_torch(value)
         key, value = past_key_values.update(key, value, i)
-    
-        L, S = query.size(-2), key.size(-2)
-        attn_bias = torch.zeros(L, S, dtype=query.dtype)
+        key = to_tiny(key)
+        value = to_tiny(value)
 
-        temp_mask = torch.ones(L, S, dtype=torch.bool).tril(diagonal=0)
+        L, S = query.size(-2), key.size(-2)
+        attn_bias = tinyTensor.zeros(L, S, dtype=dtypes.bfloat16)
+
+        temp_mask = tinyTensor.ones(L, S, dtype=dtypes.bool).tril(diagonal=0)
+        temp_mask = to_torch(temp_mask)
+        attn_bias = to_torch(attn_bias)
+        temp_mask = to_torch(temp_mask)
         attn_bias.masked_fill_(temp_mask.logical_not(), float("-inf"))
 
         key = key.repeat_interleave(query.size(-3)//key.size(-3), -3)
         value = value.repeat_interleave(query.size(-3)//value.size(-3), -3)
+
+        key = to_torch(key)
+
         attn_weight = query @ key.transpose(-2, -1) * tiny_model.model.language_model.layers[i].self_attn.scaling
         attn_weight += attn_bias
         attn_weight = torch.softmax(attn_weight, dim=-1)
+        value = to_torch(value)
         attn_output = attn_weight @ value
 
         attn_output = attn_output.transpose(1, 2).contiguous()
@@ -556,7 +565,7 @@ def forward(
 
         toks_out.append(int(input_ids[0][-1]))
         print(tok.decode(toks_out),"\n",tok.decode(expected[:len(toks_out)]),"\n")
-        #if not input_ids[0][-1] == 151645: assert toks_out == expected[:len(toks_out)]
+        if not input_ids[0][-1] == 151645: assert toks_out == expected[:len(toks_out)]
         this_peer_finished = input_ids[0][-1] == 151645 or len(input_ids[0]) == 406
         del outputs
 
@@ -808,7 +817,7 @@ if __name__ == "__main__":
         output = tok.decode(generated_ids.detach().numpy())
         output = output.replace("<|im_end|>","") # todo hack
         print(output)
-        #assert output == expected_output
+        assert output == expected_output
 
 
 
