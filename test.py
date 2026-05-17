@@ -489,15 +489,15 @@ def forward(
         min_tokens_to_keep = 1
         top_p = 0.8
 
-        outputs = to_torch(outputs)
-        next_token_logits = outputs[:, -1, :].to(copy=True, dtype=torch.float32)
+        next_token_logits = outputs[:, -1, :]
         scores = next_token_logits / temp
 
 
         top_k = min(20, scores.size(-1))  # Safety check
-        indices_to_remove = scores < torch.topk(scores, top_k)[0][..., -1, None]
-        scores_processed = scores.masked_fill(indices_to_remove, filter_value)
-        scores = scores_processed
+        indices_to_remove = scores < tinyTensor.topk(scores, top_k)[0][..., -1, None]
+        scores = scores.masked_fill(indices_to_remove, filter_value)
+
+        scores = to_torch(scores)
 
 
         sorted_logits, sorted_indices = torch.sort(scores, descending=False)
@@ -773,3 +773,4 @@ if __name__ == "__main__":
         output = output.replace("<|im_end|>","") # todo hack
         print(output)
         assert output == expected_output
+
