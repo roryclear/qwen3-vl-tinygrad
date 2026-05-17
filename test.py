@@ -422,8 +422,6 @@ def forward(
     hidden_states = tiny_model.model.language_model.norm(hidden_states)
 
     outputs = tiny_model.lm_head(hidden_states[:, -1:, :])
-
-    outputs = to_torch(outputs)
     hidden_states = to_torch(hidden_states)
 
     while not this_peer_finished:
@@ -509,7 +507,6 @@ def forward(
             hidden_states = tiny_model.model.language_model.norm(hidden_states)
             outputs = tiny_model.lm_head(hidden_states[:, -1:, :])
             #hidden_states = to_torch(hidden_states)
-            outputs = to_torch(outputs)
 
         prefill_consumed = True
         position_ids = position_ids[..., -1:] + 1
@@ -520,6 +517,7 @@ def forward(
         min_tokens_to_keep = 1
         top_p = 0.8
 
+        outputs = to_torch(outputs)
         next_token_logits = outputs[:, -1, :].to(copy=True, dtype=torch.float32)
         scores = next_token_logits / temp
 
