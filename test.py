@@ -142,7 +142,7 @@ def rotate_half(x, return_tiny=False):
     x1 = x[..., : x.shape[-1] // 2]
     x2 = x[..., x.shape[-1] // 2 :]
     ret = tinyTensor.cat(-x2, x1, dim=-1)
-    return ret if return_tiny else to_torch(ret)
+    return ret
 
 def forward(
     tiny_model,
@@ -256,7 +256,6 @@ def forward(
         seq_length = hidden_states_input.shape[0]
         hidden_states_input = to_tiny(hidden_states_input)
         qkv = tiny_model.model.visual.blocks[i].attn.qkv(hidden_states_input)
-        #hidden_states_input = to_torch(hidden_states_input)
         
         qkv_reshaped = qkv.reshape(seq_length, 3, tiny_model.model.visual.blocks[i].attn.num_heads, -1)
 
@@ -428,7 +427,6 @@ def forward(
         if prefill_consumed:
             input_ids = to_tiny(input_ids)
             inputs_embeds = tiny_model.model.language_model.embed_tokens(input_ids[:, -1:])
-            inputs_embeds = to_torch(inputs_embeds)
             input_ids = to_torch(input_ids)
 
             hidden_states = inputs_embeds
@@ -464,7 +462,6 @@ def forward(
                 key = tiny_model.model.language_model.layers[i].self_attn.k_norm(key).transpose(1, 2)
         
                 value = tiny_model.model.language_model.layers[i].self_attn.v_proj(hidden_states).view(hidden_shape).transpose(1, 2)
-                hidden_states = to_torch(hidden_states)
 
                 query = (query * cos) + (rotate_half(query, return_tiny=True) * sin)
                 key = (key * cos) + (rotate_half(key, return_tiny=True) * sin)
@@ -506,7 +503,6 @@ def forward(
 
             hidden_states = tiny_model.model.language_model.norm(hidden_states)
             outputs = tiny_model.lm_head(hidden_states[:, -1:, :])
-            #hidden_states = to_torch(hidden_states)
 
         prefill_consumed = True
         position_ids = position_ids[..., -1:] + 1
