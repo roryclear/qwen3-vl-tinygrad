@@ -492,41 +492,71 @@ def forward(
         next_token_logits = outputs[:, -1, :]
         scores = next_token_logits / temp
 
+        token = sample(scores[0], temp=temp, k=top_k, p=top_p, af=None, ap=None)
+        #print("tiny token =", token.numpy())
 
-        top_k = min(20, scores.size(-1))  # Safety check
-        indices_to_remove = scores < tinyTensor.topk(scores, top_k)[0][..., -1, None]
-        scores = scores.masked_fill(indices_to_remove, filter_value)
-
-        scores = to_torch(scores)
-
-
-        sorted_logits, sorted_indices = torch.sort(scores, descending=False)
-        cumulative_probs = sorted_logits.softmax(dim=-1).cumsum(dim=-1)
-
-        sorted_indices_to_remove = cumulative_probs <= (1 - top_p)
-        sorted_indices_to_remove[..., -min_tokens_to_keep :] = 0
-        indices_to_remove = sorted_indices_to_remove.scatter(1, sorted_indices, sorted_indices_to_remove)
-        scores_processed = scores.masked_fill(indices_to_remove, filter_value)
-        
-        next_token_scores = scores_processed
-
-        probs = nn.functional.softmax(next_token_scores, dim=-1)
-        next_tokens = torch.multinomial(probs, num_samples=1).squeeze(1)
-
-        unfinished_sequences = to_torch(unfinished_sequences)
-        next_tokens = next_tokens * unfinished_sequences + pad_token_id * (1 - unfinished_sequences)
+        next_token = int(token.numpy()[0])
 
         input_ids = to_torch(input_ids)
+        next_tokens = torch.tensor([next_token], device=input_ids.device)
         input_ids = torch.cat([input_ids, next_tokens[:, None]], dim=-1)
 
-        toks_out.append(int(input_ids[0][-1]))
-        print(tok.decode(toks_out),"\n",tok.decode(expected[:len(toks_out)]),"\n")
-        if not input_ids[0][-1] == 151645: assert toks_out == expected[:len(toks_out)]
-        this_peer_finished = input_ids[0][-1] == 151645 or len(input_ids[0]) == 406
+        toks_out.append(next_token)
+        print(tok.decode(toks_out), "\n", tok.decode(expected[:len(toks_out)]), "\n")
+        if not next_token == 151645: assert toks_out == expected[:len(toks_out)]
+        this_peer_finished = next_token == 151645 or len(input_ids[0]) == 406
         del outputs
+
 
     return input_ids
 
+def sample(logits, temp: float, k: int, p: float, af: float, ap: float):
+  assert logits.ndim == 1, "only works on 1d tensors"
+  assert 0 <= p <= 1, "p must be between 0 and 1"
+  assert 0 <= k <= logits.numel(), "k must be between 0 and numel"
+
+  # if temperature is very low just use argmax
+  if temp < 1e-6: return logits.argmax()
+
+  # alpha sampling
+  if af or ap:
+    if not hasattr(sample, "alpha_counter"):
+      setattr(sample, "alpha_counter", tinyTensor.zeros_like(logits, dtype=dtypes.int32).contiguous())
+    logits = logits - (sample.alpha_counter * af + (sample.alpha_counter > 0) * ap)
+
+  # replace NaNs with -inf
+  logits = (logits != logits).where(-float("inf"), logits)
+
+  # softmax
+  t = (logits / temp).softmax()
+
+  counter, counter2 = tinyTensor.arange(t.numel(), device=logits.device).contiguous(), tinyTensor.arange(t.numel() - 1, -1, -1, device=logits.device).contiguous()
+  # top k
+  if k:
+    output, output_indices = tinyTensor.zeros(k, device=logits.device).contiguous(), tinyTensor.zeros(k, device=logits.device, dtype=dtypes.int32).contiguous()
+    for i in range(k):
+      t_argmax = (t.numel() - ((t == (t_max := t.max())) * counter2).max() - 1).cast(dtypes.default_int)
+      output = output + t_max.unsqueeze(0).pad(((i, k - i - 1),))
+      output_indices = output_indices + t_argmax.unsqueeze(0).pad(((i, k - i - 1),))
+      t = (counter == t_argmax).where(0, t)
+
+    # approximate top p
+    # because we are already limited to top k elements we can do top p "without sorting"
+    output_cumsum = output[::-1].cumsum()[::-1] + t.sum()
+    output = (output_cumsum >= (1 - p)) * output
+    output_indices = (output_cumsum >= (1 - p)) * output_indices
+
+    # sample
+    output_idx = output.multinomial()
+    output_token = output_indices[output_idx]
+  else:
+    output_token = t.multinomial()
+
+  # increase alpha counter
+  if af or ap:
+    sample.alpha_counter = (counter == output_token).where(sample.alpha_counter + 1, sample.alpha_counter)
+
+  return output_token
 
 def smart_resize(height, width, factor, min_pixels, max_pixels):
     h_bar = round(height / factor) * factor
@@ -737,8 +767,8 @@ if __name__ == "__main__":
     images = [Image.open(BytesIO(requests.get("https://img.wort.lu/public/luxemburg/vfka4n-picture-title-binary/alternates/ONE_ONE_256/Picture%20title%20binary").content)).convert("RGB"),
             Image.open(BytesIO(requests.get("https://www.cartell.ie/car_check/wp-content/uploads/2012/03/Nissan-Micra-_4b.jpg").content)).convert("RGB"),
             Image.open("test_img.jpg").convert("RGB")]
-    expected_outputs = ["This is a Ferrari F40, a classic sports car produced by Ferrari from 1987 to 1992. It is renowned for its sleek design and high performance, making it one of the most iconic cars in automotive history.",
-                        "This is a Nissan Micra, a compact car produced by the Japanese automaker Nissan.\n\nThe Nissan Micra was introduced in 1995 and has been a popular choice for its affordability, fuel efficiency, and compact size. It has been available in various markets, including Europe, North America, and Asia.\n\nThe Micra has undergone several model updates over the years, with the most recent being the Micra 1.0 and Micra 1.2, which were introduced in 2009. The 1.0 engine was a 1.0-liter, 4-cylinder engine, while the",
+    expected_outputs = ["This is a Ferrari F40, a legendary sports car produced by Ferrari from 1987 to 1990. It is known for its sleek design, powerful performance, and iconic status in the world of motorsport.",
+                        "The car in the image is a **Nissan Micra**, a compact car produced by Nissan. Here is a brief history of the Nissan Micra:\n\n- **Introduction**: The Nissan Micra was first introduced in **1993** as a small, affordable, and fuel-efficient car. It was designed to be a practical and stylish vehicle for urban and suburban driving.\n\n- **Design and Features**: The Micra was built on a platform that allowed for a compact and efficient design. It was known for its high fuel efficiency, low emissions, and a spacious interior for its size. The car was also equipped with a range of",
                         "A person wearing a grey hoodie and light-colored pants is standing near a silver car with the driver's door open."]
 
     prompts = ["<|im_start|>user\n<|vision_start|><|image_pad|><|vision_end|>\nWhat car is this?<|im_end|>\n<|im_start|>assistant\n",
