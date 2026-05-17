@@ -118,25 +118,7 @@ def set_seed(seed: int, deterministic: bool = False):
 
 set_seed(42)
 
-def rotary_emb(obj, x, position_ids):
-    # In contrast to other models, Qwen3VL has different position ids for the grids
-    # So we expand the inv_freq to shape (3, ...)
-    if position_ids.ndim == 2:
-        position_ids = position_ids[None, ...].expand(3, position_ids.shape[0], -1)
-    inv_freq_expanded = (
-        obj.inv_freq[None, None, :, None].float().expand(3, position_ids.shape[1], -1, 1).to(x.device)
-    )
-    position_ids_expanded = position_ids[:, :, None, :].float()  # shape (3, bs, 1, positions)
-
-    freqs = (inv_freq_expanded.float() @ position_ids_expanded.float()).transpose(2, 3)
-    freqs = obj.apply_interleaved_mrope(freqs, obj.mrope_section)
-    emb = torch.cat((freqs, freqs), dim=-1)
-    cos = emb.cos() * obj.attention_scaling
-    sin = emb.sin() * obj.attention_scaling
-    return cos.to(dtype=x.dtype), sin.to(dtype=x.dtype)
-
-def rotate_half(x, return_tiny=False):
-    if type(x) == torch.Tensor: x = to_tiny(x)
+def rotate_half(x):
     x1 = x[..., : x.shape[-1] // 2]
     x2 = x[..., x.shape[-1] // 2 :]
     ret = tinyTensor.cat(-x2, x1, dim=-1)
@@ -151,7 +133,6 @@ def forward(
     image_grid_thw,
     expected # todo for testing
 ):
-    pixel_values = to_tiny(pixel_values)
     toks_out = [] # todo for testing
     pad_token_id = _pad_token_tensor
     scores = None
@@ -251,7 +232,6 @@ def forward(
     for i in range(len(tiny_model.model.visual.blocks)):
         hidden_states_input = tiny_model.model.visual.blocks[i].norm1(hidden_states)
         seq_length = hidden_states_input.shape[0]
-        hidden_states_input = to_tiny(hidden_states_input)
         qkv = tiny_model.model.visual.blocks[i].attn.qkv(hidden_states_input)
         
         qkv_reshaped = qkv.reshape(seq_length, 3, tiny_model.model.visual.blocks[i].attn.num_heads, -1)
@@ -264,8 +244,8 @@ def forward(
         value = value.squeeze(0)
 
         query, key = query.cast(dtypes.float32), key.cast(dtypes.float32)
-        query = (query * cos) + (rotate_half(query, return_tiny=True) * sin)
-        key = (key * cos) + (rotate_half(key, return_tiny=True) * sin)
+        query = (query * cos) + (rotate_half(query) * sin)
+        key = (key * cos) + (rotate_half(key) * sin)
 
         query = query.transpose(0, 1).unsqueeze(0)
         key = key.transpose(0, 1).unsqueeze(0)
@@ -301,7 +281,6 @@ def forward(
     image_embeds = tinyTensor.gelu(image_embeds)
     image_embeds = tiny_model.model.visual.merger.linear_fc2(image_embeds)
     
-    input_ids = to_tiny(input_ids)
     image_mask = input_ids == tiny_model.model.config.image_token_id
 
     weight_expanded = tiny_model.model.language_model.embed_tokens.weight.unsqueeze(0).expand(input_ids.shape[0], -1, -1)
@@ -357,8 +336,8 @@ def forward(
 
         value = tiny_model.model.language_model.layers[i].self_attn.v_proj(hidden_states).view(hidden_shape).transpose(1, 2)
     
-        query = (query * cos) + (rotate_half(query, return_tiny=True) * sin)
-        key = (key * cos) + (rotate_half(key, return_tiny=True) * sin)
+        query = (query * cos) + (rotate_half(query) * sin)
+        key = (key * cos) + (rotate_half(key) * sin)
 
         query = query.cast(dtypes.bfloat16)
         key = key.cast(dtypes.bfloat16)
@@ -409,7 +388,6 @@ def forward(
 
     while not this_peer_finished:
         if prefill_consumed:
-            input_ids = to_tiny(input_ids)
             inputs_embeds = tiny_model.model.language_model.embed_tokens(input_ids[:, -1:])
 
             hidden_states = inputs_embeds
@@ -444,8 +422,8 @@ def forward(
         
                 value = tiny_model.model.language_model.layers[i].self_attn.v_proj(hidden_states).view(hidden_shape).transpose(1, 2)
 
-                query = (query * cos) + (rotate_half(query, return_tiny=True) * sin)
-                key = (key * cos) + (rotate_half(key, return_tiny=True) * sin)
+                query = (query * cos) + (rotate_half(query) * sin)
+                key = (key * cos) + (rotate_half(key) * sin)
 
                 query = query.cast(dtypes.bfloat16)
                 key = key.cast(dtypes.bfloat16)
@@ -492,13 +470,11 @@ def forward(
         scores = next_token_logits / temp
 
         token = sample(scores[0], temp=temp, k=top_k, p=top_p, af=None, ap=None)
-        #print("tiny token =", token.numpy())
 
         next_token = int(token.numpy()[0])
 
-        input_ids = to_torch(input_ids)
-        next_tokens = torch.tensor([next_token], device=input_ids.device)
-        input_ids = torch.cat([input_ids, next_tokens[:, None]], dim=-1)
+        next_token_tensor = tinyTensor([[next_token]])  # shape (1,1)
+        input_ids = tinyTensor.cat(input_ids, next_token_tensor, dim=1)
 
         toks_out.append(next_token)
         print(tok.decode(toks_out), "\n", tok.decode(expected[:len(toks_out)]), "\n")
@@ -655,11 +631,6 @@ if __name__ == "__main__":
        if x.dtype == torch.bfloat16: return tinyTensor(x.detach().to(torch.float16).numpy()).cast(dtypes.bfloat16)
        return tinyTensor(x.detach().numpy())
 
-    def to_torch(x):
-      if x.dtype == dtypes.bfloat16: return torch.tensor(x.numpy(), dtype=torch.bfloat16)
-      if x.dtype == dtypes.int64: return torch.tensor(x.numpy(), dtype=torch.int64)
-      return torch.tensor(x.numpy())
-
     class blank: pass
 
     tiny_weights = safe_load(fetch(f'https://huggingface.co/Qwen/Qwen3-VL-2B-Instruct/resolve/main/model.safetensors'))
@@ -759,15 +730,13 @@ if __name__ == "__main__":
     tiny_model.model.visual.rotary_pos_emb.inv_freq = 1.0 / (tiny_model.model.visual.rotary_pos_emb.theta ** (tinyTensor.arange(0, tiny_model.model.visual.rotary_pos_emb.dim, 2, dtype=dtypes.float) / tiny_model.model.visual.rotary_pos_emb.dim))
     tiny_model.model.language_model.rotary_emb.inv_freq = 1.0 / (5000000 ** (tinyTensor.arange(0, 128, 2, dtype=dtypes.int64) / 128))
 
-    #print(model.model.visual.pos_embed.bias) no bias
-    #model.model.visual.pos_embed_tiny = to_tiny(model.model.visual.pos_embed)
 
 
     images = [Image.open(BytesIO(requests.get("https://img.wort.lu/public/luxemburg/vfka4n-picture-title-binary/alternates/ONE_ONE_256/Picture%20title%20binary").content)).convert("RGB"),
             Image.open(BytesIO(requests.get("https://www.cartell.ie/car_check/wp-content/uploads/2012/03/Nissan-Micra-_4b.jpg").content)).convert("RGB"),
             Image.open("test_img.jpg").convert("RGB")]
-    expected_outputs = ["This is a Ferrari F40, a legendary sports car produced by Ferrari from 1987 to 1990. It is known for its sleek design, powerful performance, and iconic status in the world of motorsport.",
-                        "The car in the image is a **Nissan Micra**, a compact car produced by Nissan. Here is a brief history of the Nissan Micra:\n\n- **Introduction**: The Nissan Micra was first introduced in **1993** as a small, affordable, and fuel-efficient car. It was designed to be a practical and stylish vehicle for urban and suburban driving.\n\n- **Design and Features**: The Micra was built on a platform that allowed for a compact and efficient design. It was known for its high fuel efficiency, low emissions, and a spacious interior for its size. The car was also equipped with a range of",
+    expected_outputs = ["This is a Ferrari F40, a legendary sports car produced by Ferrari from 1987 to 1991. It is known for its sleek design, powerful performance, and iconic status in the world of motorsport.",
+                        "The car in the image is a **Nissan Micra**, a compact car produced by Nissan. Here is a brief history of the Nissan Micra:\n\n- **Introduction**: The Nissan Micra was first introduced in 1990 as a small, fuel-efficient car designed for urban driving and city commuting.\n- **Design and Development**: It was developed to meet the growing demand for small, economical vehicles in the European and Asian markets. The Micra was known for its innovative design and fuel efficiency.\n- **Production and Market**: The Micra was produced in various markets, including Europe, Japan, and the United States. It",
                         "A person wearing a grey hoodie and light-colored pants is standing near a silver car with the driver's door open."]
 
     prompts = ["<|im_start|>user\n<|vision_start|><|image_pad|><|vision_end|>\nWhat car is this?<|im_end|>\n<|im_start|>assistant\n",
@@ -793,7 +762,7 @@ if __name__ == "__main__":
         mm_token_type_ids = [0] * len(text_inputs)
         for pos in image_token_positions: mm_token_type_ids[pos:pos + int(num_image_tokens)] = [1] * int(num_image_tokens)
 
-        outputs = forward(tiny_model=tiny_model, input_ids=torch.tensor([text_inputs]), _pad_token_tensor=151643, past_key_values={}, pixel_values=image_inputs['pixel_values'], image_grid_thw=image_inputs['image_grid_thw'], expected=tok.encode(expected_output))
+        outputs = forward(tiny_model=tiny_model, input_ids=tinyTensor([text_inputs]), _pad_token_tensor=151643, past_key_values={}, pixel_values=to_tiny(image_inputs['pixel_values']), image_grid_thw=image_inputs['image_grid_thw'], expected=tok.encode(expected_output))
 
         #outputs = model.generate(**inputs, max_new_tokens=128)
         generated_ids = outputs[0][len(text_inputs):]
