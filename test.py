@@ -452,25 +452,19 @@ def forward(
                 key = key.cast(dtypes.bfloat16)
 
                 key, value = update(key, value, i, past_key_values)
-                query = to_torch(query)
-                key = to_torch(key)
-                value = to_torch(value)
 
                 key = key.repeat_interleave(query.size(-3)//key.size(-3), -3)
                 value = value.repeat_interleave(query.size(-3)//value.size(-3), -3)
 
                 attn_weight = query @ key.transpose(-2, -1) * tiny_model.model.language_model.layers[i].self_attn.scaling
 
-                attn_weight = torch.softmax(attn_weight, dim=-1)
-                value = value.to(torch.bfloat16)
+                attn_weight = tinyTensor.softmax(attn_weight)
+                value = value.cast(dtypes.bfloat16)
                 attn_output = attn_weight @ value
 
 
-                attn_output = attn_output.transpose(1, 2).contiguous()
-
+                attn_output = attn_output.transpose(1, 2)
                 attn_output = attn_output.reshape(*input_shape, -1).contiguous()
-
-                attn_output = to_tiny(attn_output)
 
                 hidden_states = tiny_model.model.language_model.layers[i].self_attn.o_proj(attn_output)                
                 hidden_states = residual + hidden_states
@@ -527,7 +521,7 @@ def forward(
 
         toks_out.append(int(input_ids[0][-1]))
         print(tok.decode(toks_out),"\n",tok.decode(expected[:len(toks_out)]),"\n")
-        #if not input_ids[0][-1] == 151645: assert toks_out == expected[:len(toks_out)]
+        if not input_ids[0][-1] == 151645: assert toks_out == expected[:len(toks_out)]
         this_peer_finished = input_ids[0][-1] == 151645 or len(input_ids[0]) == 406
         del outputs
 
@@ -744,7 +738,7 @@ if __name__ == "__main__":
             Image.open(BytesIO(requests.get("https://www.cartell.ie/car_check/wp-content/uploads/2012/03/Nissan-Micra-_4b.jpg").content)).convert("RGB"),
             Image.open("test_img.jpg").convert("RGB")]
     expected_outputs = ["This is a Ferrari F40, a classic sports car produced by Ferrari from 1987 to 1992. It is renowned for its sleek design and high performance, making it one of the most iconic cars in automotive history.",
-                        "The car in the image is a Nissan Micra, a compact car that has been produced by Nissan since 1997. It is known for its small size, fuel efficiency, and affordability, making it a popular choice for city driving and everyday use.\n\nThe Micra has been available in several different generations, each with slight variations in design and features. The first generation, which was introduced in 1997, was a hatchback model and was the first Micra to be produced in the UK. It was available in various trim levels and was powered by a 1.0-liter engine.\n\nThe second generation,",
+                        "This is a Nissan Micra, a compact car produced by the Japanese automaker Nissan.\n\nThe Nissan Micra was introduced in 1995 and has been a popular choice for its affordability, fuel efficiency, and compact size. It has been available in various markets, including Europe, North America, and Asia.\n\nThe Micra has undergone several model updates over the years, with the most recent being the Micra 1.0 and Micra 1.2, which were introduced in 2009. The 1.0 engine was a 1.0-liter, 4-cylinder engine, while the",
                         "A person wearing a grey hoodie and light-colored pants is standing near a silver car with the driver's door open."]
 
     prompts = ["<|im_start|>user\n<|vision_start|><|image_pad|><|vision_end|>\nWhat car is this?<|im_end|>\n<|im_start|>assistant\n",
@@ -778,4 +772,4 @@ if __name__ == "__main__":
         output = tok.decode(generated_ids.detach().numpy())
         output = output.replace("<|im_end|>","") # todo hack
         print(output)
-        #assert output == expected_output
+        assert output == expected_output
