@@ -329,20 +329,18 @@ def forward(
     image_mask = image_mask[..., 0]
     hidden_states = inputs_embeds
 
-    position_ids = torch.arange(input_ids.shape[-1]).unsqueeze(0).unsqueeze(0).repeat(4, 1, 1)
+    position_ids = tinyTensor.arange(input_ids.shape[-1]).unsqueeze(0).unsqueeze(0).repeat(4, 1, 1)
     pos_id = position_ids[1:]
-    inv_freq_expanded = to_torch(tiny_model.model.language_model.rotary_emb.inv_freq)[None, None, :, None].float().expand(3, pos_id.shape[1], -1, 1)
+    inv_freq_expanded = tiny_model.model.language_model.rotary_emb.inv_freq[None, None, :, None].float().expand(3, pos_id.shape[1], -1, 1)
     position_ids_expanded = pos_id[:, :, None, :].float()
-    freqs = (inv_freq_expanded.float() @ position_ids_expanded.float()).transpose(2, 3)
-
+    freqs = (inv_freq_expanded @ position_ids_expanded).transpose(2, 3)
     freqs_t = freqs[0]  # just overwrite the first dimension T
+    freqs_t = freqs_t.contiguous()
     for dim, offset in enumerate((1, 2), start=1):  # H, W
         length = tiny_model.model.language_model.rotary_emb.mrope_section[dim] * 3
         idx = slice(offset, length, 3)
         freqs_t[..., idx] = freqs[dim, ..., idx]
     freqs = freqs_t
-    
-    freqs = to_tiny(freqs)
 
     emb = tinyTensor.cat(freqs, freqs, dim=-1)
     cos = emb.cos() * tiny_model.model.language_model.rotary_emb.attention_scaling
@@ -425,18 +423,17 @@ def forward(
 
             hidden_states = inputs_embeds
             pos_ids = position_ids[1:]
-            inv_freq_expanded = (to_torch(tiny_model.model.language_model.rotary_emb.inv_freq)[None, None, :, None].float().expand(3, pos_ids.shape[1], -1, 1))
+            inv_freq_expanded = tiny_model.model.language_model.rotary_emb.inv_freq[None, None, :, None].float().expand(3, pos_ids.shape[1], -1, 1)
             position_ids_expanded = pos_ids[:, :, None, :].float()  # shape (3, bs, 1, positions)
 
-            freqs = (inv_freq_expanded.float() @ position_ids_expanded.float()).transpose(2, 3)
-            
+            freqs = (inv_freq_expanded @ position_ids_expanded).transpose(2, 3)
             freqs_t = freqs[0]
+            freqs_t = freqs_t.contiguous()
             for dim, offset in enumerate((1, 2), start=1):  # H, W
                 length = tiny_model.model.language_model.rotary_emb.mrope_section[dim] * 3
                 idx = slice(offset, length, 3)
                 freqs_t[..., idx] = freqs[dim, ..., idx]
             freqs = freqs_t
-            freqs = to_tiny(freqs)
             emb = tinyTensor.cat(freqs, freqs, dim=-1)
             cos = emb.cos() * tiny_model.model.language_model.rotary_emb.attention_scaling
             sin = emb.sin() * tiny_model.model.language_model.rotary_emb.attention_scaling
@@ -755,7 +752,7 @@ if __name__ == "__main__":
             Image.open(BytesIO(requests.get("https://www.cartell.ie/car_check/wp-content/uploads/2012/03/Nissan-Micra-_4b.jpg").content)).convert("RGB"),
             Image.open("test_img.jpg").convert("RGB")]
     expected_outputs = ["This is a Ferrari F40, a classic sports car produced by Ferrari from 1987 to 1992. It is renowned for its sleek design and high performance, making it one of the most iconic cars in automotive history.",
-                        "This is a Nissan Micra, a compact car produced by the Japanese automaker Nissan. The Micra is a popular and affordable car, known for its reliability and efficiency. It was first introduced in 1995 and has been in production since then. The Micra has been available in various trims and engine options, including a 1.0-liter engine and a 1.3-liter engine. The Micra has been praised for its fuel economy and low maintenance costs. The car is known for its simple and reliable design, making it a popular choice for city driving and everyday use.",
+                        "The car in the image is a Nissan Micra, a compact car that has been produced by Nissan since 1997. It is known for its small size, fuel efficiency, and affordability, making it a popular choice for city driving and everyday use.\n\nThe Micra has been available in several different generations, each with slight variations in design and features. The first generation, which was introduced in 1997, was a hatchback model and was the first Micra to be produced in the UK. It was available in various trim levels and was powered by a 1.0-liter engine.\n\nThe second generation,",
                         "A person wearing a grey hoodie and light-colored pants is standing near a silver car with the driver's door open."]
 
     prompts = ["<|im_start|>user\n<|vision_start|><|image_pad|><|vision_end|>\nWhat car is this?<|im_end|>\n<|im_start|>assistant\n",
@@ -764,7 +761,6 @@ if __name__ == "__main__":
 
     import pickle
     tok = pickle.load(open("tok.pkl", "rb"))
-    
     for image, expected_output, prompt in zip(images, expected_outputs, prompts):
         text_inputs = tok.encode(prompt)
         image = [tvF.pil_to_tensor(image)]
