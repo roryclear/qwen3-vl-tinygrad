@@ -328,8 +328,6 @@ def forward(
     inputs_embeds = flat_inputs.view(inputs_embeds.shape)
 
     image_mask = image_mask[..., 0]
-
-    inputs_embeds = to_torch(inputs_embeds)
     hidden_states = inputs_embeds
 
     position_ids = torch.arange(input_ids.shape[-1]).unsqueeze(0).unsqueeze(0).repeat(4, 1, 1)
@@ -352,7 +350,6 @@ def forward(
     sin = emb.sin() * tiny_model.model.language_model.rotary_emb.attention_scaling
 
     for i in range(len(tiny_model.model.language_model.layers)): # todo same block above
-        hidden_states = to_tiny(hidden_states)
         residual = hidden_states
         hidden_states = tiny_model.model.language_model.layers[i].input_layernorm(hidden_states)
         input_shape = hidden_states.shape[:-1]
@@ -421,7 +418,6 @@ def forward(
     hidden_states = tiny_model.model.language_model.norm(hidden_states)
 
     outputs = tiny_model.lm_head(hidden_states[:, -1:, :])
-    hidden_states = to_torch(hidden_states)
 
     while not this_peer_finished:
         if prefill_consumed:
@@ -447,7 +443,6 @@ def forward(
             cos = emb.cos() * tiny_model.model.language_model.rotary_emb.attention_scaling
             sin = emb.sin() * tiny_model.model.language_model.rotary_emb.attention_scaling
 
-            hidden_states = to_tiny(hidden_states)
             # decoder layers
             for i in range(len(tiny_model.model.language_model.layers)):        
                 residual = hidden_states
