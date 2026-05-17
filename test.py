@@ -345,11 +345,12 @@ def forward(
         idx = slice(offset, length, 3)
         freqs_t[..., idx] = freqs[dim, ..., idx]
     freqs = freqs_t
+    
+    freqs = to_tiny(freqs)
 
-    emb = torch.cat((freqs, freqs), dim=-1)
+    emb = tinyTensor.cat(freqs, freqs, dim=-1)
     cos = emb.cos() * tiny_model.model.language_model.rotary_emb.attention_scaling
     sin = emb.sin() * tiny_model.model.language_model.rotary_emb.attention_scaling
-    position_embeddings = cos.to(dtype=hidden_states.dtype), sin.to(dtype=hidden_states.dtype)
 
     for i in range(len(tiny_model.model.language_model.layers)): # todo same block above
         residual = hidden_states
@@ -364,17 +365,18 @@ def forward(
 
         query = tiny_model.model.language_model.layers[i].self_attn.q_norm(query).transpose(1, 2)
         key = tiny_model.model.language_model.layers[i].self_attn.k_norm(key).transpose(1, 2)
-        query = to_torch(query)
-        key = to_torch(key)
 
         value = tiny_model.model.language_model.layers[i].self_attn.v_proj(hidden_states).view(hidden_shape).transpose(1, 2)
-        
+    
+        query = (query * cos) + (rotate_half(query, return_tiny=True) * sin)
+        key = (key * cos) + (rotate_half(key, return_tiny=True) * sin)
+
+        query = query.cast(dtypes.bfloat16)
+        key = key.cast(dtypes.bfloat16)
+
+        query = to_torch(query)
+        key = to_torch(key)
         value = to_torch(value)
-
-        cos, sin = position_embeddings
-        query = (query * cos) + (rotate_half(query) * sin)
-        key = (key * cos) + (rotate_half(key) * sin)
-
         key, value = past_key_values.update(key, value, i)
     
         L, S = query.size(-2), key.size(-2)
@@ -385,11 +387,9 @@ def forward(
 
         key = key.repeat_interleave(query.size(-3)//key.size(-3), -3)
         value = value.repeat_interleave(query.size(-3)//value.size(-3), -3)
-
         attn_weight = query @ key.transpose(-2, -1) * tiny_model.model.language_model.layers[i].self_attn.scaling
         attn_weight += attn_bias
         attn_weight = torch.softmax(attn_weight, dim=-1)
-        attn_weight = torch.dropout(attn_weight, 0, train=True)
         attn_output = attn_weight @ value
 
         attn_output = attn_output.transpose(1, 2).contiguous()
@@ -771,9 +771,9 @@ if __name__ == "__main__":
     images = [Image.open(BytesIO(requests.get("https://img.wort.lu/public/luxemburg/vfka4n-picture-title-binary/alternates/ONE_ONE_256/Picture%20title%20binary").content)).convert("RGB"),
             Image.open(BytesIO(requests.get("https://www.cartell.ie/car_check/wp-content/uploads/2012/03/Nissan-Micra-_4b.jpg").content)).convert("RGB"),
             Image.open("test_img.jpg").convert("RGB")]
-    expected_outputs = ["This is a Ferrari F40, a classic sports car produced by Ferrari from 1987 to 1992. It is renowned for its sleek design and high performance, making it one of the most iconic cars in automotive history. The F40 is known for its aggressive styling, with a low-slung body, a wide rear wing, and a powerful 3.5-liter V8 engine. It was a significant milestone in Ferrari's history, marking the brand's transition from a manufacturer of luxury sedans to a leader in high-performance sports cars.",
-                        "This is a 2002 Nissan Micra, a small, affordable, and popular compact car produced by Nissan. It was launched in 2001 and was designed as a budget-friendly alternative to more expensive Japanese cars, making it a popular choice for urban and suburban drivers.\n\nThe Micra is a front-wheel-drive, 3-door hatchback that was built on the same platform as the Nissan 1600, which was used in the Nissan 1600 and Nissan 2000. It was available in a range of engine options, including a 1.0-liter petrol engine,",
-                        "A person wearing a grey hoodie and light-colored pants is standing near a silver car."]
+    expected_outputs = ["This is a Ferrari F40, a classic sports car produced by Ferrari from 1987 to 1992. It is renowned for its sleek design and high performance, making it one of the most iconic cars in automotive history.",
+                        "This is a Nissan Micra, a compact car produced by the Japanese automaker Nissan.\n\nThe Nissan Micra was introduced in 1995 and has been a popular choice for its affordability, fuel efficiency, and compact size. It has been available in various markets, including Europe, North America, and Asia.\n\nThe Micra has undergone several model updates over the years, with the most recent being the Micra 1.0 and Micra 1.2, which were introduced in 2009. The Micra 1.0 was based on the Micra 1.2, which was introduced in",
+                        "A person wearing a grey hoodie and light-colored pants is standing near a silver car with the driver's door open."]
 
     prompts = ["<|im_start|>user\n<|vision_start|><|image_pad|><|vision_end|>\nWhat car is this?<|im_end|>\n<|im_start|>assistant\n",
             "<|im_start|>user\n<|vision_start|><|image_pad|><|vision_end|>\nTell me the history of this car<|im_end|>\n<|im_start|>assistant\n",
@@ -808,5 +808,6 @@ if __name__ == "__main__":
         output = output.replace("<|im_end|>","") # todo hack
         print(output)
         assert output == expected_output
+
 
 
