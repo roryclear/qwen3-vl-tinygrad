@@ -127,7 +127,6 @@ def rotate_half(x):
 def forward(
     input_ids,
     pixel_values,
-    past_key_values,
     image_grid_thw,
     expected # todo for testing
 ):
@@ -384,7 +383,8 @@ def forward(
     outputs = tiny_model.lm_head(hidden_states[:, -1:, :])
 
     while not this_peer_finished:
-        if prefill_consumed: outputs = fwd(input_ids=input_ids, position_ids=position_ids, past_key_values=past_key_values)
+        if prefill_consumed:
+          outputs = fwd(input_ids=input_ids, position_ids=position_ids)
 
         prefill_consumed = True
         position_ids = position_ids[..., -1:] + 1
@@ -414,7 +414,7 @@ def forward(
 
     return input_ids
 
-def fwd(input_ids, position_ids, past_key_values):
+def fwd(input_ids, position_ids):
   inputs_embeds = tiny_model.model.language_model.embed_tokens(input_ids[:, -1:])
 
   hidden_states = inputs_embeds
@@ -746,6 +746,7 @@ if __name__ == "__main__":
     import pickle
     tok = pickle.load(open("tok.pkl", "rb"))
     for image, expected_output, prompt in zip(images, expected_outputs, prompts):
+        past_key_values = {}
         text_inputs = tok.encode(prompt)
         image = [tvF.pil_to_tensor(image)]
         image_inputs = _preprocess(images=image)
@@ -762,7 +763,7 @@ if __name__ == "__main__":
         mm_token_type_ids = [0] * len(text_inputs)
         for pos in image_token_positions: mm_token_type_ids[pos:pos + int(num_image_tokens)] = [1] * int(num_image_tokens)
 
-        outputs = forward(input_ids=tinyTensor([text_inputs]), past_key_values={}, pixel_values=to_tiny(image_inputs['pixel_values']), image_grid_thw=image_inputs['image_grid_thw'], expected=tok.encode(expected_output))
+        outputs = forward(input_ids=tinyTensor([text_inputs]), pixel_values=to_tiny(image_inputs['pixel_values']), image_grid_thw=image_inputs['image_grid_thw'], expected=tok.encode(expected_output))
 
         #outputs = model.generate(**inputs, max_new_tokens=128)
         generated_ids = outputs[0][len(text_inputs):]
