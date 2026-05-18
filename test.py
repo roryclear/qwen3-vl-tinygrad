@@ -132,9 +132,7 @@ def forward(
 ):
     toks_out = [] # todo for testing
     scores = None
-    batch_size = input_ids.shape[0]
     this_peer_finished = False
-    unfinished_sequences = tinyTensor.ones(batch_size, dtype=dtypes.int32)
 
     prefill_consumed = False
 
