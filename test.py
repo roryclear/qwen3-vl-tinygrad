@@ -277,11 +277,7 @@ def forward(
     
     image_mask = input_ids == tiny_model.model.config.image_token_id
 
-    weight_expanded = tiny_model.model.language_model.embed_tokens.weight.unsqueeze(0).expand(input_ids.shape[0], -1, -1)
-
-    B, T = input_ids.shape
-    batch_idx = tinyTensor.arange(B).reshape(B, 1).expand(B, T)
-    inputs_embeds = weight_expanded[batch_idx, input_ids]
+    inputs_embeds = tiny_model.model.language_model.embed_tokens(input_ids)
 
     image_mask = image_mask.unsqueeze(-1).expand(inputs_embeds.shape)
     image_embeds = image_embeds.view(-1)
