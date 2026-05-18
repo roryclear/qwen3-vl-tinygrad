@@ -384,75 +384,7 @@ def forward(
     outputs = tiny_model.lm_head(hidden_states[:, -1:, :])
 
     while not this_peer_finished:
-        if prefill_consumed:
-            inputs_embeds = tiny_model.model.language_model.embed_tokens(input_ids[:, -1:])
-
-            hidden_states = inputs_embeds
-            pos_ids = position_ids[1:]
-            inv_freq_expanded = tiny_model.model.language_model.rotary_emb.inv_freq[None, None, :, None].float().expand(3, pos_ids.shape[1], -1, 1)
-            position_ids_expanded = pos_ids[:, :, None, :].float()  # shape (3, bs, 1, positions)
-
-            freqs = (inv_freq_expanded @ position_ids_expanded).transpose(2, 3)
-            freqs_t = freqs[0]
-            freqs_t = freqs_t.contiguous()
-            for dim, offset in enumerate((1, 2), start=1):  # H, W
-                length = tiny_model.model.language_model.rotary_emb.mrope_section[dim] * 3
-                idx = slice(offset, length, 3)
-                freqs_t[..., idx] = freqs[dim, ..., idx]
-            freqs = freqs_t
-            emb = tinyTensor.cat(freqs, freqs, dim=-1)
-            cos = emb.cos() * tiny_model.model.language_model.rotary_emb.attention_scaling
-            sin = emb.sin() * tiny_model.model.language_model.rotary_emb.attention_scaling
-
-            # decoder layers
-            for i in range(len(tiny_model.model.language_model.layers)):        
-                residual = hidden_states
-                hidden_states = tiny_model.model.language_model.layers[i].input_layernorm(hidden_states)
-
-                input_shape = hidden_states.shape[:-1]
-                hidden_shape = (*input_shape, -1, tiny_model.model.language_model.layers[i].self_attn.head_dim)
-                
-                query = tiny_model.model.language_model.layers[i].self_attn.q_proj(hidden_states).view(hidden_shape)
-                key = tiny_model.model.language_model.layers[i].self_attn.k_proj(hidden_states).view(hidden_shape)
-                query = tiny_model.model.language_model.layers[i].self_attn.q_norm(query).transpose(1, 2)
-                key = tiny_model.model.language_model.layers[i].self_attn.k_norm(key).transpose(1, 2)
-        
-                value = tiny_model.model.language_model.layers[i].self_attn.v_proj(hidden_states).view(hidden_shape).transpose(1, 2)
-
-                query = (query * cos) + (rotate_half(query) * sin)
-                key = (key * cos) + (rotate_half(key) * sin)
-
-                query = query.cast(dtypes.bfloat16)
-                key = key.cast(dtypes.bfloat16)
-
-                key, value = update(key, value, i, past_key_values)
-
-                key = key.repeat_interleave(query.size(-3)//key.size(-3), -3)
-                value = value.repeat_interleave(query.size(-3)//value.size(-3), -3)
-
-                attn_weight = query @ key.transpose(-2, -1) * tiny_model.model.language_model.layers[i].self_attn.scaling
-
-                attn_weight = tinyTensor.softmax(attn_weight)
-                value = value.cast(dtypes.bfloat16)
-                attn_output = attn_weight @ value
-
-
-                attn_output = attn_output.transpose(1, 2)
-                attn_output = attn_output.reshape(*input_shape, -1).contiguous()
-
-                hidden_states = tiny_model.model.language_model.layers[i].self_attn.o_proj(attn_output)                
-                hidden_states = residual + hidden_states
-                residual = hidden_states
-                hidden_states = tiny_model.model.language_model.layers[i].post_attention_layernorm(hidden_states)
-                gate = tiny_model.model.language_model.layers[i].mlp.gate_proj(hidden_states)
-                up = tiny_model.model.language_model.layers[i].mlp.up_proj(hidden_states)
-                activated = tinyTensor.silu(gate)
-                combined = activated * up
-                hidden_states = tiny_model.model.language_model.layers[i].mlp.down_proj(combined)
-                hidden_states = residual + hidden_states
-
-            hidden_states = tiny_model.model.language_model.norm(hidden_states)
-            outputs = tiny_model.lm_head(hidden_states[:, -1:, :])
+        if prefill_consumed: outputs = fwd(tiny_model=tiny_model, input_ids=input_ids, position_ids=position_ids, past_key_values=past_key_values)
 
         prefill_consumed = True
         position_ids = position_ids[..., -1:] + 1
@@ -481,6 +413,77 @@ def forward(
 
 
     return input_ids
+
+def fwd(tiny_model, input_ids, position_ids, past_key_values):
+  inputs_embeds = tiny_model.model.language_model.embed_tokens(input_ids[:, -1:])
+
+  hidden_states = inputs_embeds
+  pos_ids = position_ids[1:]
+  inv_freq_expanded = tiny_model.model.language_model.rotary_emb.inv_freq[None, None, :, None].float().expand(3, pos_ids.shape[1], -1, 1)
+  position_ids_expanded = pos_ids[:, :, None, :].float()  # shape (3, bs, 1, positions)
+
+  freqs = (inv_freq_expanded @ position_ids_expanded).transpose(2, 3)
+  freqs_t = freqs[0]
+  freqs_t = freqs_t.contiguous()
+  for dim, offset in enumerate((1, 2), start=1):  # H, W
+      length = tiny_model.model.language_model.rotary_emb.mrope_section[dim] * 3
+      idx = slice(offset, length, 3)
+      freqs_t[..., idx] = freqs[dim, ..., idx]
+  freqs = freqs_t
+  emb = tinyTensor.cat(freqs, freqs, dim=-1)
+  cos = emb.cos() * tiny_model.model.language_model.rotary_emb.attention_scaling
+  sin = emb.sin() * tiny_model.model.language_model.rotary_emb.attention_scaling
+
+  # decoder layers
+  for i in range(len(tiny_model.model.language_model.layers)):        
+      residual = hidden_states
+      hidden_states = tiny_model.model.language_model.layers[i].input_layernorm(hidden_states)
+
+      input_shape = hidden_states.shape[:-1]
+      hidden_shape = (*input_shape, -1, tiny_model.model.language_model.layers[i].self_attn.head_dim)
+      
+      query = tiny_model.model.language_model.layers[i].self_attn.q_proj(hidden_states).view(hidden_shape)
+      key = tiny_model.model.language_model.layers[i].self_attn.k_proj(hidden_states).view(hidden_shape)
+      query = tiny_model.model.language_model.layers[i].self_attn.q_norm(query).transpose(1, 2)
+      key = tiny_model.model.language_model.layers[i].self_attn.k_norm(key).transpose(1, 2)
+
+      value = tiny_model.model.language_model.layers[i].self_attn.v_proj(hidden_states).view(hidden_shape).transpose(1, 2)
+
+      query = (query * cos) + (rotate_half(query) * sin)
+      key = (key * cos) + (rotate_half(key) * sin)
+
+      query = query.cast(dtypes.bfloat16)
+      key = key.cast(dtypes.bfloat16)
+
+      key, value = update(key, value, i, past_key_values)
+
+      key = key.repeat_interleave(query.size(-3)//key.size(-3), -3)
+      value = value.repeat_interleave(query.size(-3)//value.size(-3), -3)
+
+      attn_weight = query @ key.transpose(-2, -1) * tiny_model.model.language_model.layers[i].self_attn.scaling
+
+      attn_weight = tinyTensor.softmax(attn_weight)
+      value = value.cast(dtypes.bfloat16)
+      attn_output = attn_weight @ value
+
+
+      attn_output = attn_output.transpose(1, 2)
+      attn_output = attn_output.reshape(*input_shape, -1).contiguous()
+
+      hidden_states = tiny_model.model.language_model.layers[i].self_attn.o_proj(attn_output)                
+      hidden_states = residual + hidden_states
+      residual = hidden_states
+      hidden_states = tiny_model.model.language_model.layers[i].post_attention_layernorm(hidden_states)
+      gate = tiny_model.model.language_model.layers[i].mlp.gate_proj(hidden_states)
+      up = tiny_model.model.language_model.layers[i].mlp.up_proj(hidden_states)
+      activated = tinyTensor.silu(gate)
+      combined = activated * up
+      hidden_states = tiny_model.model.language_model.layers[i].mlp.down_proj(combined)
+      hidden_states = residual + hidden_states
+
+  hidden_states = tiny_model.model.language_model.norm(hidden_states)
+  outputs = tiny_model.lm_head(hidden_states[:, -1:, :])
+  return outputs
 
 def sample(logits, temp: float, k: int, p: float, af: float, ap: float):
   assert logits.ndim == 1, "only works on 1d tensors"
