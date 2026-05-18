@@ -18,18 +18,6 @@ from dataclasses import dataclass, fields
 import typing
 import sys
 
-
-
-def update(key, value, layer_idx, past_key_values):
-    if layer_idx not in past_key_values:
-        past_key_values[layer_idx] = (key.clone(), value.clone())
-    else:
-        past_key, past_value = past_key_values[layer_idx]
-        key = tinyTensor.cat(past_key, key, dim=-2)
-        value = tinyTensor.cat(past_value, value, dim=-2)
-        past_key_values[layer_idx] = (key.clone(), value.clone())
-    return key, value
-
 class SimpleTokenizer:
   def __init__(self, normal_tokens:dict[str, int], special_tokens:dict[str, int], preset:str="llama3",
                bos_id:int|None=None, eos_id:int=0, eot_id:int|None=None):
@@ -332,7 +320,7 @@ def forward(
         query = query.cast(dtypes.bfloat16)
         key = key.cast(dtypes.bfloat16)
 
-        key, value = update(key, value, i, past_key_values)
+        past_key_values[i] = (key.clone(), value.clone())      
 
         L, S = query.size(-2), key.size(-2)
         attn_bias = tinyTensor.zeros(L, S, dtype=dtypes.bfloat16)
@@ -450,7 +438,10 @@ def fwd(input_id, position_ids):
       query = query.cast(dtypes.bfloat16)
       key = key.cast(dtypes.bfloat16)
 
-      key, value = update(key, value, i, past_key_values)
+      past_key, past_value = past_key_values[i]
+      key = tinyTensor.cat(past_key, key, dim=-2)
+      value = tinyTensor.cat(past_value, value, dim=-2)
+      past_key_values[i] = (key.clone(), value.clone())
 
       key = key.repeat_interleave(query.size(-3)//key.size(-3), -3)
       value = value.repeat_interleave(query.size(-3)//value.size(-3), -3)
