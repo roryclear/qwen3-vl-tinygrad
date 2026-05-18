@@ -125,16 +125,13 @@ def rotate_half(x):
     return ret
 
 def forward(
-    tiny_model,
     input_ids,
-    _pad_token_tensor,
     pixel_values,
     past_key_values,
     image_grid_thw,
     expected # todo for testing
 ):
     toks_out = [] # todo for testing
-    pad_token_id = _pad_token_tensor
     scores = None
     batch_size = input_ids.shape[0]
     this_peer_finished = False
@@ -762,7 +759,7 @@ if __name__ == "__main__":
         mm_token_type_ids = [0] * len(text_inputs)
         for pos in image_token_positions: mm_token_type_ids[pos:pos + int(num_image_tokens)] = [1] * int(num_image_tokens)
 
-        outputs = forward(tiny_model=tiny_model, input_ids=tinyTensor([text_inputs]), _pad_token_tensor=151643, past_key_values={}, pixel_values=to_tiny(image_inputs['pixel_values']), image_grid_thw=image_inputs['image_grid_thw'], expected=tok.encode(expected_output))
+        outputs = forward(input_ids=tinyTensor([text_inputs]), past_key_values={}, pixel_values=to_tiny(image_inputs['pixel_values']), image_grid_thw=image_inputs['image_grid_thw'], expected=tok.encode(expected_output))
 
         #outputs = model.generate(**inputs, max_new_tokens=128)
         generated_ids = outputs[0][len(text_inputs):]
