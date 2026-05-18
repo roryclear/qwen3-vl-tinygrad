@@ -384,7 +384,7 @@ def forward(
     outputs = tiny_model.lm_head(hidden_states[:, -1:, :])
 
     while not this_peer_finished:
-        if prefill_consumed: outputs = fwd(tiny_model=tiny_model, input_ids=input_ids, position_ids=position_ids, past_key_values=past_key_values)
+        if prefill_consumed: outputs = fwd(input_ids=input_ids, position_ids=position_ids, past_key_values=past_key_values)
 
         prefill_consumed = True
         position_ids = position_ids[..., -1:] + 1
@@ -414,7 +414,7 @@ def forward(
 
     return input_ids
 
-def fwd(tiny_model, input_ids, position_ids, past_key_values):
+def fwd(input_ids, position_ids, past_key_values):
   inputs_embeds = tiny_model.model.language_model.embed_tokens(input_ids[:, -1:])
 
   hidden_states = inputs_embeds
