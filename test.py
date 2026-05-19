@@ -1,4 +1,3 @@
-from transformers import AutoModelForImageTextToText
 from PIL import Image
 import requests
 from io import BytesIO
@@ -321,8 +320,8 @@ def forward(
         query = query.cast(dtypes.bfloat16)
         key = key.cast(dtypes.bfloat16)
 
-        key_padded = tinyTensor.zeros(1, 8, 500, 128).contiguous()
-        value_padded = tinyTensor.zeros(1, 8, 500, 128).contiguous()
+        key_padded = tinyTensor.zeros(1, 8, 500, 128, dtype=dtypes.bfloat16).contiguous()
+        value_padded = tinyTensor.zeros(1, 8, 500, 128, dtype=dtypes.bfloat16).contiguous()
 
         seq_len = key.shape[2]
 
@@ -369,11 +368,8 @@ def forward(
             expanded = expanded * mask_float.unsqueeze(-1)
             hidden_states = hidden_states + expanded
 
-    
     hidden_states = tiny_model.model.language_model.norm(hidden_states)
-
     outputs = tiny_model.lm_head(hidden_states[:, -1:, :])
-
     while not this_peer_finished:
         if prefill_consumed:
           n = sqlen.bind(seq_len)
@@ -623,10 +619,6 @@ class Qwen3VLTextRMSNorm_tiny():
     
 
 if __name__ == "__main__":
-    model = AutoModelForImageTextToText.from_pretrained("Qwen/Qwen3-VL-2B-Instruct")
-    print(model)
-
-
     def to_tiny(x):
        if x.dtype == torch.bfloat16: return tinyTensor(x.detach().to(torch.float16).numpy()).cast(dtypes.bfloat16)
        return tinyTensor(x.detach().numpy())
@@ -634,8 +626,6 @@ if __name__ == "__main__":
     class blank: pass
 
     tiny_weights = safe_load(fetch(f'https://huggingface.co/Qwen/Qwen3-VL-2B-Instruct/resolve/main/model.safetensors'))
-    #print(model.model.visual.pos_embed)
-    #print(model.model.visual.pos_embed.weight.shape)
 
     tiny_model = blank()
     tiny_model.model = blank()
@@ -726,7 +716,7 @@ if __name__ == "__main__":
     load_state_dict(tiny_model, tiny_weights)
 
     tiny_model.lm_head = tiny_nn.Linear(2048, 151936, bias=False)
-    tiny_model.lm_head.weight = to_tiny(model.lm_head.weight) # todo how is this inited?
+    tiny_model.lm_head.weight = tiny_model.model.language_model.embed_tokens.weight
     tiny_model.model.visual.rotary_pos_emb.inv_freq = 1.0 / (tiny_model.model.visual.rotary_pos_emb.theta ** (tinyTensor.arange(0, tiny_model.model.visual.rotary_pos_emb.dim, 2, dtype=dtypes.float) / tiny_model.model.visual.rotary_pos_emb.dim))
     tiny_model.model.language_model.rotary_emb.inv_freq = 1.0 / (5000000 ** (tinyTensor.arange(0, 128, 2, dtype=dtypes.int64) / 128))
 
@@ -735,9 +725,9 @@ if __name__ == "__main__":
     images = [Image.open(BytesIO(requests.get("https://img.wort.lu/public/luxemburg/vfka4n-picture-title-binary/alternates/ONE_ONE_256/Picture%20title%20binary").content)).convert("RGB"),
             Image.open(BytesIO(requests.get("https://www.cartell.ie/car_check/wp-content/uploads/2012/03/Nissan-Micra-_4b.jpg").content)).convert("RGB"),
             Image.open("test_img.jpg").convert("RGB")]
-    expected_outputs = ["This is a Ferrari F40, a high-performance sports car produced by Ferrari from 1987 to 1991. It's known for its sleek design and exceptional performance, making it a classic in automotive history.",
-                        "This is a Nissan Micra, a compact car produced by Nissan from 1993 to 2006. It was introduced as a successor to the Nissan Pulsar and was designed to be a more affordable and efficient alternative to other small cars in the market. The Micra was known for its innovative design and fuel-efficient engine options, making it a popular choice for urban drivers.\n\nThe Micra was produced in several generations, with the first generation being launched in 1993. The second generation, introduced in 1999, featured a more modern design and improved engine performance. The third generation",
-                        "A person wearing a grey hoodie and light-colored pants is standing near a silver car with the driver's door open."]
+    expected_outputs = ["This is a Ferrari F40, a sports car produced by Ferrari from 1987 to 1990. It is known for its sleek design and powerful performance, and it's a classic model in the Ferrari lineup.",
+                        "This is a Nissan Micra, a compact car produced by Nissan. It was first introduced in 1993 and is known for its small size and fuel efficiency. The Micra has been produced in various markets, including Japan, Europe, and North America. It is a popular choice for city driving due to its maneuverability and fuel economy. The Micra has undergone several redesigns and model updates over the years, with the most recent version being the 2020 model.",
+                        "A person wearing a grey hoodie and light-colored pants is standing near a silver car with the driver's door open. "]
 
     prompts = ["<|im_start|>user\n<|vision_start|><|image_pad|><|vision_end|>\nWhat car is this?<|im_end|>\n<|im_start|>assistant\n",
             "<|im_start|>user\n<|vision_start|><|image_pad|><|vision_end|>\nTell me the history of this car<|im_end|>\n<|im_start|>assistant\n",
