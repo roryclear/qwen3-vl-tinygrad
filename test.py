@@ -1,4 +1,3 @@
-from PIL import Image
 import requests
 from io import BytesIO
 import torch
@@ -708,9 +707,9 @@ if __name__ == "__main__":
 
 
     images = [
-        cv2.imdecode(np.frombuffer(requests.get("https://img.wort.lu/public/luxemburg/vfka4n-picture-title-binary/alternates/ONE_ONE_256/Picture%20title%20binary").content, np.uint8), cv2.IMREAD_COLOR),
-        cv2.imdecode(np.frombuffer(requests.get("https://www.cartell.ie/car_check/wp-content/uploads/2012/03/Nissan-Micra-_4b.jpg").content, np.uint8), cv2.IMREAD_COLOR),
-        cv2.imread("test_img.jpg")
+        cv2.cvtColor(cv2.imdecode(np.frombuffer(requests.get("https://img.wort.lu/public/luxemburg/vfka4n-picture-title-binary/alternates/ONE_ONE_256/Picture%20title%20binary").content, np.uint8), cv2.IMREAD_COLOR), cv2.COLOR_BGR2RGB),
+        cv2.cvtColor(cv2.imdecode(np.frombuffer(requests.get("https://www.cartell.ie/car_check/wp-content/uploads/2012/03/Nissan-Micra-_4b.jpg").content, np.uint8), cv2.IMREAD_COLOR), cv2.COLOR_BGR2RGB),
+        cv2.cvtColor(cv2.imread("test_img.jpg"), cv2.COLOR_BGR2RGB)
     ]
 
 
@@ -730,9 +729,7 @@ if __name__ == "__main__":
 
         text_inputs = tok.encode(prompt)
 
-
-        image = Image.fromarray(cv2.cvtColor(image, cv2.COLOR_BGR2RGB))
-        image = tvF.pil_to_tensor(image)
+        image = torch.from_numpy(image).permute(2, 0, 1)
         pixel_values, image_grid_thw = _preprocess(image=image)
         merge_size = 2
         num_image_tokens = ((image_grid_thw[0]*image_grid_thw[1]*image_grid_thw[2]) / (merge_size ** 2))
