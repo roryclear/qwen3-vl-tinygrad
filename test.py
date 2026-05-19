@@ -1,18 +1,9 @@
 import requests
-from io import BytesIO
-import torch
-from torch import nn
-from collections import OrderedDict
-import torch.nn.functional as F
-import importlib
 import random
 import numpy as np
 from tinygrad import Tensor, nn as nn
 import math
-import copy
 from functools import partial
-from torchvision.transforms.v2 import functional as tvF
-from dataclasses import dataclass, fields
 import typing
 import sys
 import cv2
@@ -100,7 +91,6 @@ class SimpleTokenizer:
 def set_seed(seed: int, deterministic: bool = False):
     random.seed(seed)
     np.random.seed(seed)
-    torch.manual_seed(seed)
 
 
 set_seed(42)
@@ -322,7 +312,6 @@ def forward(
         value_padded = Tensor.zeros(1, 8, 500, 128, dtype=dtypes.bfloat16).contiguous()
 
         seq_len = key.shape[2]
-
         key_padded[:, :, :seq_len, :] = key
         value_padded[:, :, :seq_len, :] = value
 
@@ -546,6 +535,7 @@ def _preprocess(image):
     rescale_factor = 0.00392156862745098
     temporal_patch_size = 2
 
+    # image is numpy array in (C, H, W) format with values 0-255
     height, width = image.shape[-2:]
     resized_height, resized_width = smart_resize(
         height,
@@ -555,15 +545,21 @@ def _preprocess(image):
         max_pixels=16777216,
     )
 
-    image = tvF.resize(image.unsqueeze(0), (resized_height, resized_width), interpolation=3, antialias=True)[0]
+    # Resize using cv2 - convert to (H, W, C) for cv2
+    image_np = image.transpose(1, 2, 0)  # (C, H, W) -> (H, W, C)
+    image_np = cv2.resize(image_np, (resized_width, resized_height), interpolation=cv2.INTER_LANCZOS4)
+    image = image_np.transpose(2, 0, 1)  # Back to (C, H, W)
+    image = image.astype(np.float32)
 
-    image_mean = torch.tensor((0.5, 0.5, 0.5)) / rescale_factor
-    image_std = torch.tensor((0.5, 0.5, 0.5)) / rescale_factor
-    image = tvF.normalize(image.to(dtype=torch.float32), image_mean, image_std)
+    # Normalize
+    image_mean = np.array([0.5, 0.5, 0.5]) / rescale_factor
+    image_std = np.array([0.5, 0.5, 0.5]) / rescale_factor
+    image = (image - image_mean[:, None, None]) / image_std[:, None, None]
 
     channel = image.shape[0]
     grid_h, grid_w = resized_height // patch_size, resized_width // patch_size
     
+    # Reshape and process patches
     patches = image.reshape(
         channel,
         grid_h // merge_size,
@@ -573,9 +569,9 @@ def _preprocess(image):
         merge_size,
         patch_size,
     )
-    patches = patches.permute(1, 4, 2, 5, 0, 3, 6)
-    patches = patches.unsqueeze(4)
-    patches = patches.expand(-1, -1, -1, -1, temporal_patch_size, -1, -1, -1)
+    patches = patches.transpose(1, 4, 2, 5, 0, 3, 6)  # Equivalent to permute
+    patches = np.expand_dims(patches, axis=4)  # Equivalent to unsqueeze(4)
+    patches = np.broadcast_to(patches, (*patches.shape[:4], temporal_patch_size, *patches.shape[5:]))  # Equivalent to expand
 
     flatten_patches = patches.reshape(
         grid_h * grid_w,
@@ -604,9 +600,6 @@ class Qwen3VLTextRMSNorm_tiny():
     
 
 if __name__ == "__main__":
-    def to_tiny(x):
-       if x.dtype == torch.bfloat16: return Tensor(x.detach().to(torch.float16).numpy()).cast(dtypes.bfloat16)
-       return Tensor(x.detach().numpy())
 
     class blank: pass
 
@@ -729,8 +722,9 @@ if __name__ == "__main__":
 
         text_inputs = tok.encode(prompt)
 
-        image = torch.from_numpy(image).permute(2, 0, 1)
+        image = image.transpose(2, 0, 1)
         pixel_values, image_grid_thw = _preprocess(image=image)
+
         merge_size = 2
         num_image_tokens = ((image_grid_thw[0]*image_grid_thw[1]*image_grid_thw[2]) / (merge_size ** 2))
 
@@ -743,7 +737,7 @@ if __name__ == "__main__":
         mm_token_type_ids = [0] * len(text_inputs)
         for pos in image_token_positions: mm_token_type_ids[pos:pos + int(num_image_tokens)] = [1] * int(num_image_tokens)
 
-        outputs = forward(input_ids=Tensor([text_inputs]), pixel_values=to_tiny(pixel_values), image_grid_thw=image_grid_thw, expected=tok.encode(expected_output))
+        outputs = forward(input_ids=Tensor([text_inputs]), pixel_values=Tensor(pixel_values.astype(np.float32)), image_grid_thw=image_grid_thw, expected=tok.encode(expected_output))
 
         #outputs = model.generate(**inputs, max_new_tokens=128)
         generated_ids = outputs[0][len(text_inputs):]
