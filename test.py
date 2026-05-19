@@ -16,6 +16,7 @@ from torchvision.transforms.v2 import functional as tvF
 from dataclasses import dataclass, fields
 import typing
 import sys
+import cv2
 
 class SimpleTokenizer:
   def __init__(self, normal_tokens:dict[str, int], special_tokens:dict[str, int], preset:str="llama3",
@@ -706,10 +707,13 @@ if __name__ == "__main__":
     tiny_model.model.language_model.rotary_emb.inv_freq = 1.0 / (5000000 ** (Tensor.arange(0, 128, 2, dtype=dtypes.int64) / 128))
 
 
+    images = [
+        cv2.imdecode(np.frombuffer(requests.get("https://img.wort.lu/public/luxemburg/vfka4n-picture-title-binary/alternates/ONE_ONE_256/Picture%20title%20binary").content, np.uint8), cv2.IMREAD_COLOR),
+        cv2.imdecode(np.frombuffer(requests.get("https://www.cartell.ie/car_check/wp-content/uploads/2012/03/Nissan-Micra-_4b.jpg").content, np.uint8), cv2.IMREAD_COLOR),
+        cv2.imread("test_img.jpg")
+    ]
 
-    images = [Image.open(BytesIO(requests.get("https://img.wort.lu/public/luxemburg/vfka4n-picture-title-binary/alternates/ONE_ONE_256/Picture%20title%20binary").content)).convert("RGB"),
-            Image.open(BytesIO(requests.get("https://www.cartell.ie/car_check/wp-content/uploads/2012/03/Nissan-Micra-_4b.jpg").content)).convert("RGB"),
-            Image.open("test_img.jpg").convert("RGB")]
+
     expected_outputs = ["This is a Ferrari F40, a classic sports car produced by Ferrari from 1987 to 1991. It's known for its sleek design and powerful performance, and is considered one of the most iconic cars in the brand's history.",
                         "This is the Nissan Micra, a compact car produced by Nissan from 1994 to 2008. It was introduced as a successor to the Nissan Pulsar and was designed to be a more affordable and practical alternative to other compact cars in the market.\n\nThe Micra was developed with a focus on fuel efficiency and cost-effectiveness, making it a popular choice for urban drivers. It was available in various body styles, including hatchbacks and sedans, and was known for its reliability and ease of maintenance.\n\nThe Micra was manufactured in several countries, including Japan, the United States, and Europe. It",
                         "A person wearing a grey hoodie and light-colored pants is standing near a silver car with the driver's door open. "]
@@ -725,6 +729,9 @@ if __name__ == "__main__":
         past_values = [Tensor.zeros(1, 8, 500, 128).contiguous() for i in range(len(tiny_model.model.language_model.layers))]
 
         text_inputs = tok.encode(prompt)
+
+
+        image = Image.fromarray(cv2.cvtColor(image, cv2.COLOR_BGR2RGB))
         image = tvF.pil_to_tensor(image)
         pixel_values, image_grid_thw = _preprocess(image=image)
         merge_size = 2
