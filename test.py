@@ -586,7 +586,7 @@ def _preprocess(image):
 
     pixel_values = flatten_patches
     image_grid_thw = torch.tensor([[1, grid_h, grid_w]], dtype=torch.int32)
-    return {"pixel_values": pixel_values, "image_grid_thw": image_grid_thw}
+    return pixel_values, image_grid_thw
 
 from tinygrad import Tensor
 Tensor.manual_seed(42)
@@ -728,9 +728,8 @@ if __name__ == "__main__":
 
         text_inputs = tok.encode(prompt)
         image = tvF.pil_to_tensor(image)
-        image_inputs = _preprocess(image=image)
+        pixel_values, image_grid_thw = _preprocess(image=image)
         merge_size = 2
-        image_grid_thw = image_inputs["image_grid_thw"]  # [batch, 3] -> [t, h, w]
         num_image_tokens = (image_grid_thw.prod(dim=-1) / (merge_size ** 2)).item()
 
         image_token_id = 151655
@@ -742,7 +741,7 @@ if __name__ == "__main__":
         mm_token_type_ids = [0] * len(text_inputs)
         for pos in image_token_positions: mm_token_type_ids[pos:pos + int(num_image_tokens)] = [1] * int(num_image_tokens)
 
-        outputs = forward(input_ids=Tensor([text_inputs]), pixel_values=to_tiny(image_inputs['pixel_values']), image_grid_thw=image_inputs['image_grid_thw'], expected=tok.encode(expected_output))
+        outputs = forward(input_ids=Tensor([text_inputs]), pixel_values=to_tiny(pixel_values), image_grid_thw=image_grid_thw, expected=tok.encode(expected_output))
 
         #outputs = model.generate(**inputs, max_new_tokens=128)
         generated_ids = outputs[0][len(text_inputs):]
