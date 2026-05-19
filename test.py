@@ -378,7 +378,7 @@ def forward(
 
         toks_out.append(next_token)
         print(tok.decode(toks_out), "\n", tok.decode(expected[:len(toks_out)]), "\n")
-        #if not next_token == 151645: assert toks_out == expected[:len(toks_out)]
+        if not next_token == 151645: assert toks_out == expected[:len(toks_out)]
         this_peer_finished = next_token == 151645 or len(input_ids[0]) == 406
 
 
@@ -425,13 +425,11 @@ def fwd(input_id, position_ids, seq_len):
       query = query.cast(dtypes.bfloat16)
       key = key.cast(dtypes.bfloat16)
 
-      past_key, past_value = past_keys[i], past_values[i]
-      past_key[:, :, seq_len:seq_len+1, :] = key
-      past_value[:, :, seq_len:seq_len+1, :] = value
-      past_keys[i], past_values[i] = past_key, past_value
+      past_keys[i][:, :, seq_len:seq_len+1, :] = key
+      past_values[i][:, :, seq_len:seq_len+1, :] = value
 
-      key = past_key
-      value = past_value
+      key = past_keys[i][:, :, :seq_len+1, :]
+      value = past_values[i][:, :, :seq_len+1, :]
 
       key = key.repeat_interleave(query.size(-3)//key.size(-3), -3)
       value = value.repeat_interleave(query.size(-3)//value.size(-3), -3)
@@ -698,7 +696,7 @@ if __name__ == "__main__":
         cv2.cvtColor(cv2.imread("test_img.jpg"), cv2.COLOR_BGR2RGB)
     ]
 
-    expected_outputs = ["This is a Ferrari F40, a high-performance sports car from the 1980s.",
+    expected_outputs = ["This is a Ferrari F40, a classic sports car from the 1980s.",
                         "This is a Nissan Micra, a compact car produced by Nissan. It was first introduced in 1993 and has been a popular choice in Japan and other markets.\n\nThe Micra has undergone several generations, with the most recent being the 2018 model. It is known for its affordability, fuel efficiency, and compact size. The car has been praised for its reliability and ease of maintenance, making it a favorite among urban drivers.",
                         "A person wearing a light green hoodie and light-colored pants is standing near a silver car with the driver's side door open."]
 
@@ -736,5 +734,5 @@ if __name__ == "__main__":
         output = tok.decode(generated_ids.detach().numpy())
         output = output.replace("<|im_end|>","") # todo hack
         print(output)
-        #assert output == expected_output
+        assert output == expected_output
 
