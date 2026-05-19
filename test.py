@@ -385,8 +385,6 @@ def forward(
         
         temp = 0.7
         top_k = 20
-        filter_value = -math.inf
-        min_tokens_to_keep = 1
         top_p = 0.8
 
         next_token_logits = outputs[:, -1, :]
@@ -403,7 +401,6 @@ def forward(
         print(tok.decode(toks_out), "\n", tok.decode(expected[:len(toks_out)]), "\n")
         if not next_token == 151645: assert toks_out == expected[:len(toks_out)]
         this_peer_finished = next_token == 151645 or len(input_ids[0]) == 406
-        del outputs
 
 
     return input_ids
