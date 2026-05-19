@@ -207,7 +207,7 @@ def forward(
     rotary_pos_emb = rotary_pos_emb.reshape(seq_len, -1)
     emb = tinyTensor.cat(rotary_pos_emb, rotary_pos_emb, dim=-1)
     cos, sin = emb.cos(), emb.sin()
-    cos, sin = cos.unsqueeze(-2).float(), sin.unsqueeze(-2).float()
+    cos, sin = cos.unsqueeze(-2), sin.unsqueeze(-2)
 
 
     deepstack_feature_lists = []
@@ -285,8 +285,8 @@ def forward(
 
     position_ids = tinyTensor.arange(input_ids.shape[-1]).unsqueeze(0).unsqueeze(0).repeat(4, 1, 1)
     pos_id = position_ids[1:]
-    inv_freq_expanded = tiny_model.model.language_model.rotary_emb.inv_freq[None, None, :, None].float().expand(3, pos_id.shape[1], -1, 1)
-    position_ids_expanded = pos_id[:, :, None, :].float()
+    inv_freq_expanded = tiny_model.model.language_model.rotary_emb.inv_freq[None, None, :, None].expand(3, pos_id.shape[1], -1, 1)
+    position_ids_expanded = pos_id[:, :, None, :]
     freqs = (inv_freq_expanded @ position_ids_expanded).transpose(2, 3)
     freqs_t = freqs[0]  # just overwrite the first dimension T
     freqs_t = freqs_t.contiguous()
@@ -411,8 +411,8 @@ def fwd(input_id, position_ids, seq_len):
 
   hidden_states = inputs_embeds
   pos_ids = position_ids[1:]
-  inv_freq_expanded = tiny_model.model.language_model.rotary_emb.inv_freq[None, None, :, None].float().expand(3, pos_ids.shape[1], -1, 1)
-  position_ids_expanded = pos_ids[:, :, None, :].float()  # shape (3, bs, 1, positions)
+  inv_freq_expanded = tiny_model.model.language_model.rotary_emb.inv_freq[None, None, :, None].expand(3, pos_ids.shape[1], -1, 1)
+  position_ids_expanded = pos_ids[:, :, None, :]
 
   freqs = (inv_freq_expanded @ position_ids_expanded).transpose(2, 3)
   freqs_t = freqs[0]
