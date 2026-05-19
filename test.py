@@ -144,11 +144,9 @@ def forward(
 
     hidden_states = hidden_states.view(-1, tiny_model.model.visual.patch_embed.embed_dim)
         
-
-    grid_thw_list = image_grid_thw.tolist()
-    grid_ts = grid_thw_list[0][0]
-    grid_hs = grid_thw_list[0][1]
-    grid_ws = grid_thw_list[0][2]
+    grid_ts = image_grid_thw[0]
+    grid_hs = image_grid_thw[1]
+    grid_ws = image_grid_thw[2]
 
     h_idxs = Tensor.linspace(0, tiny_model.model.visual.num_grid_per_side - 1, grid_hs)
     w_idxs = Tensor.linspace(0, tiny_model.model.visual.num_grid_per_side - 1, grid_ws)
@@ -192,13 +190,13 @@ def forward(
     merge_size = int(tiny_model.model.visual.spatial_merge_size)
 
 
-    hpos_ids = Tensor.arange(image_grid_thw[0][1].item()).unsqueeze(1).expand(-1, image_grid_thw[0][2].item())
-    hpos_ids = hpos_ids.reshape(image_grid_thw[0][1].item() // merge_size, merge_size, image_grid_thw[0][2].item() // merge_size, merge_size).transpose(1, 2).flatten()
+    hpos_ids = Tensor.arange(image_grid_thw[1]).unsqueeze(1).expand(-1, image_grid_thw[2])
+    hpos_ids = hpos_ids.reshape(image_grid_thw[1] // merge_size, merge_size, image_grid_thw[2] // merge_size, merge_size).transpose(1, 2).flatten()
 
-    wpos_ids = Tensor.arange(image_grid_thw[0][2].item()).unsqueeze(0).expand(image_grid_thw[0][1].item(), -1)
-    wpos_ids = wpos_ids.reshape(image_grid_thw[0][1].item() // merge_size, merge_size, image_grid_thw[0][2].item() // merge_size, merge_size).transpose(1, 2).flatten()
+    wpos_ids = Tensor.arange(image_grid_thw[2]).unsqueeze(0).expand(image_grid_thw[1], -1)
+    wpos_ids = wpos_ids.reshape(image_grid_thw[1] // merge_size, merge_size, image_grid_thw[2] // merge_size, merge_size).transpose(1, 2).flatten()
 
-    pos_ids = Tensor.stack(hpos_ids, wpos_ids, dim=-1).repeat(image_grid_thw[0][0].item(), 1)
+    pos_ids = Tensor.stack(hpos_ids, wpos_ids, dim=-1).repeat(image_grid_thw[0], 1)
 
     rotary_pos_emb = (pos_ids.unsqueeze(-1) * tiny_model.model.visual.rotary_pos_emb.inv_freq).flatten(1)
 
@@ -585,7 +583,7 @@ def _preprocess(image):
     )
 
     pixel_values = flatten_patches
-    image_grid_thw = torch.tensor([[1, grid_h, grid_w]], dtype=torch.int32)
+    image_grid_thw = [1, grid_h, grid_w]
     return pixel_values, image_grid_thw
 
 from tinygrad import Tensor
@@ -730,7 +728,7 @@ if __name__ == "__main__":
         image = tvF.pil_to_tensor(image)
         pixel_values, image_grid_thw = _preprocess(image=image)
         merge_size = 2
-        num_image_tokens = (image_grid_thw.prod(dim=-1) / (merge_size ** 2)).item()
+        num_image_tokens = ((image_grid_thw[0]*image_grid_thw[1]*image_grid_thw[2]) / (merge_size ** 2))
 
         image_token_id = 151655
         image_token_positions = [i for i, tid in enumerate(text_inputs) if tid == image_token_id]
