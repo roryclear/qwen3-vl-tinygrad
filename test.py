@@ -542,13 +542,13 @@ def smart_resize(height, width, factor, min_pixels, max_pixels):
         w_bar = math.ceil(width * beta / factor) * factor
     return h_bar, w_bar
 
-def _preprocess(images):
-    patch_size=16
-    merge_size=2
-    rescale_factor=0.00392156862745098
-    temporal_patch_size=2
+def _preprocess(image):
+    patch_size = 16
+    merge_size = 2
+    rescale_factor = 0.00392156862745098
+    temporal_patch_size = 2
 
-    height, width = images[0].shape[-2:]
+    height, width = image.shape[-2:]
     resized_height, resized_width = smart_resize(
         height,
         width,
@@ -557,20 +557,16 @@ def _preprocess(images):
         max_pixels=16777216,
     )
 
-    resized_images = tvF.resize(images[0].unsqueeze(0), (resized_height, resized_width), interpolation=3, antialias=True)
+    image = tvF.resize(image.unsqueeze(0), (resized_height, resized_width), interpolation=3, antialias=True)[0]
 
-    stacked_images = resized_images[0].unsqueeze(0)
-    resized_height, resized_width = stacked_images.shape[-2:]
-
-    rescale_factor = 0.00392156862745098
     image_mean = torch.tensor((0.5, 0.5, 0.5)) / rescale_factor
     image_std = torch.tensor((0.5, 0.5, 0.5)) / rescale_factor
-    patches = tvF.normalize(stacked_images.to(dtype=torch.float32), image_mean, image_std)
+    image = tvF.normalize(image.to(dtype=torch.float32), image_mean, image_std)
 
-    batch_size, channel = patches.shape[:2]
+    channel = image.shape[0]
     grid_h, grid_w = resized_height // patch_size, resized_width // patch_size
-    patches = patches.reshape(
-        batch_size,
+    
+    patches = image.reshape(
         channel,
         grid_h // merge_size,
         merge_size,
@@ -579,26 +575,18 @@ def _preprocess(images):
         merge_size,
         patch_size,
     )
-    patches = patches.permute(0, 2, 5, 3, 6, 1, 4, 7)
+    patches = patches.permute(1, 4, 2, 5, 0, 3, 6)
+    patches = patches.unsqueeze(4)
+    patches = patches.expand(-1, -1, -1, -1, temporal_patch_size, -1, -1, -1)
 
-    flatten_patches = (
-        patches.unsqueeze(6)
-        .expand(-1, -1, -1, -1, -1, -1, temporal_patch_size, -1, -1)
-        .reshape(
-            batch_size,
-            grid_h * grid_w,
-            channel * temporal_patch_size * patch_size * patch_size,
-        )
+    flatten_patches = patches.reshape(
+        grid_h * grid_w,
+        channel * temporal_patch_size * patch_size * patch_size,
     )
 
-    processed_images = [flatten_patches[0]]
-    processed_grids_ordered = [[[1, grid_h, grid_w]][0]]
-
-    pixel_values = torch.cat(processed_images, dim=0)
-    image_grid_thw = torch.tensor(processed_grids_ordered, dtype=torch.int32)
-
+    pixel_values = flatten_patches
+    image_grid_thw = torch.tensor([[1, grid_h, grid_w]], dtype=torch.int32)
     return {"pixel_values": pixel_values, "image_grid_thw": image_grid_thw}
-
 
 from tinygrad import Tensor
 Tensor.manual_seed(42)
@@ -724,8 +712,8 @@ if __name__ == "__main__":
     images = [Image.open(BytesIO(requests.get("https://img.wort.lu/public/luxemburg/vfka4n-picture-title-binary/alternates/ONE_ONE_256/Picture%20title%20binary").content)).convert("RGB"),
             Image.open(BytesIO(requests.get("https://www.cartell.ie/car_check/wp-content/uploads/2012/03/Nissan-Micra-_4b.jpg").content)).convert("RGB"),
             Image.open("test_img.jpg").convert("RGB")]
-    expected_outputs = ["This is a Ferrari F40, a sports car produced by Ferrari from 1987 to 1990. It is known for its sleek design and powerful performance, and it's a classic model in the Ferrari lineup.",
-                        "This is a Nissan Micra, a compact car produced by Nissan. It was first introduced in 1993 and is known for its small size and fuel efficiency. The Micra has been produced in various markets, including Japan, Europe, and North America. It is a popular choice for city driving due to its maneuverability and fuel economy. The Micra has undergone several redesigns and model updates over the years, with the most recent version being the 2020 model.",
+    expected_outputs = ["This is a Ferrari F40, a classic sports car produced by Ferrari from 1987 to 1991. It's known for its sleek design and powerful performance, and is considered one of the most iconic cars in the brand's history.",
+                        "This is the Nissan Micra, a compact car produced by Nissan from 1994 to 2008. It was introduced as a successor to the Nissan Pulsar and was designed to be a more affordable and practical alternative to other compact cars in the market.\n\nThe Micra was developed with a focus on fuel efficiency and cost-effectiveness, making it a popular choice for urban drivers. It was available in various body styles, including hatchbacks and sedans, and was known for its reliability and ease of maintenance.\n\nThe Micra was manufactured in several countries, including Japan, the United States, and Europe. It",
                         "A person wearing a grey hoodie and light-colored pants is standing near a silver car with the driver's door open. "]
 
     prompts = ["<|im_start|>user\n<|vision_start|><|image_pad|><|vision_end|>\nWhat car is this?<|im_end|>\n<|im_start|>assistant\n",
@@ -739,8 +727,8 @@ if __name__ == "__main__":
         past_values = [Tensor.zeros(1, 8, 500, 128).contiguous() for i in range(len(tiny_model.model.language_model.layers))]
 
         text_inputs = tok.encode(prompt)
-        image = [tvF.pil_to_tensor(image)]
-        image_inputs = _preprocess(images=image)
+        image = tvF.pil_to_tensor(image)
+        image_inputs = _preprocess(image=image)
         merge_size = 2
         image_grid_thw = image_inputs["image_grid_thw"]  # [batch, 3] -> [t, h, w]
         num_image_tokens = (image_grid_thw.prod(dim=-1) / (merge_size ** 2)).item()
