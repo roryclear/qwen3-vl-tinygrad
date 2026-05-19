@@ -450,7 +450,7 @@ def fwd(input_id, position_ids, seq_len):
       past_key, past_value = past_key_values[i]
       past_key[:, :, seq_len:seq_len+1, :] = key
       past_value[:, :, seq_len:seq_len+1, :] = value
-      past_key_values[i] = (past_key.clone(), past_value.clone())
+      past_key_values[i] = (past_key, past_value)
 
       key = past_key
       value = past_value
