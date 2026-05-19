@@ -1,9 +1,7 @@
-import requests
 import random
 import numpy as np
-from tinygrad import Tensor, nn as nn
+from tinygrad import Tensor, nn, TinyJit, Variable
 import math
-from functools import partial
 import typing
 import sys
 import cv2
@@ -388,8 +386,6 @@ def forward(
 
     return input_ids
 
-from tinygrad import TinyJit, Variable
-
 @TinyJit
 def fwd(input_id, position_ids, seq_len):
   inputs_embeds = tiny_model.model.language_model.embed_tokens(input_id)
@@ -700,17 +696,16 @@ if __name__ == "__main__":
 
 
     images = [
-        cv2.cvtColor(cv2.imdecode(np.frombuffer(requests.get("https://img.wort.lu/public/luxemburg/vfka4n-picture-title-binary/alternates/ONE_ONE_256/Picture%20title%20binary").content, np.uint8), cv2.IMREAD_COLOR), cv2.COLOR_BGR2RGB),
-        cv2.cvtColor(cv2.imdecode(np.frombuffer(requests.get("https://www.cartell.ie/car_check/wp-content/uploads/2012/03/Nissan-Micra-_4b.jpg").content, np.uint8), cv2.IMREAD_COLOR), cv2.COLOR_BGR2RGB),
+        cv2.cvtColor(cv2.imread("f40.jpeg"), cv2.COLOR_BGR2RGB),
+        cv2.cvtColor(cv2.imread("micra.jpg"), cv2.COLOR_BGR2RGB),
         cv2.cvtColor(cv2.imread("test_img.jpg"), cv2.COLOR_BGR2RGB)
     ]
 
+    expected_outputs = ["This is a Ferrari F40, a high-performance sports car from the 1980s.",
+                        "This is a Nissan Micra, a compact car produced by Nissan. It was first introduced in 1993 and has been a popular choice in Japan and other markets.\n\nThe Micra has undergone several generations, with the most recent being the 2018 model. It is known for its affordability, fuel efficiency, and compact size. The car has been praised for its reliability and ease of maintenance, making it a favorite among urban drivers.",
+                        "A person wearing a light green hoodie and light-colored pants is standing near a silver car with the driver's side door open."]
 
-    expected_outputs = ["This is a Ferrari F40, a classic sports car produced by Ferrari from 1987 to 1991. It's known for its sleek design and powerful performance, and is considered one of the most iconic cars in the brand's history.",
-                        "This is the Nissan Micra, a compact car produced by Nissan from 1994 to 2008. It was introduced as a successor to the Nissan Pulsar and was designed to be a more affordable and practical alternative to other compact cars in the market.\n\nThe Micra was developed with a focus on fuel efficiency and cost-effectiveness, making it a popular choice for urban drivers. It was available in various body styles, including hatchbacks and sedans, and was known for its reliability and ease of maintenance.\n\nThe Micra was manufactured in several countries, including Japan, the United States, and Europe. It",
-                        "A person wearing a grey hoodie and light-colored pants is standing near a silver car with the driver's door open. "]
-
-    prompts = ["<|im_start|>user\n<|vision_start|><|image_pad|><|vision_end|>\nWhat car is this?<|im_end|>\n<|im_start|>assistant\n",
+    prompts = ["<|im_start|>user\n<|vision_start|><|image_pad|><|vision_end|>\nWhat car is this? in one sentence<|im_end|>\n<|im_start|>assistant\n",
             "<|im_start|>user\n<|vision_start|><|image_pad|><|vision_end|>\nTell me the history of this car<|im_end|>\n<|im_start|>assistant\n",
             "<|im_start|>user\n<|vision_start|><|image_pad|><|vision_end|>\nWhat has been detected on my CCTV camera? Write in one short sentence, only info about the object(s) detected.<|im_end|>\n<|im_start|>assistant\n"]
 
