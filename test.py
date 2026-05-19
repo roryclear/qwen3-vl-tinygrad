@@ -743,10 +743,7 @@ if __name__ == "__main__":
 
     import pickle
     tok = pickle.load(open("tok.pkl", "rb"))
-    z = 0
     for image, expected_output, prompt in zip(images, expected_outputs, prompts):
-        z+=1
-        if z < 2: continue
         past_key_values = {}
         text_inputs = tok.encode(prompt)
         image = [tvF.pil_to_tensor(image)]
