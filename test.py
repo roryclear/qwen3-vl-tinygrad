@@ -329,7 +329,8 @@ def forward(
         key_padded[:, :, :seq_len, :] = key
         value_padded[:, :, :seq_len, :] = value
 
-        past_key_values[i] = (key_padded.clone(), value_padded.clone())      
+        past_keys[i] = key_padded.clone()
+        past_values[i] = value_padded.clone()
 
         L, S = query.size(-2), key.size(-2)
         attn_bias = tinyTensor.zeros(L, S, dtype=dtypes.bfloat16)
@@ -451,10 +452,10 @@ def fwd(input_id, position_ids, seq_len):
       query = query.cast(dtypes.bfloat16)
       key = key.cast(dtypes.bfloat16)
 
-      past_key, past_value = past_key_values[i]
+      past_key, past_value = past_keys[i], past_values[i]
       past_key[:, :, seq_len:seq_len+1, :] = key
       past_value[:, :, seq_len:seq_len+1, :] = value
-      past_key_values[i] = (past_key, past_value)
+      past_keys[i], past_values[i] = past_key, past_value
 
       key = past_key
       value = past_value
@@ -748,7 +749,9 @@ if __name__ == "__main__":
     import pickle
     tok = pickle.load(open("tok.pkl", "rb"))
     for image, expected_output, prompt in zip(images, expected_outputs, prompts):
-        past_key_values = {}
+        past_keys = [tinyTensor.zeros(1, 8, 500, 128).contiguous() for i in range(len(tiny_model.model.language_model.layers))]
+        past_values = [tinyTensor.zeros(1, 8, 500, 128).contiguous() for i in range(len(tiny_model.model.language_model.layers))]
+
         text_inputs = tok.encode(prompt)
         image = [tvF.pil_to_tensor(image)]
         image_inputs = _preprocess(images=image)
