@@ -118,6 +118,7 @@ def forward(
     image_grid_thw,
     expected # todo for testing
 ):
+    sqlen = Variable("sqlen", 1, 500)
     toks_out = [] # todo for testing
     scores = None
     this_peer_finished = False
@@ -374,7 +375,8 @@ def forward(
 
     while not this_peer_finished:
         if prefill_consumed:
-          outputs = fwd(input_id=input_ids[:, -1:], position_ids=position_ids, seq_len=seq_len)
+          n = sqlen.bind(seq_len)
+          outputs = fwd(input_id=input_ids[:, -1:].contiguous(), position_ids=position_ids.contiguous(), seq_len=n)
           seq_len+=1
 
         prefill_consumed = True
@@ -398,14 +400,16 @@ def forward(
 
         toks_out.append(next_token)
         print(tok.decode(toks_out), "\n", tok.decode(expected[:len(toks_out)]), "\n")
-        #if not next_token == 151645: assert toks_out == expected[:len(toks_out)]
+        if not next_token == 151645: assert toks_out == expected[:len(toks_out)]
         this_peer_finished = next_token == 151645 or len(input_ids[0]) == 406
         del outputs
 
 
     return input_ids
 
+from tinygrad import TinyJit, Variable
 
+@TinyJit
 def fwd(input_id, position_ids, seq_len):
   inputs_embeds = tiny_model.model.language_model.embed_tokens(input_id)
 
@@ -734,7 +738,7 @@ if __name__ == "__main__":
             Image.open(BytesIO(requests.get("https://www.cartell.ie/car_check/wp-content/uploads/2012/03/Nissan-Micra-_4b.jpg").content)).convert("RGB"),
             Image.open("test_img.jpg").convert("RGB")]
     expected_outputs = ["This is a Ferrari F40, a high-performance sports car produced by Ferrari from 1987 to 1991. It's known for its sleek design and exceptional performance, making it a classic in automotive history.",
-                        "The car in the image is a **Nissan Micra**, a compact car produced by Nissan. Here is a brief history of the Nissan Micra:\n\n- **Introduction**: The Nissan Micra was first introduced in 1990 as a small, fuel-efficient car designed for urban driving and city commuting.\n- **Design and Development**: It was developed to meet the growing demand for small, economical vehicles in the European and Asian markets. The Micra was known for its innovative design and fuel efficiency.\n- **Production and Market**: The Micra was produced in various markets, including Europe, Japan, and the United States. It",
+                        "This is a Nissan Micra, a compact car produced by Nissan from 1993 to 2006. It was introduced as a successor to the Nissan Pulsar and was designed to be a more affordable and efficient alternative to other small cars in the market. The Micra was known for its innovative design and fuel-efficient engine options, making it a popular choice for urban drivers.\n\nThe Micra was produced in several generations, with the first generation being launched in 1993. The second generation, introduced in 1999, featured a more modern design and improved engine performance. The third generation",
                         "A person wearing a grey hoodie and light-colored pants is standing near a silver car with the driver's door open."]
 
     prompts = ["<|im_start|>user\n<|vision_start|><|image_pad|><|vision_end|>\nWhat car is this?<|im_end|>\n<|im_start|>assistant\n",
@@ -768,5 +772,5 @@ if __name__ == "__main__":
         output = tok.decode(generated_ids.detach().numpy())
         output = output.replace("<|im_end|>","") # todo hack
         print(output)
-        #assert output == expected_output
+        assert output == expected_output
 
