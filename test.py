@@ -714,10 +714,7 @@ if __name__ == "__main__":
 
     import pickle
     tok = pickle.load(open("tok.pkl", "rb"))
-    z = 0
     for image, expected_output, prompt in zip(images, expected_outputs, prompts):
-        z+=1
-        if z < 2: continue
         past_keys = [Tensor.zeros(8, 500, 128).contiguous() for i in range(len(tiny_model.model.language_model.layers))]
         past_values = [Tensor.zeros(8, 500, 128).contiguous() for i in range(len(tiny_model.model.language_model.layers))]
 
