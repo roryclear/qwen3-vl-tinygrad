@@ -364,7 +364,7 @@ def forward(
     while not this_peer_finished:
         ts = time.time()
         if prefill_consumed:
-          outputs, position_ids, next_token_logits, scores, token = fwd(token=input_ids[:, -1:].contiguous(), position_ids=position_ids.contiguous(), seq_len=Variable("pos",1,600).bind(seq_len))
+          position_ids, token = fwd(token=input_ids[:, -1:].contiguous(), position_ids=position_ids.contiguous(), seq_len=Variable("pos",1,600).bind(seq_len))
           seq_len+=1
         else:
           prefill_consumed = True
@@ -468,7 +468,7 @@ def fwd(token, position_ids, seq_len):
   next_token_logits = outputs[:, -1, :]
   scores = next_token_logits / temp
   token = sample(scores[0], temp=temp, k=top_k, p=top_p, af=None, ap=None)
-  return outputs, position_ids, next_token_logits, scores, token
+  return position_ids, token
 
 def sample(logits, temp: float, k: int, p: float, af: float, ap: float):
   assert logits.ndim == 1, "only works on 1d tensors"
