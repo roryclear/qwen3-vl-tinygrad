@@ -735,11 +735,7 @@ if __name__ == "__main__":
       image_token_id = 151655
       image_token_positions = [i for i, tid in enumerate(text_inputs) if tid == image_token_id]
 
-      for pos in reversed(image_token_positions):  # reversed to maintain indices
-          text_inputs[pos:pos+1] = [image_token_id] * int(num_image_tokens)
-
-      mm_token_type_ids = [0] * len(text_inputs)
-      for pos in image_token_positions: mm_token_type_ids[pos:pos + int(num_image_tokens)] = [1] * int(num_image_tokens)
+      for pos in reversed(image_token_positions): text_inputs[pos:pos+1] = [image_token_id] * int(num_image_tokens)
 
       outputs = forward(input_ids=Tensor([text_inputs]), pixel_values=Tensor(pixel_values.astype(np.float32)), image_grid_thw=image_grid_thw, expected=tok.encode(expected_output))
 
