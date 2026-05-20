@@ -384,6 +384,7 @@ def forward(
         toks_out.append(next_token)
         print(f"TOK/S = {1 / (time.time() - ts):.2f}")
         print(tok.decode(toks_out), "\n", tok.decode(expected[:len(toks_out)]), "\n")
+        assert tok.decode(toks_out).replace("<|im_end|>","") == tok.decode(expected[:len(toks_out)])
         this_peer_finished = next_token == 151645 or seq_len == 406
 
 
@@ -608,7 +609,7 @@ if __name__ == "__main__":
     class blank: pass
 
     tiny_weights = safe_load(fetch(f'https://huggingface.co/Qwen/Qwen3-VL-2B-Instruct/resolve/main/model.safetensors'))
-
+    
     tiny_model = blank()
     tiny_model.model = blank()
     tiny_model.model.config = blank()
@@ -720,32 +721,32 @@ if __name__ == "__main__":
     import pickle
     tok = pickle.load(open("tok.pkl", "rb"))
     for image, expected_output, prompt in zip(images, expected_outputs, prompts):
-        past_keys = [Tensor.zeros(8, 500, 128).contiguous() for i in range(len(tiny_model.model.language_model.layers))]
-        past_values = [Tensor.zeros(8, 500, 128).contiguous() for i in range(len(tiny_model.model.language_model.layers))]
+      past_keys = [Tensor.zeros(8, 500, 128).contiguous() for i in range(len(tiny_model.model.language_model.layers))]
+      past_values = [Tensor.zeros(8, 500, 128).contiguous() for i in range(len(tiny_model.model.language_model.layers))]
 
-        text_inputs = tok.encode(prompt)
+      text_inputs = tok.encode(prompt)
 
-        image = image.transpose(2, 0, 1)
-        pixel_values, image_grid_thw = _preprocess(image=image)
+      image = image.transpose(2, 0, 1)
+      pixel_values, image_grid_thw = _preprocess(image=image)
 
-        merge_size = 2
-        num_image_tokens = ((image_grid_thw[0]*image_grid_thw[1]*image_grid_thw[2]) / (merge_size ** 2))
+      merge_size = 2
+      num_image_tokens = ((image_grid_thw[0]*image_grid_thw[1]*image_grid_thw[2]) / (merge_size ** 2))
 
-        image_token_id = 151655
-        image_token_positions = [i for i, tid in enumerate(text_inputs) if tid == image_token_id]
+      image_token_id = 151655
+      image_token_positions = [i for i, tid in enumerate(text_inputs) if tid == image_token_id]
 
-        for pos in reversed(image_token_positions):  # reversed to maintain indices
-            text_inputs[pos:pos+1] = [image_token_id] * int(num_image_tokens)
+      for pos in reversed(image_token_positions):  # reversed to maintain indices
+          text_inputs[pos:pos+1] = [image_token_id] * int(num_image_tokens)
 
-        mm_token_type_ids = [0] * len(text_inputs)
-        for pos in image_token_positions: mm_token_type_ids[pos:pos + int(num_image_tokens)] = [1] * int(num_image_tokens)
+      mm_token_type_ids = [0] * len(text_inputs)
+      for pos in image_token_positions: mm_token_type_ids[pos:pos + int(num_image_tokens)] = [1] * int(num_image_tokens)
 
-        outputs = forward(input_ids=Tensor([text_inputs]), pixel_values=Tensor(pixel_values.astype(np.float32)), image_grid_thw=image_grid_thw, expected=tok.encode(expected_output))
+      outputs = forward(input_ids=Tensor([text_inputs]), pixel_values=Tensor(pixel_values.astype(np.float32)), image_grid_thw=image_grid_thw, expected=tok.encode(expected_output))
 
-        output = tok.decode(outputs)
-        output = output.replace("<|im_end|>","") # todo hack
-        print("output =",output)
-        assert output == expected_output
+      output = tok.decode(outputs)
+      output = output.replace("<|im_end|>","") # todo hack
+      print("output =",output)
+      assert output == expected_output
 
 
 
