@@ -5,6 +5,7 @@ import math
 import typing
 import sys
 import cv2
+import time
 
 class SimpleTokenizer:
   def __init__(self, normal_tokens:dict[str, int], special_tokens:dict[str, int], preset:str="llama3",
@@ -356,6 +357,7 @@ def forward(
     hidden_states = tiny_model.model.language_model.norm(hidden_states)
     outputs = tiny_model.lm_head(hidden_states[:, -1:, :])
     while not this_peer_finished:
+        ts = time.time()
         if prefill_consumed:
           outputs = fwd(input_id=input_ids[:, -1:].contiguous(), position_ids=position_ids.contiguous(), seq_len=Variable("pos",1,600).bind(seq_len))
           seq_len+=1
@@ -378,6 +380,7 @@ def forward(
         input_ids = Tensor.cat(input_ids, next_token_tensor, dim=1)
 
         toks_out.append(next_token)
+        print(f"TOK/S = {1 / (time.time() - ts):.2f}")
         print(tok.decode(toks_out), "\n", tok.decode(expected[:len(toks_out)]), "\n")
         #if not next_token == 151645: assert toks_out == expected[:len(toks_out)]
         this_peer_finished = next_token == 151645 or len(input_ids[0]) == 406
