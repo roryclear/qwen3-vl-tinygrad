@@ -105,18 +105,7 @@ def rotate_half(x):
     ret = Tensor.cat(-x2, x1, dim=-1)
     return ret
 
-def forward(
-    input_ids,
-    pixel_values,
-    image_grid_thw,
-    expected # todo for testing
-):
-    toks_out = [] # todo for testing
-    scores = None
-    this_peer_finished = False
-
-    prefill_consumed = False
-
+def prefill(pixel_values, input_ids):
     hidden_states = pixel_values.view(-1, tiny_model.model.visual.patch_embed.in_channels, tiny_model.model.visual.patch_embed.temporal_patch_size, tiny_model.model.visual.patch_embed.patch_size, tiny_model.model.visual.patch_embed.patch_size)
     hidden_states = hidden_states.cast(dtype=dtypes.bfloat16)
 
@@ -361,6 +350,21 @@ def forward(
 
     hidden_states = tiny_model.model.language_model.norm(hidden_states)
     outputs = tiny_model.lm_head(hidden_states[:, -1:, :])
+    return outputs, position_ids
+
+def forward(
+    input_ids,
+    pixel_values,
+    image_grid_thw,
+    expected # todo for testing
+):
+    toks_out = [] # todo for testing
+    scores = None
+    this_peer_finished = False
+
+    prefill_consumed = False
+    outputs, position_ids = prefill(pixel_values=pixel_values, input_ids=input_ids)
+    seq_len = position_ids.shape[-1]
     while not this_peer_finished:
         ts = time.time()
         if prefill_consumed:
