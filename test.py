@@ -364,16 +364,14 @@ def forward(
     while not this_peer_finished:
         ts = time.time()
         if prefill_consumed:
-          outputs = fwd(input_id=input_ids[:, -1:].contiguous(), position_ids=position_ids.contiguous(), seq_len=Variable("pos",1,600).bind(seq_len))
+          outputs, position_ids, next_token_logits, scores, token = fwd(token=input_ids[:, -1:].contiguous(), position_ids=position_ids.contiguous(), seq_len=Variable("pos",1,600).bind(seq_len))
           seq_len+=1
-
-        prefill_consumed = True
-        position_ids = position_ids[..., -1:] + 1
-        
-        next_token_logits = outputs[:, -1, :]
-        scores = next_token_logits / temp
-
-        token = sample(scores[0], temp=temp, k=top_k, p=top_p, af=None, ap=None)
+        else:
+          prefill_consumed = True
+          position_ids = position_ids[..., -1:] + 1
+          next_token_logits = outputs[:, -1, :]
+          scores = next_token_logits / temp
+          token = sample(scores[0], temp=temp, k=top_k, p=top_p, af=None, ap=None)
 
         next_token = int(token.numpy()[0])
 
@@ -390,8 +388,8 @@ def forward(
     return input_ids
 
 @TinyJit
-def fwd(input_id, position_ids, seq_len):
-  inputs_embeds = tiny_model.model.language_model.embed_tokens(input_id)
+def fwd(token, position_ids, seq_len):
+  inputs_embeds = tiny_model.model.language_model.embed_tokens(token)
 
   hidden_states = inputs_embeds
   pos_ids = position_ids[1:]
@@ -466,7 +464,11 @@ def fwd(input_id, position_ids, seq_len):
 
   hidden_states = tiny_model.model.language_model.norm(hidden_states)
   outputs = tiny_model.lm_head(hidden_states[:, -1:, :])
-  return outputs
+  position_ids = position_ids[..., -1:] + 1
+  next_token_logits = outputs[:, -1, :]
+  scores = next_token_logits / temp
+  token = sample(scores[0], temp=temp, k=top_k, p=top_p, af=None, ap=None)
+  return outputs, position_ids, next_token_logits, scores, token
 
 def sample(logits, temp: float, k: int, p: float, af: float, ap: float):
   assert logits.ndim == 1, "only works on 1d tensors"
@@ -744,5 +746,6 @@ if __name__ == "__main__":
         output = output.replace("<|im_end|>","") # todo hack
         print(output)
         #assert output == expected_output
+
 
 
