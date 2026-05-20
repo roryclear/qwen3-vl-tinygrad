@@ -364,7 +364,7 @@ def forward(
     while not this_peer_finished:
         ts = time.time()
         if prefill_consumed:
-          position_ids, token = fwd(token=input_ids[:, -1:].contiguous(), position_ids=position_ids.contiguous(), seq_len=Variable("pos",1,600).bind(seq_len))
+          position_ids, token = fwd(token=next_token_tensor.contiguous(), position_ids=position_ids.contiguous(), seq_len=Variable("pos",1,600).bind(seq_len))
           seq_len+=1
         else:
           prefill_consumed = True
@@ -376,16 +376,14 @@ def forward(
         next_token = int(token.numpy()[0])
 
         next_token_tensor = Tensor([[next_token]])  # shape (1,1)
-        input_ids = Tensor.cat(input_ids, next_token_tensor, dim=1)
 
         toks_out.append(next_token)
         print(f"TOK/S = {1 / (time.time() - ts):.2f}")
         print(tok.decode(toks_out), "\n", tok.decode(expected[:len(toks_out)]), "\n")
-        #if not next_token == 151645: assert toks_out == expected[:len(toks_out)]
-        this_peer_finished = next_token == 151645 or len(input_ids[0]) == 406
+        this_peer_finished = next_token == 151645 or seq_len == 406
 
 
-    return input_ids
+    return toks_out
 
 @TinyJit
 def fwd(token, position_ids, seq_len):
@@ -708,7 +706,7 @@ if __name__ == "__main__":
     ]
 
     expected_outputs = ["This is a Ferrari F40, a classic sports car from the 1980s.",
-                        "This is a Nissan Micra, a compact car produced by Nissan. It was first introduced in 1993 and has been a popular choice in Japan and other markets.\n\nThe Micra has undergone several generations, with the most recent being the 2018 model. It is known for its affordability, fuel efficiency, and compact size. The car has been praised for its reliability and ease of maintenance, making it a favorite among urban drivers.",
+                        "Based on the image provided, the vehicle is a **Nissan Micra** (also known as the Nissan Primera in some markets, but this is a different model). The specific model in the image is the **Nissan Micra 1.0** (or 1.0L) from the **1995-2000** model years.\n\nHere is a detailed look at the history of the Nissan Micra:\n\n---\n\n### **Origins and Introduction**\n- **1995**: The Nissan Micra was introduced as a compact, economical, and stylish hatchback. It was designed to compete with",
                         "A person wearing a light green hoodie and light-colored pants is standing near a silver car with the driver's side door open."]
 
     prompts = ["<|im_start|>user\n<|vision_start|><|image_pad|><|vision_end|>\nWhat car is this? in one sentence<|im_end|>\n<|im_start|>assistant\n",
@@ -740,12 +738,10 @@ if __name__ == "__main__":
 
         outputs = forward(input_ids=Tensor([text_inputs]), pixel_values=Tensor(pixel_values.astype(np.float32)), image_grid_thw=image_grid_thw, expected=tok.encode(expected_output))
 
-        #outputs = model.generate(**inputs, max_new_tokens=128)
-        generated_ids = outputs[0][len(text_inputs):]
-        output = tok.decode(generated_ids.detach().numpy())
+        output = tok.decode(outputs)
         output = output.replace("<|im_end|>","") # todo hack
-        print(output)
-        #assert output == expected_output
+        print("output =",output)
+        assert output == expected_output
 
 
 
