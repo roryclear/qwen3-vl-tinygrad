@@ -7,6 +7,7 @@ import sys
 import cv2
 import time
 
+
 class SimpleTokenizer:
   def __init__(self, normal_tokens:dict[str, int], special_tokens:dict[str, int], preset:str="llama3",
                bos_id:int|None=None, eos_id:int=0, eot_id:int|None=None):
@@ -86,6 +87,10 @@ class SimpleTokenizer:
   def prefix(self) -> list[int]:
     return ([] if self.bos_id is None else [self.bos_id]) + (self.encode("<sop>") if self.preset == 'glm4' else [])
   def is_end(self, token_id:int) -> bool: return token_id in (self.eos_id, self.eot_id)
+
+temp = 0.7
+top_k = 20
+top_p = 0.8
 
 def set_seed(seed: int, deterministic: bool = False):
     random.seed(seed)
@@ -365,10 +370,6 @@ def forward(
         prefill_consumed = True
         position_ids = position_ids[..., -1:] + 1
         
-        temp = 0.7
-        top_k = 20
-        top_p = 0.8
-
         next_token_logits = outputs[:, -1, :]
         scores = next_token_logits / temp
 
