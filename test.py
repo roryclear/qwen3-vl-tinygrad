@@ -181,7 +181,7 @@ def prefill(pixel_values, input_ids, image_grid_thw):
 
     pos_ids = Tensor.stack(hpos_ids, wpos_ids, dim=-1).repeat(image_grid_thw[0], 1)
 
-    rotary_pos_emb = (pos_ids.unsqueeze(-1) * tiny_model.model.visual.rotary_pos_emb.inv_freq).flatten(1)
+    rotary_pos_emb = (pos_ids.unsqueeze(-1) * vis_model.inv_freq).flatten(1)
 
     seq_len, _ = hidden_states.size()
     hidden_states = hidden_states.reshape(seq_len, -1)
@@ -703,8 +703,8 @@ if __name__ == "__main__":
 
   tiny_model.lm_head = nn.Linear(2048, 151936, bias=False)
   tiny_model.lm_head.weight = gguf_model.token_embd.weight
-  tiny_model.model.visual.rotary_pos_emb.inv_freq = 1.0 / (tiny_model.model.visual.rotary_pos_emb.theta ** (Tensor.arange(0, tiny_model.model.visual.rotary_pos_emb.dim, 2, dtype=dtypes.float) / tiny_model.model.visual.rotary_pos_emb.dim))
-  gguf_model.inv_freq = 1.0 / (5000000 ** (Tensor.arange(0, 128, 2, dtype=dtypes.int64) / 128))
+  vis_model.inv_freq = 1.0 / (tiny_model.model.visual.rotary_pos_emb.theta ** (Tensor.arange(0, tiny_model.model.visual.rotary_pos_emb.dim, 2, dtype=dtypes.float) / tiny_model.model.visual.rotary_pos_emb.dim))
+  gguf_model.inv_freq = 1.0 / (5000000 ** (Tensor.arange(0, 128, 2) / 128))
 
 
   images = [
