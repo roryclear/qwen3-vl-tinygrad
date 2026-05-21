@@ -240,9 +240,9 @@ def prefill(pixel_values, input_ids, image_grid_thw):
 
     image_embeds = tiny_model.model.visual.merger.norm(hidden_states)
     image_embeds = image_embeds.view(-1, 4096)
-    image_embeds = tiny_model.model.visual.merger.linear_fc1(image_embeds)
+    image_embeds = vis_model.mm[0](image_embeds)
     image_embeds = Tensor.gelu(image_embeds)
-    image_embeds = tiny_model.model.visual.merger.linear_fc2(image_embeds)
+    image_embeds = vis_model.mm[2](image_embeds)
     
     image_mask = input_ids == 151655
 
@@ -664,6 +664,9 @@ if __name__ == "__main__":
     vis_model.v.deepstack[i].hidden_size = 4096
 
   vis_model.v.position_embd = nn.Embedding(2304, 1024)
+  vis_model.mm = [blank(), blank(), blank()]
+  vis_model.mm[0] = nn.Linear(4096, 4096, bias=True)
+  vis_model.mm[2] = nn.Linear(4096, 2048, bias=True)
 
   tiny_model = blank()
   tiny_model.model = blank()
