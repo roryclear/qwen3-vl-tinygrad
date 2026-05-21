@@ -287,13 +287,13 @@ def prefill(pixel_values, input_ids, image_grid_thw):
         input_shape = hidden_states.shape[:-1]
 
         hidden_shape = (*input_shape, -1, tiny_model.model.language_model.layers[i].self_attn.head_dim)
-        query = tiny_model.model.language_model.layers[i].self_attn.q_proj(hidden_states).view(hidden_shape)
+        query = gguf_model.blk[i].attn_q(hidden_states).view(hidden_shape)
         key = gguf_model.blk[i].attn_k(hidden_states).view(hidden_shape)
 
         query = tiny_model.model.language_model.layers[i].self_attn.q_norm(query).transpose(1, 2)
         key = tiny_model.model.language_model.layers[i].self_attn.k_norm(key).transpose(1, 2)
 
-        value = tiny_model.model.language_model.layers[i].self_attn.v_proj(hidden_states).view(hidden_shape).transpose(1, 2)
+        value = gguf_model.blk[i].attn_v(hidden_states).view(hidden_shape).transpose(1, 2)
     
         query = (query * cos) + (rotate_half(query) * sin)
         key = (key * cos) + (rotate_half(key) * sin)
@@ -307,6 +307,7 @@ def prefill(pixel_values, input_ids, image_grid_thw):
         seq_len = key.shape[2]
 
         key_padded[:, :seq_len, :] = key[0]
+        value = value.cast(dtypes.bfloat16) #todo
         value_padded[:, :seq_len, :] = value[0]
 
         past_keys[i] = key_padded.clone()
@@ -420,12 +421,12 @@ def fwd(token, position_ids, seq_len):
     input_shape = hidden_states.shape[:-1]
     hidden_shape = (*input_shape, -1, tiny_model.model.language_model.layers[i].self_attn.head_dim)
     
-    query = tiny_model.model.language_model.layers[i].self_attn.q_proj(hidden_states).view(hidden_shape)
+    query = gguf_model.blk[i].attn_q(hidden_states).view(hidden_shape)
     key = gguf_model.blk[i].attn_k(hidden_states).view(hidden_shape)
     query = tiny_model.model.language_model.layers[i].self_attn.q_norm(query).transpose(1, 2)
     key = tiny_model.model.language_model.layers[i].self_attn.k_norm(key).transpose(1, 2)
 
-    value = tiny_model.model.language_model.layers[i].self_attn.v_proj(hidden_states).view(hidden_shape).transpose(1, 2)
+    value = gguf_model.blk[i].attn_v(hidden_states).view(hidden_shape).transpose(1, 2)
 
     query = (query * cos) + (rotate_half(query) * sin)
     key = (key * cos) + (rotate_half(key) * sin)
@@ -437,6 +438,7 @@ def fwd(token, position_ids, seq_len):
     value_padded = value[0].pad(((0,0), (seq_len, 500-seq_len-1), (0,0)))
 
     past_keys[i] += key_padded
+    value_padded = value_padded.cast(dtypes.bfloat16) # todo
     past_values[i] += value_padded
 
     key = past_keys[i][:, :seq_len+1, :]
@@ -620,6 +622,8 @@ if __name__ == "__main__":
     for i in range(28):
       gguf_model.blk.append(blank())
       gguf_model.blk[i].attn_k = nn.Linear(2048, 1024, bias=False)
+      gguf_model.blk[i].attn_q = nn.Linear(2048, 2048, bias=False)
+      gguf_model.blk[i].attn_v = nn.Linear(2048, 1024, bias=False)
 
     tiny_model = blank()
     tiny_model.model = blank()
