@@ -112,17 +112,17 @@ def prefill(pixel_values, input_ids, image_grid_thw):
 
     B, C, D, H, W = hidden_states.shape
     x = hidden_states.reshape(B, C * D, H, W)
-    w = tiny_model.model.visual.patch_embed.proj.weight
+    w = Tensor.stack(vis_model.v.patch_embd.weight, vis_model.v.patch_embd.weight2, dim=2)
     out_C, in_C, kD, kH, kW = w.shape
     w2d = w.reshape(out_C, in_C * kD, kH, kW)
 
     hidden_states = x.conv2d(
         weight=w2d,
-        bias=tiny_model.model.visual.patch_embed.proj.bias,
-        stride=tiny_model.model.visual.patch_embed.proj.stride[1:],
-        padding=tiny_model.model.visual.patch_embed.proj.padding[1:],
-        dilation=tiny_model.model.visual.patch_embed.proj.dilation[1:],
-        groups=tiny_model.model.visual.patch_embed.proj.groups
+        bias=vis_model.v.patch_embd.bias,
+        stride=(16, 16),
+        padding=(0, 0),
+        dilation=(1, 1),
+        groups=1
     )
 
     hidden_states = hidden_states.view(-1, 1024)
@@ -647,6 +647,11 @@ if __name__ == "__main__":
     vis_model.v.blk[i].ln2 = nn.LayerNorm(1024, eps=1e-6, elementwise_affine=True)
     vis_model.v.blk[i].attn_out = nn.Linear(1024, 1024)
     vis_model.v.blk[i].attn_qkv = nn.Linear(1024, 3072)
+  
+  vis_model.v.patch_embd = blank()
+  vis_model.v.patch_embd.weight = Tensor.zeros(1024, 3, 16, 16)
+  vis_model.v.patch_embd.weight2 = Tensor.zeros(1024, 3, 16, 16)
+  vis_model.v.patch_embd.bias = Tensor.zeros(1024)
 
   vis_model.v.deepstack = []
   for i in range(18):
@@ -665,14 +670,6 @@ if __name__ == "__main__":
   tiny_model.model.visual.rotary_pos_emb = blank()
   tiny_model.model.visual.rotary_pos_emb.theta = 10000.0
   tiny_model.model.visual.spatial_merge_size = 2
-  tiny_model.model.visual.patch_embed = blank()
-  tiny_model.model.visual.patch_embed.proj = blank()
-  tiny_model.model.visual.patch_embed.proj.weight = Tensor.zeros(1024, 3, 2, 16, 16)
-  tiny_model.model.visual.patch_embed.proj.bias = Tensor.zeros(1024)
-  tiny_model.model.visual.patch_embed.proj.stride = (2, 16, 16)
-  tiny_model.model.visual.patch_embed.proj.padding = (0, 0, 0)
-  tiny_model.model.visual.patch_embed.proj.dilation = (1, 1, 1)
-  tiny_model.model.visual.patch_embed.proj.groups = 1
       
   tiny_model.model.visual.deepstack_visual_indexes = [5, 11, 17]
   tiny_model.model.visual.blocks = []
@@ -694,6 +691,7 @@ if __name__ == "__main__":
   tiny_model.model.visual.merger.linear_fc2 = nn.Linear(4096, 2048, bias=True)
   load_state_dict(tiny_model, tiny_weights)
   load_state_dict(gguf_model, state_dict_language)
+  state_dict_visual["v.patch_embd.weight2"] = state_dict_visual["v.patch_embd.weight.1"] # todo
   load_state_dict(vis_model, state_dict_visual)
 
   tiny_model.lm_head = nn.Linear(2048, 151936, bias=False)
