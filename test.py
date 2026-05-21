@@ -246,7 +246,7 @@ def prefill(pixel_values, input_ids, image_grid_thw):
     
     image_mask = input_ids == tiny_model.model.config.image_token_id
 
-    inputs_embeds = tiny_model.model.language_model.embed_tokens(input_ids)
+    inputs_embeds = gguf_model.token_embd(input_ids)
 
     image_mask = image_mask.unsqueeze(-1).expand(inputs_embeds.shape)
     image_embeds = image_embeds.view(-1)
@@ -394,7 +394,7 @@ def forward(
 
 @TinyJit
 def fwd(token, position_ids, seq_len):
-  inputs_embeds = tiny_model.model.language_model.embed_tokens(token)
+  inputs_embeds = gguf_model.token_embd(token)
 
   hidden_states = inputs_embeds
   pos_ids = position_ids[1:]
@@ -617,7 +617,7 @@ if __name__ == "__main__":
 
     tiny_weights = safe_load(fetch(f'https://huggingface.co/Qwen/Qwen3-VL-2B-Instruct/resolve/main/model.safetensors'))
     gguf_model = blank()
-
+    gguf_model.token_embd = nn.Embedding(vocab_size=151936, embed_size=2048)
     gguf_model.blk = []
     for i in range(28):
       gguf_model.blk.append(blank())
@@ -702,7 +702,6 @@ if __name__ == "__main__":
       tiny_model.model.language_model.layers[i].self_attn = blank()
       tiny_model.model.language_model.layers[i].self_attn.scaling = 0.08838834764831845
       tiny_model.model.language_model.layers[i].self_attn.head_dim = 128
-      tiny_model.model.language_model.embed_tokens = nn.Embedding(vocab_size=151936, embed_size=2048)
 
     tiny_model.model.visual.merger = blank()
     tiny_model.model.visual.merger.hidden_size = 4096
@@ -713,7 +712,7 @@ if __name__ == "__main__":
     load_state_dict(gguf_model, state_dict_language)
 
     tiny_model.lm_head = nn.Linear(2048, 151936, bias=False)
-    tiny_model.lm_head.weight = tiny_model.model.language_model.embed_tokens.weight
+    tiny_model.lm_head.weight = gguf_model.token_embd.weight
     tiny_model.model.visual.rotary_pos_emb.inv_freq = 1.0 / (tiny_model.model.visual.rotary_pos_emb.theta ** (Tensor.arange(0, tiny_model.model.visual.rotary_pos_emb.dim, 2, dtype=dtypes.float) / tiny_model.model.visual.rotary_pos_emb.dim))
     tiny_model.model.language_model.rotary_emb.inv_freq = 1.0 / (5000000 ** (Tensor.arange(0, 128, 2, dtype=dtypes.int64) / 128))
 
@@ -757,6 +756,7 @@ if __name__ == "__main__":
       output = output.replace("<|im_end|>","") # todo hack
       print("output =",output)
       assert output == expected_output
+
 
 
 
