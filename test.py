@@ -195,7 +195,7 @@ def prefill(pixel_values, input_ids, image_grid_thw):
     for i in range(len(tiny_model.model.visual.blocks)):
         hidden_states_input = vis_model.v.blk[i].ln1(hidden_states)
         seq_length = hidden_states_input.shape[0]
-        qkv = tiny_model.model.visual.blocks[i].attn.qkv(hidden_states_input)
+        qkv = vis_model.v.blk[i].attn_qkv(hidden_states_input)
         
         qkv_reshaped = qkv.reshape(seq_length, 3, tiny_model.model.visual.blocks[i].attn.num_heads, -1)
 
@@ -224,7 +224,8 @@ def prefill(pixel_values, input_ids, image_grid_thw):
         attn_output = attn_output.transpose(1, 2).contiguous()
         attn_output = attn_output.reshape(seq_length, -1).contiguous()
         attn_output = attn_output.cast(dtypes.bfloat16)
-        attn_output = tiny_model.model.visual.blocks[i].attn.proj(attn_output)
+        attn_output = vis_model.v.blk[i].attn_out(attn_output)
+        attn_output = attn_output.cast(dtypes.bfloat16) # todo
         hidden_states += attn_output
         norm = vis_model.v.blk[i].ln2(hidden_states)
         x = vis_model.v.blk[i].ffn_up(norm)
@@ -645,6 +646,8 @@ if __name__ == "__main__":
     vis_model.v.blk[i].ffn_down = nn.Linear(4096, 1024)
     vis_model.v.blk[i].ln1 = nn.LayerNorm(1024, eps=1e-6, elementwise_affine=True)
     vis_model.v.blk[i].ln2 = nn.LayerNorm(1024, eps=1e-6, elementwise_affine=True)
+    vis_model.v.blk[i].attn_out = nn.Linear(1024, 1024)
+    vis_model.v.blk[i].attn_qkv = nn.Linear(1024, 3072)
 
   tiny_model = blank()
   tiny_model.model = blank()
@@ -680,8 +683,6 @@ if __name__ == "__main__":
   for i in range(24):
       tiny_model.model.visual.blocks.append(blank())
       tiny_model.model.visual.blocks[i].attn = blank()
-      tiny_model.model.visual.blocks[i].attn.proj = nn.Linear(1024, 1024)
-      tiny_model.model.visual.blocks[i].attn.qkv = nn.Linear(1024, 3072)
       tiny_model.model.visual.blocks[i].attn.num_heads = 16
       tiny_model.model.visual.blocks[i].attn.scaling = 0.125
   tiny_model.model.visual.config = blank()
