@@ -107,7 +107,7 @@ def rotate_half(x):
     return ret
 
 def prefill(pixel_values, input_ids, image_grid_thw):
-    hidden_states = pixel_values.view(-1, tiny_model.model.visual.patch_embed.in_channels, tiny_model.model.visual.patch_embed.temporal_patch_size, tiny_model.model.visual.patch_embed.patch_size, tiny_model.model.visual.patch_embed.patch_size)
+    hidden_states = pixel_values.view(-1, 3, 2, 16, 16)
     hidden_states = hidden_states.cast(dtype=dtypes.bfloat16)
 
     B, C, D, H, W = hidden_states.shape
@@ -125,7 +125,7 @@ def prefill(pixel_values, input_ids, image_grid_thw):
         groups=tiny_model.model.visual.patch_embed.proj.groups
     )
 
-    hidden_states = hidden_states.view(-1, tiny_model.model.visual.patch_embed.embed_dim)
+    hidden_states = hidden_states.view(-1, 1024)
         
     grid_ts = image_grid_thw[0]
     grid_hs = image_grid_thw[1]
@@ -663,14 +663,9 @@ if __name__ == "__main__":
   tiny_model.model.config.image_token_id = 151655
   tiny_model.model.visual = blank()
   tiny_model.model.visual.rotary_pos_emb = blank()
-  tiny_model.model.visual.rotary_pos_emb.dim = 32
   tiny_model.model.visual.rotary_pos_emb.theta = 10000.0
   tiny_model.model.visual.spatial_merge_size = 2
   tiny_model.model.visual.patch_embed = blank()
-  tiny_model.model.visual.patch_embed.embed_dim = 1024
-  tiny_model.model.visual.patch_embed.in_channels = 3
-  tiny_model.model.visual.patch_embed.temporal_patch_size = 2
-  tiny_model.model.visual.patch_embed.patch_size = 16
   tiny_model.model.visual.patch_embed.proj = blank()
   tiny_model.model.visual.patch_embed.proj.weight = Tensor.zeros(1024, 3, 2, 16, 16)
   tiny_model.model.visual.patch_embed.proj.bias = Tensor.zeros(1024)
@@ -703,7 +698,7 @@ if __name__ == "__main__":
 
   tiny_model.lm_head = nn.Linear(2048, 151936, bias=False)
   tiny_model.lm_head.weight = gguf_model.token_embd.weight
-  vis_model.inv_freq = 1.0 / (tiny_model.model.visual.rotary_pos_emb.theta ** (Tensor.arange(0, tiny_model.model.visual.rotary_pos_emb.dim, 2, dtype=dtypes.float) / tiny_model.model.visual.rotary_pos_emb.dim))
+  vis_model.inv_freq = 1.0 / (tiny_model.model.visual.rotary_pos_emb.theta ** (Tensor.arange(0, 32, 2, dtype=dtypes.float) / 32))
   gguf_model.inv_freq = 1.0 / (5000000 ** (Tensor.arange(0, 128, 2) / 128))
 
 
