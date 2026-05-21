@@ -362,7 +362,6 @@ def forward(
 ):
     toks_out = []
     scores = None
-    this_peer_finished = False
 
     prefill_consumed = False
     outputs, position_ids = prefill(pixel_values=pixel_values, input_ids=input_ids, image_grid_thw=image_grid_thw)
@@ -396,7 +395,7 @@ def fwd(token, position_ids, seq_len):
   inputs_embeds = lang_model.token_embd(token)
   hidden_states = inputs_embeds
   pos_ids = position_ids[1:]
-  inv_freq_expanded = lang_model.inv_freq[None, None, :, None].expand(3, pos_ids.shape[1], -1, 1)
+  inv_freq_expanded = lang_model.inv_freq[None, None, :, None].expand(3, 1, -1, 1)
   position_ids_expanded = pos_ids[:, :, None, :]
 
   freqs = (inv_freq_expanded @ position_ids_expanded).transpose(2, 3)
