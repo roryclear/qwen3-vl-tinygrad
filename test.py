@@ -233,10 +233,9 @@ def prefill(pixel_values, input_ids, image_grid_thw):
         norm = vis_model.v.blk[i].ffn_down(x)
         hidden_states = hidden_states + norm
 
-        if i in tiny_model.model.visual.deepstack_visual_indexes:
-            layer = tiny_model.model.visual.deepstack_merger_list[tiny_model.model.visual.deepstack_visual_indexes.index(i)]
-            deepstack_feature = layer.norm(hidden_states.view(-1, layer.hidden_size)).view(-1, layer.hidden_size)
-            deepstack_feature = layer.linear_fc2(Tensor.gelu(layer.linear_fc1(deepstack_feature)))
+        if i in [5, 11, 17]:
+            deepstack_feature = vis_model.v.deepstack[i].norm(hidden_states.view(-1, vis_model.v.deepstack[i].hidden_size)).view(-1, vis_model.v.deepstack[i].hidden_size)
+            deepstack_feature = vis_model.v.deepstack[i].fc2(Tensor.gelu(vis_model.v.deepstack[i].fc1(deepstack_feature)))
             deepstack_feature_lists.append(deepstack_feature)
 
     image_embeds = tiny_model.model.visual.merger.norm(hidden_states)
@@ -649,6 +648,15 @@ if __name__ == "__main__":
     vis_model.v.blk[i].attn_out = nn.Linear(1024, 1024)
     vis_model.v.blk[i].attn_qkv = nn.Linear(1024, 3072)
 
+  vis_model.v.deepstack = []
+  for i in range(18):
+    vis_model.v.deepstack.append(blank())
+    if i not in [5, 11, 17]: continue
+    vis_model.v.deepstack[i].fc1 = nn.Linear(4096, 4096)
+    vis_model.v.deepstack[i].fc2 = nn.Linear(4096, 2048)
+    vis_model.v.deepstack[i].norm = nn.LayerNorm(4096, eps=1e-6, elementwise_affine=True)
+    vis_model.v.deepstack[i].hidden_size = 4096
+
   tiny_model = blank()
   tiny_model.model = blank()
   tiny_model.model.config = blank()
@@ -670,13 +678,6 @@ if __name__ == "__main__":
   tiny_model.model.visual.patch_embed.proj.padding = (0, 0, 0)
   tiny_model.model.visual.patch_embed.proj.dilation = (1, 1, 1)
   tiny_model.model.visual.patch_embed.proj.groups = 1
-  tiny_model.model.visual.deepstack_merger_list = []
-  for i in range(3):
-      tiny_model.model.visual.deepstack_merger_list.append(blank())
-      tiny_model.model.visual.deepstack_merger_list[i].norm = nn.LayerNorm(4096, eps=1e-6, elementwise_affine=True)
-      tiny_model.model.visual.deepstack_merger_list[i].hidden_size = 4096
-      tiny_model.model.visual.deepstack_merger_list[i].linear_fc1 = nn.Linear(4096, 4096)
-      tiny_model.model.visual.deepstack_merger_list[i].linear_fc2 = nn.Linear(4096, 2048)
       
   tiny_model.model.visual.deepstack_visual_indexes = [5, 11, 17]
   tiny_model.model.visual.blocks = []
