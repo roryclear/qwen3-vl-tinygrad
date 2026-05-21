@@ -234,11 +234,11 @@ def prefill(pixel_values, input_ids, image_grid_thw):
         hidden_states = hidden_states + norm
 
         if i in [5, 11, 17]:
-            deepstack_feature = vis_model.v.deepstack[i].norm(hidden_states.view(-1, vis_model.v.deepstack[i].hidden_size)).view(-1, vis_model.v.deepstack[i].hidden_size)
-            deepstack_feature = vis_model.v.deepstack[i].fc2(Tensor.gelu(vis_model.v.deepstack[i].fc1(deepstack_feature)))
-            deepstack_feature_lists.append(deepstack_feature)
+          deepstack_feature = vis_model.v.deepstack[i].norm(hidden_states.view(-1, vis_model.v.deepstack[i].hidden_size)).view(-1, vis_model.v.deepstack[i].hidden_size)
+          deepstack_feature = vis_model.v.deepstack[i].fc2(Tensor.gelu(vis_model.v.deepstack[i].fc1(deepstack_feature)))
+          deepstack_feature_lists.append(deepstack_feature)
 
-    image_embeds = tiny_model.model.visual.merger.norm(hidden_states)
+    image_embeds = vis_model.v.post_ln(hidden_states)
     image_embeds = image_embeds.view(-1, 4096)
     image_embeds = vis_model.mm[0](image_embeds)
     image_embeds = Tensor.gelu(image_embeds)
@@ -351,7 +351,7 @@ def prefill(pixel_values, input_ids, image_grid_thw):
             hidden_states = hidden_states + expanded
 
     hidden_states = gguf_model.output_norm(hidden_states)
-    outputs = tiny_model.lm_head(hidden_states[:, -1:, :])
+    outputs = gguf_model.lm_head(hidden_states[:, -1:, :])
     return outputs, position_ids
 
 def forward(
@@ -469,7 +469,7 @@ def fwd(token, position_ids, seq_len):
     hidden_states = residual + hidden_states
 
   hidden_states = gguf_model.output_norm(hidden_states)
-  outputs = tiny_model.lm_head(hidden_states[:, -1:, :])
+  outputs = gguf_model.lm_head(hidden_states[:, -1:, :])
   position_ids = position_ids[..., -1:] + 1
   next_token_logits = outputs[:, -1, :]
   scores = next_token_logits / temp
@@ -667,22 +667,14 @@ if __name__ == "__main__":
   vis_model.mm = [blank(), blank(), blank()]
   vis_model.mm[0] = nn.Linear(4096, 4096, bias=True)
   vis_model.mm[2] = nn.Linear(4096, 2048, bias=True)
+  vis_model.v.post_ln = nn.LayerNorm(1024, eps=1e-6, elementwise_affine=True)
 
-  tiny_model = blank()
-  tiny_model.model = blank()
-  tiny_model.model.visual = blank()
-      
-  tiny_model.model.visual.merger = blank()
-  tiny_model.model.visual.merger.norm = nn.LayerNorm(1024, eps=1e-6, elementwise_affine=True)
-  tiny_model.model.visual.merger.linear_fc1 = nn.Linear(4096, 4096, bias=True)
-  tiny_model.model.visual.merger.linear_fc2 = nn.Linear(4096, 2048, bias=True)
-  load_state_dict(tiny_model, tiny_weights)
   load_state_dict(gguf_model, state_dict_language)
   state_dict_visual["v.patch_embd.weight2"] = state_dict_visual["v.patch_embd.weight.1"] # todo
   load_state_dict(vis_model, state_dict_visual)
 
-  tiny_model.lm_head = nn.Linear(2048, 151936, bias=False)
-  tiny_model.lm_head.weight = gguf_model.token_embd.weight
+  gguf_model.lm_head = nn.Linear(2048, 151936, bias=False)
+  gguf_model.lm_head.weight = gguf_model.token_embd.weight
   vis_model.inv_freq = 1.0 / (10000.0 ** (Tensor.arange(0, 32, 2, dtype=dtypes.float) / 32))
   gguf_model.inv_freq = 1.0 / (5000000 ** (Tensor.arange(0, 128, 2) / 128))
 
