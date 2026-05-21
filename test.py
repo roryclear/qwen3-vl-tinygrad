@@ -246,7 +246,7 @@ def prefill(pixel_values, input_ids, image_grid_thw):
     
     image_mask = input_ids == 151655
 
-    inputs_embeds = gguf_model.token_embd(input_ids)
+    inputs_embeds = lang_model.token_embd(input_ids)
 
     image_mask = image_mask.unsqueeze(-1).expand(inputs_embeds.shape)
     image_embeds = image_embeds.view(-1)
@@ -266,13 +266,13 @@ def prefill(pixel_values, input_ids, image_grid_thw):
 
     position_ids = Tensor.arange(input_ids.shape[-1]).unsqueeze(0).unsqueeze(0).repeat(4, 1, 1)
     pos_id = position_ids[1:]
-    inv_freq_expanded = gguf_model.inv_freq[None, None, :, None].expand(3, pos_id.shape[1], -1, 1)
+    inv_freq_expanded = lang_model.inv_freq[None, None, :, None].expand(3, pos_id.shape[1], -1, 1)
     position_ids_expanded = pos_id[:, :, None, :]
     freqs = (inv_freq_expanded @ position_ids_expanded).transpose(2, 3)
     freqs_t = freqs[0]  # just overwrite the first dimension T
     freqs_t = freqs_t.contiguous()
     for dim, offset in enumerate((1, 2), start=1):  # H, W
-        length = gguf_model.mrope_section[dim] * 3
+        length = lang_model.mrope_section[dim] * 3
         idx = slice(offset, length, 3)
         freqs_t[..., idx] = freqs[dim, ..., idx]
     freqs = freqs_t
@@ -281,19 +281,19 @@ def prefill(pixel_values, input_ids, image_grid_thw):
     cos = emb.cos()
     sin = emb.sin()
 
-    for i in range(len(gguf_model.blk)): # todo same block above
+    for i in range(len(lang_model.blk)): # todo same block above
         residual = hidden_states
-        hidden_states = gguf_model.blk[i].attn_norm(hidden_states)
+        hidden_states = lang_model.blk[i].attn_norm(hidden_states)
         input_shape = hidden_states.shape[:-1]
 
-        hidden_shape = (*input_shape, -1, gguf_model.key_length)
-        query = gguf_model.blk[i].attn_q(hidden_states).view(hidden_shape)
-        key = gguf_model.blk[i].attn_k(hidden_states).view(hidden_shape)
+        hidden_shape = (*input_shape, -1, lang_model.key_length)
+        query = lang_model.blk[i].attn_q(hidden_states).view(hidden_shape)
+        key = lang_model.blk[i].attn_k(hidden_states).view(hidden_shape)
 
-        query = gguf_model.blk[i].attn_q_norm(query).transpose(1, 2)
-        key = gguf_model.blk[i].attn_k_norm(key).transpose(1, 2)
+        query = lang_model.blk[i].attn_q_norm(query).transpose(1, 2)
+        key = lang_model.blk[i].attn_k_norm(key).transpose(1, 2)
 
-        value = gguf_model.blk[i].attn_v(hidden_states).view(hidden_shape).transpose(1, 2)
+        value = lang_model.blk[i].attn_v(hidden_states).view(hidden_shape).transpose(1, 2)
     
         query = (query * cos) + (rotate_half(query) * sin)
         key = (key * cos) + (rotate_half(key) * sin)
@@ -323,23 +323,23 @@ def prefill(pixel_values, input_ids, image_grid_thw):
         value = value.repeat_interleave(query.size(-3)//value.size(-3), -3)
 
 
-        attn_weight = query @ key.transpose(-2, -1) * gguf_model.scaling
+        attn_weight = query @ key.transpose(-2, -1) * lang_model.scaling
         attn_weight += attn_bias
         attn_weight = Tensor.softmax(attn_weight)
         attn_output = attn_weight @ value
         attn_output = attn_output.transpose(1, 2).contiguous()
         attn_output = attn_output.reshape(*input_shape, -1).contiguous()
-        hidden_states = gguf_model.blk[i].attn_output(attn_output)
+        hidden_states = lang_model.blk[i].attn_output(attn_output)
         hidden_states = residual + hidden_states
         residual = hidden_states
-        hidden_states = gguf_model.blk[i].ffn_norm(hidden_states)
+        hidden_states = lang_model.blk[i].ffn_norm(hidden_states)
         
         
-        gate = gguf_model.blk[i].ffn_gate(hidden_states)
-        up = gguf_model.blk[i].ffn_up(hidden_states)
+        gate = lang_model.blk[i].ffn_gate(hidden_states)
+        up = lang_model.blk[i].ffn_up(hidden_states)
         activated = Tensor.silu(gate)
         combined = activated * up
-        hidden_states = gguf_model.blk[i].ffn_down(combined)
+        hidden_states = lang_model.blk[i].ffn_down(combined)
         hidden_states = residual + hidden_states
         if i < len(deepstack_feature_lists):
             deepstack_features = deepstack_feature_lists[i]
@@ -350,8 +350,8 @@ def prefill(pixel_values, input_ids, image_grid_thw):
             expanded = expanded * mask_float.unsqueeze(-1)
             hidden_states = hidden_states + expanded
 
-    hidden_states = gguf_model.output_norm(hidden_states)
-    outputs = gguf_model.lm_head(hidden_states[:, -1:, :])
+    hidden_states = lang_model.output_norm(hidden_states)
+    outputs = lang_model.lm_head(hidden_states[:, -1:, :])
     return outputs, position_ids
 
 def forward(
@@ -394,18 +394,18 @@ def forward(
 
 @TinyJit
 def fwd(token, position_ids, seq_len):
-  inputs_embeds = gguf_model.token_embd(token)
+  inputs_embeds = lang_model.token_embd(token)
 
   hidden_states = inputs_embeds
   pos_ids = position_ids[1:]
-  inv_freq_expanded = gguf_model.inv_freq[None, None, :, None].expand(3, pos_ids.shape[1], -1, 1)
+  inv_freq_expanded = lang_model.inv_freq[None, None, :, None].expand(3, pos_ids.shape[1], -1, 1)
   position_ids_expanded = pos_ids[:, :, None, :]
 
   freqs = (inv_freq_expanded @ position_ids_expanded).transpose(2, 3)
   freqs_t = freqs[0]
   freqs_t = freqs_t.contiguous()
   for dim, offset in enumerate((1, 2), start=1):  # H, W
-      length = gguf_model.mrope_section[dim] * 3
+      length = lang_model.mrope_section[dim] * 3
       idx = slice(offset, length, 3)
       freqs_t[..., idx] = freqs[dim, ..., idx]
   freqs = freqs_t
@@ -414,19 +414,19 @@ def fwd(token, position_ids, seq_len):
   sin = emb.sin()
 
   # decoder layers
-  for i in range(len(gguf_model.blk)):        
+  for i in range(len(lang_model.blk)):        
     residual = hidden_states
-    hidden_states = gguf_model.blk[i].attn_norm(hidden_states)
+    hidden_states = lang_model.blk[i].attn_norm(hidden_states)
 
     input_shape = hidden_states.shape[:-1]
-    hidden_shape = (*input_shape, -1, gguf_model.key_length)
+    hidden_shape = (*input_shape, -1, lang_model.key_length)
     
-    query = gguf_model.blk[i].attn_q(hidden_states).view(hidden_shape)
-    key = gguf_model.blk[i].attn_k(hidden_states).view(hidden_shape)
-    query = gguf_model.blk[i].attn_q_norm(query).transpose(1, 2)
-    key = gguf_model.blk[i].attn_k_norm(key).transpose(1, 2)
+    query = lang_model.blk[i].attn_q(hidden_states).view(hidden_shape)
+    key = lang_model.blk[i].attn_k(hidden_states).view(hidden_shape)
+    query = lang_model.blk[i].attn_q_norm(query).transpose(1, 2)
+    key = lang_model.blk[i].attn_k_norm(key).transpose(1, 2)
 
-    value = gguf_model.blk[i].attn_v(hidden_states).view(hidden_shape).transpose(1, 2)
+    value = lang_model.blk[i].attn_v(hidden_states).view(hidden_shape).transpose(1, 2)
 
     query = (query * cos) + (rotate_half(query) * sin)
     key = (key * cos) + (rotate_half(key) * sin)
@@ -447,7 +447,7 @@ def fwd(token, position_ids, seq_len):
     key = key.repeat_interleave(query.size(-3)//key.size(-3), -3)
     value = value.repeat_interleave(query.size(-3)//value.size(-3), -3)
 
-    attn_weight = query @ key.transpose(-2, -1) * gguf_model.scaling
+    attn_weight = query @ key.transpose(-2, -1) * lang_model.scaling
 
     attn_weight = Tensor.softmax(attn_weight)
     value = value.cast(dtypes.bfloat16)
@@ -457,19 +457,19 @@ def fwd(token, position_ids, seq_len):
     attn_output = attn_output.transpose(1, 2)
     attn_output = attn_output.reshape(*input_shape, -1).contiguous()
 
-    hidden_states = gguf_model.blk[i].attn_output(attn_output)                
+    hidden_states = lang_model.blk[i].attn_output(attn_output)                
     hidden_states = residual + hidden_states
     residual = hidden_states
-    hidden_states = gguf_model.blk[i].ffn_norm(hidden_states)
-    gate = gguf_model.blk[i].ffn_gate(hidden_states)
-    up = gguf_model.blk[i].ffn_up(hidden_states)
+    hidden_states = lang_model.blk[i].ffn_norm(hidden_states)
+    gate = lang_model.blk[i].ffn_gate(hidden_states)
+    up = lang_model.blk[i].ffn_up(hidden_states)
     activated = Tensor.silu(gate)
     combined = activated * up
-    hidden_states = gguf_model.blk[i].ffn_down(combined)
+    hidden_states = lang_model.blk[i].ffn_down(combined)
     hidden_states = residual + hidden_states
 
-  hidden_states = gguf_model.output_norm(hidden_states)
-  outputs = gguf_model.lm_head(hidden_states[:, -1:, :])
+  hidden_states = lang_model.output_norm(hidden_states)
+  outputs = lang_model.lm_head(hidden_states[:, -1:, :])
   position_ids = position_ids[..., -1:] + 1
   next_token_logits = outputs[:, -1, :]
   scores = next_token_logits / temp
@@ -614,27 +614,27 @@ if __name__ == "__main__":
   
 
   tiny_weights = safe_load(fetch(f'https://huggingface.co/Qwen/Qwen3-VL-2B-Instruct/resolve/main/model.safetensors'))
-  gguf_model = blank()
-  gguf_model.token_embd = nn.Embedding(vocab_size=151936, embed_size=2048)
-  gguf_model.blk = []
-  gguf_model.output_norm = Qwen3VLTextRMSNorm_tiny(size=2048)
+  lang_model = blank()
+  lang_model.token_embd = nn.Embedding(vocab_size=151936, embed_size=2048)
+  lang_model.blk = []
+  lang_model.output_norm = Qwen3VLTextRMSNorm_tiny(size=2048)
   for i in range(28):
-    gguf_model.blk.append(blank())
-    gguf_model.blk[i].attn_k = nn.Linear(2048, 1024, bias=False)
-    gguf_model.blk[i].attn_q = nn.Linear(2048, 2048, bias=False)
-    gguf_model.blk[i].attn_v = nn.Linear(2048, 1024, bias=False)
-    gguf_model.blk[i].attn_output = nn.Linear(2048, 2048, bias=False)
-    gguf_model.blk[i].ffn_gate = nn.Linear(2048, 6144, bias=False)
-    gguf_model.blk[i].ffn_up = nn.Linear(2048, 6144, bias=False)
-    gguf_model.blk[i].ffn_down = nn.Linear(6144, 2048, bias=False)
-    gguf_model.blk[i].attn_k_norm = Qwen3VLTextRMSNorm_tiny(size=128)
-    gguf_model.blk[i].attn_q_norm = Qwen3VLTextRMSNorm_tiny(size=128)
-    gguf_model.blk[i].ffn_norm = Qwen3VLTextRMSNorm_tiny(size=2048)
-    gguf_model.blk[i].attn_norm = Qwen3VLTextRMSNorm_tiny(size=2048)
+    lang_model.blk.append(blank())
+    lang_model.blk[i].attn_k = nn.Linear(2048, 1024, bias=False)
+    lang_model.blk[i].attn_q = nn.Linear(2048, 2048, bias=False)
+    lang_model.blk[i].attn_v = nn.Linear(2048, 1024, bias=False)
+    lang_model.blk[i].attn_output = nn.Linear(2048, 2048, bias=False)
+    lang_model.blk[i].ffn_gate = nn.Linear(2048, 6144, bias=False)
+    lang_model.blk[i].ffn_up = nn.Linear(2048, 6144, bias=False)
+    lang_model.blk[i].ffn_down = nn.Linear(6144, 2048, bias=False)
+    lang_model.blk[i].attn_k_norm = Qwen3VLTextRMSNorm_tiny(size=128)
+    lang_model.blk[i].attn_q_norm = Qwen3VLTextRMSNorm_tiny(size=128)
+    lang_model.blk[i].ffn_norm = Qwen3VLTextRMSNorm_tiny(size=2048)
+    lang_model.blk[i].attn_norm = Qwen3VLTextRMSNorm_tiny(size=2048)
 
-  gguf_model.scaling = 0.08838834764831845
-  gguf_model.key_length = 128
-  gguf_model.mrope_section = [24, 20, 20]
+  lang_model.scaling = 0.08838834764831845
+  lang_model.key_length = 128
+  lang_model.mrope_section = [24, 20, 20]
 
   vis_model = blank()
   vis_model.v = blank()
@@ -669,14 +669,14 @@ if __name__ == "__main__":
   vis_model.mm[2] = nn.Linear(4096, 2048, bias=True)
   vis_model.v.post_ln = nn.LayerNorm(1024, eps=1e-6, elementwise_affine=True)
 
-  load_state_dict(gguf_model, state_dict_language)
+  load_state_dict(lang_model, state_dict_language)
   state_dict_visual["v.patch_embd.weight2"] = state_dict_visual["v.patch_embd.weight.1"] # todo
   load_state_dict(vis_model, state_dict_visual)
 
-  gguf_model.lm_head = nn.Linear(2048, 151936, bias=False)
-  gguf_model.lm_head.weight = gguf_model.token_embd.weight
+  lang_model.lm_head = nn.Linear(2048, 151936, bias=False)
+  lang_model.lm_head.weight = lang_model.token_embd.weight
   vis_model.inv_freq = 1.0 / (10000.0 ** (Tensor.arange(0, 32, 2, dtype=dtypes.float) / 32))
-  gguf_model.inv_freq = 1.0 / (5000000 ** (Tensor.arange(0, 128, 2) / 128))
+  lang_model.inv_freq = 1.0 / (5000000 ** (Tensor.arange(0, 128, 2) / 128))
 
 
   images = [
@@ -696,8 +696,8 @@ if __name__ == "__main__":
   import pickle
   tok = pickle.load(open("tok.pkl", "rb"))
   for image, expected_output, prompt in zip(images, expected_outputs, prompts):
-    past_keys = [Tensor.zeros(8, 500, 128).contiguous() for i in range(len(gguf_model.blk))]
-    past_values = [Tensor.zeros(8, 500, 128).contiguous() for i in range(len(gguf_model.blk))]
+    past_keys = [Tensor.zeros(8, 500, 128).contiguous() for i in range(len(lang_model.blk))]
+    past_values = [Tensor.zeros(8, 500, 128).contiguous() for i in range(len(lang_model.blk))]
 
     text_inputs = tok.encode(prompt)
 
