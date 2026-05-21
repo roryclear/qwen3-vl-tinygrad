@@ -266,27 +266,27 @@ def prefill(pixel_values, input_ids, image_grid_thw):
 
     position_ids = Tensor.arange(input_ids.shape[-1]).unsqueeze(0).unsqueeze(0).repeat(4, 1, 1)
     pos_id = position_ids[1:]
-    inv_freq_expanded = tiny_model.model.language_model.rotary_emb.inv_freq[None, None, :, None].expand(3, pos_id.shape[1], -1, 1)
+    inv_freq_expanded = gguf_model.inv_freq[None, None, :, None].expand(3, pos_id.shape[1], -1, 1)
     position_ids_expanded = pos_id[:, :, None, :]
     freqs = (inv_freq_expanded @ position_ids_expanded).transpose(2, 3)
     freqs_t = freqs[0]  # just overwrite the first dimension T
     freqs_t = freqs_t.contiguous()
     for dim, offset in enumerate((1, 2), start=1):  # H, W
-        length = tiny_model.model.language_model.rotary_emb.mrope_section[dim] * 3
+        length = gguf_model.mrope_section[dim] * 3
         idx = slice(offset, length, 3)
         freqs_t[..., idx] = freqs[dim, ..., idx]
     freqs = freqs_t
 
     emb = Tensor.cat(freqs, freqs, dim=-1)
-    cos = emb.cos() * tiny_model.model.language_model.rotary_emb.attention_scaling
-    sin = emb.sin() * tiny_model.model.language_model.rotary_emb.attention_scaling
+    cos = emb.cos()
+    sin = emb.sin()
 
-    for i in range(len(tiny_model.model.language_model.layers)): # todo same block above
+    for i in range(len(gguf_model.blk)): # todo same block above
         residual = hidden_states
         hidden_states = gguf_model.blk[i].attn_norm(hidden_states)
         input_shape = hidden_states.shape[:-1]
 
-        hidden_shape = (*input_shape, -1, tiny_model.model.language_model.layers[i].self_attn.head_dim)
+        hidden_shape = (*input_shape, -1, gguf_model.key_length)
         query = gguf_model.blk[i].attn_q(hidden_states).view(hidden_shape)
         key = gguf_model.blk[i].attn_k(hidden_states).view(hidden_shape)
 
@@ -323,7 +323,7 @@ def prefill(pixel_values, input_ids, image_grid_thw):
         value = value.repeat_interleave(query.size(-3)//value.size(-3), -3)
 
 
-        attn_weight = query @ key.transpose(-2, -1) * tiny_model.model.language_model.layers[i].self_attn.scaling
+        attn_weight = query @ key.transpose(-2, -1) * gguf_model.scaling
         attn_weight += attn_bias
         attn_weight = Tensor.softmax(attn_weight)
         attn_output = attn_weight @ value
@@ -398,28 +398,28 @@ def fwd(token, position_ids, seq_len):
 
   hidden_states = inputs_embeds
   pos_ids = position_ids[1:]
-  inv_freq_expanded = tiny_model.model.language_model.rotary_emb.inv_freq[None, None, :, None].expand(3, pos_ids.shape[1], -1, 1)
+  inv_freq_expanded = gguf_model.inv_freq[None, None, :, None].expand(3, pos_ids.shape[1], -1, 1)
   position_ids_expanded = pos_ids[:, :, None, :]
 
   freqs = (inv_freq_expanded @ position_ids_expanded).transpose(2, 3)
   freqs_t = freqs[0]
   freqs_t = freqs_t.contiguous()
   for dim, offset in enumerate((1, 2), start=1):  # H, W
-      length = tiny_model.model.language_model.rotary_emb.mrope_section[dim] * 3
+      length = gguf_model.mrope_section[dim] * 3
       idx = slice(offset, length, 3)
       freqs_t[..., idx] = freqs[dim, ..., idx]
   freqs = freqs_t
   emb = Tensor.cat(freqs, freqs, dim=-1)
-  cos = emb.cos() * tiny_model.model.language_model.rotary_emb.attention_scaling
-  sin = emb.sin() * tiny_model.model.language_model.rotary_emb.attention_scaling
+  cos = emb.cos()
+  sin = emb.sin()
 
   # decoder layers
-  for i in range(len(tiny_model.model.language_model.layers)):        
+  for i in range(len(gguf_model.blk)):        
     residual = hidden_states
     hidden_states = gguf_model.blk[i].attn_norm(hidden_states)
 
     input_shape = hidden_states.shape[:-1]
-    hidden_shape = (*input_shape, -1, tiny_model.model.language_model.layers[i].self_attn.head_dim)
+    hidden_shape = (*input_shape, -1, gguf_model.key_length)
     
     query = gguf_model.blk[i].attn_q(hidden_states).view(hidden_shape)
     key = gguf_model.blk[i].attn_k(hidden_states).view(hidden_shape)
@@ -447,7 +447,7 @@ def fwd(token, position_ids, seq_len):
     key = key.repeat_interleave(query.size(-3)//key.size(-3), -3)
     value = value.repeat_interleave(query.size(-3)//value.size(-3), -3)
 
-    attn_weight = query @ key.transpose(-2, -1) * tiny_model.model.language_model.layers[i].self_attn.scaling
+    attn_weight = query @ key.transpose(-2, -1) * gguf_model.scaling
 
     attn_weight = Tensor.softmax(attn_weight)
     value = value.cast(dtypes.bfloat16)
@@ -633,7 +633,10 @@ if __name__ == "__main__":
       gguf_model.blk[i].attn_q_norm = Qwen3VLTextRMSNorm_tiny(size=128)
       gguf_model.blk[i].ffn_norm = Qwen3VLTextRMSNorm_tiny(size=2048)
       gguf_model.blk[i].attn_norm = Qwen3VLTextRMSNorm_tiny(size=2048)
-      
+
+    gguf_model.scaling = 0.08838834764831845
+    gguf_model.key_length = 128
+    gguf_model.mrope_section = [24, 20, 20]
 
     tiny_model = blank()
     tiny_model.model = blank()
@@ -682,27 +685,8 @@ if __name__ == "__main__":
     tiny_model.model.visual.config.spatial_merge_size = 2
     tiny_model.model.visual.num_grid_per_side = 48
     tiny_model.model.visual.pos_embed = nn.Embedding(2304, 1024)
-    tiny_model.model.language_model = blank()
-    tiny_model.model.language_model.layers = []
-    tiny_model.model.language_model.rotary_emb = blank()
-    tiny_model.model.language_model.rotary_emb.mrope_section = [24, 20, 20]
-    tiny_model.model.language_model.rotary_emb.attention_scaling = 1
-    #tiny_model.model.language_model.rotary_emb.theta
 
     tiny_model.model.visual.pos_embed.weight.cast(dtypes.bfloat16)
-    #print(tiny_model.model.visual.pos_embed.weight.dtype)
-    #print(len(model.model.language_model.layers))
-    #print(model.model.visual.pos_embed.weight.dtype)
-    #print(model.model.language_model.layers[0].input_layernorm)
-    #print(model.model.language_model.layers[0].input_layernorm.weight.shape, model.model.language_model.layers[0].input_layernorm.variance_epsilon)
-    # todo
-
-    for i in range(28):
-      tiny_model.model.language_model.layers.append(blank())
-      tiny_model.model.language_model.layers[i].self_attn = blank()
-      tiny_model.model.language_model.layers[i].self_attn.scaling = 0.08838834764831845
-      tiny_model.model.language_model.layers[i].self_attn.head_dim = 128
-
     tiny_model.model.visual.merger = blank()
     tiny_model.model.visual.merger.hidden_size = 4096
     tiny_model.model.visual.merger.norm = nn.LayerNorm(1024, eps=1e-6, elementwise_affine=True)
@@ -714,7 +698,7 @@ if __name__ == "__main__":
     tiny_model.lm_head = nn.Linear(2048, 151936, bias=False)
     tiny_model.lm_head.weight = gguf_model.token_embd.weight
     tiny_model.model.visual.rotary_pos_emb.inv_freq = 1.0 / (tiny_model.model.visual.rotary_pos_emb.theta ** (Tensor.arange(0, tiny_model.model.visual.rotary_pos_emb.dim, 2, dtype=dtypes.float) / tiny_model.model.visual.rotary_pos_emb.dim))
-    tiny_model.model.language_model.rotary_emb.inv_freq = 1.0 / (5000000 ** (Tensor.arange(0, 128, 2, dtype=dtypes.int64) / 128))
+    gguf_model.inv_freq = 1.0 / (5000000 ** (Tensor.arange(0, 128, 2, dtype=dtypes.int64) / 128))
 
 
     images = [
@@ -734,8 +718,8 @@ if __name__ == "__main__":
     import pickle
     tok = pickle.load(open("tok.pkl", "rb"))
     for image, expected_output, prompt in zip(images, expected_outputs, prompts):
-      past_keys = [Tensor.zeros(8, 500, 128).contiguous() for i in range(len(tiny_model.model.language_model.layers))]
-      past_values = [Tensor.zeros(8, 500, 128).contiguous() for i in range(len(tiny_model.model.language_model.layers))]
+      past_keys = [Tensor.zeros(8, 500, 128).contiguous() for i in range(len(gguf_model.blk))]
+      past_values = [Tensor.zeros(8, 500, 128).contiguous() for i in range(len(gguf_model.blk))]
 
       text_inputs = tok.encode(prompt)
 
