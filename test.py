@@ -352,7 +352,7 @@ def prefill(pixel_values, input_ids, image_grid_thw):
 
     hidden_states = lang_model.output_norm(hidden_states)
     outputs = lang_model.lm_head(hidden_states[:, -1:, :])
-    return outputs, position_ids
+    return outputs, position_ids[0][0]
 
 def forward(
     input_ids,
@@ -373,7 +373,7 @@ def forward(
           seq_len+=1
         else:
           prefill_consumed = True
-          position_ids = position_ids[..., -1:] + 1
+          position_ids = position_ids[-1] + 1
           next_token_logits = outputs[:, -1, :]
           scores = next_token_logits / temp
           token = sample(scores[0], temp=temp, k=top_k, p=top_p, af=None, ap=None)
@@ -394,9 +394,8 @@ def forward(
 def fwd(token, position_ids, seq_len):
   inputs_embeds = lang_model.token_embd(token)
   hidden_states = inputs_embeds
-  pos_ids = position_ids[1:]
   inv_freq_expanded = lang_model.inv_freq[None, None, :, None].expand(3, 1, -1, 1)
-  position_ids_expanded = pos_ids[:, :, None, :]
+  position_ids_expanded = position_ids.unsqueeze(0).repeat((3, 1, 1, 1))
 
   freqs = (inv_freq_expanded @ position_ids_expanded).transpose(2, 3)
   freqs_t = freqs[0]
