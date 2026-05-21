@@ -350,7 +350,7 @@ def prefill(pixel_values, input_ids, image_grid_thw):
             expanded = expanded * mask_float.unsqueeze(-1)
             hidden_states = hidden_states + expanded
 
-    hidden_states = tiny_model.model.language_model.norm(hidden_states)
+    hidden_states = gguf_model.output_norm(hidden_states)
     outputs = tiny_model.lm_head(hidden_states[:, -1:, :])
     return outputs, position_ids
 
@@ -468,7 +468,7 @@ def fwd(token, position_ids, seq_len):
     hidden_states = gguf_model.blk[i].ffn_down(combined)
     hidden_states = residual + hidden_states
 
-  hidden_states = tiny_model.model.language_model.norm(hidden_states)
+  hidden_states = gguf_model.output_norm(hidden_states)
   outputs = tiny_model.lm_head(hidden_states[:, -1:, :])
   position_ids = position_ids[..., -1:] + 1
   next_token_logits = outputs[:, -1, :]
@@ -619,6 +619,7 @@ if __name__ == "__main__":
     gguf_model = blank()
     gguf_model.token_embd = nn.Embedding(vocab_size=151936, embed_size=2048)
     gguf_model.blk = []
+    gguf_model.output_norm = Qwen3VLTextRMSNorm_tiny(size=2048)
     for i in range(28):
       gguf_model.blk.append(blank())
       gguf_model.blk[i].attn_k = nn.Linear(2048, 1024, bias=False)
@@ -696,7 +697,6 @@ if __name__ == "__main__":
     #print(model.model.language_model.layers[0].input_layernorm.weight.shape, model.model.language_model.layers[0].input_layernorm.variance_epsilon)
     # todo
 
-    tiny_model.model.language_model.norm = Qwen3VLTextRMSNorm_tiny(size=2048)
     for i in range(28):
       tiny_model.model.language_model.layers.append(blank())
       tiny_model.model.language_model.layers[i].self_attn = blank()
