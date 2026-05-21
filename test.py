@@ -131,18 +131,18 @@ def prefill(pixel_values, input_ids, image_grid_thw):
     grid_hs = image_grid_thw[1]
     grid_ws = image_grid_thw[2]
 
-    h_idxs = Tensor.linspace(0, tiny_model.model.visual.num_grid_per_side - 1, grid_hs)
-    w_idxs = Tensor.linspace(0, tiny_model.model.visual.num_grid_per_side - 1, grid_ws)
+    h_idxs = Tensor.linspace(0, vis_model.v.num_grid_per_side - 1, grid_hs)
+    w_idxs = Tensor.linspace(0, vis_model.v.num_grid_per_side - 1, grid_ws)
 
     h_idxs_floor = h_idxs.cast(dtypes.int32)
     w_idxs_floor = w_idxs.cast(dtypes.int32)
-    h_idxs_ceil = (h_idxs_floor.int() + 1).clip(tiny_model.model.visual.num_grid_per_side - 1)
-    w_idxs_ceil = (w_idxs_floor.int() + 1).clip(tiny_model.model.visual.num_grid_per_side - 1)
+    h_idxs_ceil = (h_idxs_floor.int() + 1).clip(vis_model.v.num_grid_per_side - 1)
+    w_idxs_ceil = (w_idxs_floor.int() + 1).clip(vis_model.v.num_grid_per_side - 1)
     dh = h_idxs - h_idxs_floor
     dw = w_idxs - w_idxs_floor
 
-    base_h = h_idxs_floor * tiny_model.model.visual.num_grid_per_side
-    base_h_ceil = h_idxs_ceil * tiny_model.model.visual.num_grid_per_side
+    base_h = h_idxs_floor * vis_model.v.num_grid_per_side
+    base_h_ceil = h_idxs_ceil * vis_model.v.num_grid_per_side
 
 
     idx_tensor = Tensor.stack(
@@ -165,7 +165,7 @@ def prefill(pixel_values, input_ids, image_grid_thw):
 
     patch_pos_embeds = patch_pos_embeds[:grid_hs * grid_ws]
 
-    merge_size = tiny_model.model.visual.config.spatial_merge_size
+    merge_size = 2
     pos_embeds = patch_pos_embeds.repeat(grid_ts, 1)
     pos_embeds = (pos_embeds.view(grid_ts, grid_hs // merge_size, merge_size, grid_ws // merge_size, merge_size, -1).permute(0, 1, 3, 2, 4, 5).flatten(0, 4))
     hidden_states = hidden_states + pos_embeds
@@ -192,12 +192,12 @@ def prefill(pixel_values, input_ids, image_grid_thw):
 
 
     deepstack_feature_lists = []
-    for i in range(len(tiny_model.model.visual.blocks)):
+    for i in range(len(vis_model.v.blk)):
         hidden_states_input = vis_model.v.blk[i].ln1(hidden_states)
         seq_length = hidden_states_input.shape[0]
         qkv = vis_model.v.blk[i].attn_qkv(hidden_states_input)
         
-        qkv_reshaped = qkv.reshape(seq_length, 3, tiny_model.model.visual.blocks[i].attn.num_heads, -1)
+        qkv_reshaped = qkv.reshape(seq_length, 3, 16, -1)
 
         qkv_permuted = qkv_reshaped.permute(1, 0, 2, 3)
 
@@ -218,7 +218,7 @@ def prefill(pixel_values, input_ids, image_grid_thw):
         key = key.contiguous()
         value = value.contiguous()
         L, S = query.size(-2), key.size(-2)
-        attn_weight = query @ key.transpose(-2, -1) * tiny_model.model.visual.blocks[i].attn.scaling
+        attn_weight = query @ key.transpose(-2, -1) * 0.125
         attn_weight = Tensor.softmax(attn_weight)
         attn_output = attn_weight @ value
         attn_output = attn_output.transpose(1, 2).contiguous()
@@ -652,6 +652,7 @@ if __name__ == "__main__":
   vis_model.v.patch_embd.weight = Tensor.zeros(1024, 3, 16, 16)
   vis_model.v.patch_embd.weight2 = Tensor.zeros(1024, 3, 16, 16)
   vis_model.v.patch_embd.bias = Tensor.zeros(1024)
+  vis_model.v.num_grid_per_side = 48
 
   vis_model.v.deepstack = []
   for i in range(18):
@@ -673,14 +674,7 @@ if __name__ == "__main__":
       
   tiny_model.model.visual.deepstack_visual_indexes = [5, 11, 17]
   tiny_model.model.visual.blocks = []
-  for i in range(24):
-      tiny_model.model.visual.blocks.append(blank())
-      tiny_model.model.visual.blocks[i].attn = blank()
-      tiny_model.model.visual.blocks[i].attn.num_heads = 16
-      tiny_model.model.visual.blocks[i].attn.scaling = 0.125
   tiny_model.model.visual.config = blank()
-  tiny_model.model.visual.config.spatial_merge_size = 2
-  tiny_model.model.visual.num_grid_per_side = 48
   tiny_model.model.visual.pos_embed = nn.Embedding(2304, 1024)
 
   tiny_model.model.visual.pos_embed.weight.cast(dtypes.bfloat16)
