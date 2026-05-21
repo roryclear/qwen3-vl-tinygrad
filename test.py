@@ -682,8 +682,8 @@ if __name__ == "__main__":
       cv2.cvtColor(cv2.imread("test_img.jpg"), cv2.COLOR_BGR2RGB)
   ]
 
-  expected_outputs = ["This is a Ferrari F40, a classic sports car from the 1980s.",
-                      "Based on the image provided, the vehicle is a **Nissan Micra** (also known as the Nissan Primera in some markets, but this is a different model). The specific model in the image is the **Nissan Micra 1.0** (or 1.0L) from the **1995-2000** model years.\n\nHere is a detailed look at the history of the Nissan Micra:\n\n---\n\n### **Origins and Introduction**\n- **1995**: The Nissan Micra was introduced as a compact, economical, and stylish hatchback. It was designed to compete with",
+  expected_outputs = ["This is a Ferrari F40, a classic supercar known for its sleek design and powerful performance.",
+                      "The car in the image is a Nissan Micra, a compact car produced by Nissan. The Micra was first introduced in 1990 and has since been a popular choice for its affordability, fuel efficiency, and compact size.\n\nThe Micra was designed to be a practical and economical car for urban driving, and it quickly gained popularity in many markets around the world. It was one of the first cars to feature a 1.2-liter engine, which was a significant improvement over the previous 1.0-liter engines.\n\nThe Micra has undergone several model updates over the years, with the most recent version being the 2",
                       "A person wearing a light green hoodie and light-colored pants is standing near a silver car with the driver's side door open."]
 
   prompts = ["<|im_start|>user\n<|vision_start|><|image_pad|><|vision_end|>\nWhat car is this? in one sentence<|im_end|>\n<|im_start|>assistant\n",
