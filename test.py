@@ -443,8 +443,7 @@ def fwd(token, position_ids, seq_len):
     attn_output = attn_output.reshape(*input_shape, -1).contiguous()
 
     hidden_states = lang_model.blk[i].attn_output(attn_output)                
-    hidden_states = residual + hidden_states
-    residual = hidden_states
+    hidden_states = residual = residual + hidden_states
     hidden_states = lang_model.blk[i].ffn_norm(hidden_states)
     gate = lang_model.blk[i].ffn_gate(hidden_states)
     up = lang_model.blk[i].ffn_up(hidden_states)
