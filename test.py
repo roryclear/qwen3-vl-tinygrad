@@ -467,11 +467,10 @@ def fwd(token, position_ids, seq_len):
 
   hidden_states = lang_model.output_norm(hidden_states)
   outputs = lang_model.lm_head(hidden_states[:, -1:, :])
-  position_ids = position_ids[..., -1:] + 1
   next_token_logits = outputs[:, -1, :]
   scores = next_token_logits / temp
   token = sample(scores[0], temp=temp, k=top_k, p=top_p, af=None, ap=None)
-  return position_ids, token
+  return position_ids + 1, token
 
 def sample(logits, temp: float, k: int, p: float, af: float, ap: float):
   assert logits.ndim == 1, "only works on 1d tensors"
