@@ -460,7 +460,7 @@ def fwd(token, position_ids, seq_len):
     hidden_states = gguf_model.blk[i].attn_output(attn_output)                
     hidden_states = residual + hidden_states
     residual = hidden_states
-    hidden_states = tiny_model.model.language_model.layers[i].post_attention_layernorm(hidden_states)
+    hidden_states = gguf_model.blk[i].ffn_norm(hidden_states)
     gate = gguf_model.blk[i].ffn_gate(hidden_states)
     up = gguf_model.blk[i].ffn_up(hidden_states)
     activated = Tensor.silu(gate)
@@ -702,7 +702,6 @@ if __name__ == "__main__":
       tiny_model.model.language_model.layers[i].self_attn = blank()
       tiny_model.model.language_model.layers[i].self_attn.scaling = 0.08838834764831845
       tiny_model.model.language_model.layers[i].self_attn.head_dim = 128
-      tiny_model.model.language_model.layers[i].post_attention_layernorm = Qwen3VLTextRMSNorm_tiny(size=2048)
       tiny_model.model.language_model.embed_tokens = nn.Embedding(vocab_size=151936, embed_size=2048)
 
     tiny_model.model.visual.merger = blank()
