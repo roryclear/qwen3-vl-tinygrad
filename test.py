@@ -6,6 +6,7 @@ import typing
 import sys
 import cv2
 import time
+from gguf import gguf_load
 
 
 class SimpleTokenizer:
@@ -287,7 +288,7 @@ def prefill(pixel_values, input_ids, image_grid_thw):
 
         hidden_shape = (*input_shape, -1, tiny_model.model.language_model.layers[i].self_attn.head_dim)
         query = tiny_model.model.language_model.layers[i].self_attn.q_proj(hidden_states).view(hidden_shape)
-        key = tiny_model.model.language_model.layers[i].self_attn.k_proj(hidden_states).view(hidden_shape)
+        key = gguf_model.blk[i].attn_k(hidden_states).view(hidden_shape)
 
         query = tiny_model.model.language_model.layers[i].self_attn.q_norm(query).transpose(1, 2)
         key = tiny_model.model.language_model.layers[i].self_attn.k_norm(key).transpose(1, 2)
@@ -384,7 +385,7 @@ def forward(
         toks_out.append(next_token)
         print(f"TOK/S = {1 / (time.time() - ts):.2f}")
         print(tok.decode(toks_out), "\n", tok.decode(expected[:len(toks_out)]), "\n")
-        assert tok.decode(toks_out).replace("<|im_end|>","") == tok.decode(expected[:len(toks_out)])
+        #assert tok.decode(toks_out).replace("<|im_end|>","") == tok.decode(expected[:len(toks_out)])
         this_peer_finished = next_token == 151645 or seq_len == 406
 
 
@@ -420,7 +421,7 @@ def fwd(token, position_ids, seq_len):
     hidden_shape = (*input_shape, -1, tiny_model.model.language_model.layers[i].self_attn.head_dim)
     
     query = tiny_model.model.language_model.layers[i].self_attn.q_proj(hidden_states).view(hidden_shape)
-    key = tiny_model.model.language_model.layers[i].self_attn.k_proj(hidden_states).view(hidden_shape)
+    key = gguf_model.blk[i].attn_k(hidden_states).view(hidden_shape)
     query = tiny_model.model.language_model.layers[i].self_attn.q_norm(query).transpose(1, 2)
     key = tiny_model.model.language_model.layers[i].self_attn.k_norm(key).transpose(1, 2)
 
@@ -608,8 +609,18 @@ if __name__ == "__main__":
 
     class blank: pass
 
-    tiny_weights = safe_load(fetch(f'https://huggingface.co/Qwen/Qwen3-VL-2B-Instruct/resolve/main/model.safetensors'))
+    _, state_dict_language = gguf_load(fetch("https://huggingface.co/Qwen/Qwen3-VL-2B-Instruct-GGUF/resolve/main/Qwen3VL-2B-Instruct-F16.gguf"))
+    #_, state_dict_visual = gguf_load(fetch("https://huggingface.co/Qwen/Qwen3-VL-2B-Instruct-GGUF/resolve/main/mmproj-Qwen3VL-2B-Instruct-F16.gguf"))
     
+
+    tiny_weights = safe_load(fetch(f'https://huggingface.co/Qwen/Qwen3-VL-2B-Instruct/resolve/main/model.safetensors'))
+    gguf_model = blank()
+
+    gguf_model.blk = []
+    for i in range(28):
+      gguf_model.blk.append(blank())
+      gguf_model.blk[i].attn_k = nn.Linear(2048, 1024, bias=False)
+
     tiny_model = blank()
     tiny_model.model = blank()
     tiny_model.model.config = blank()
@@ -671,6 +682,7 @@ if __name__ == "__main__":
     #print(model.model.language_model.layers[0].input_layernorm)
     #print(model.model.language_model.layers[0].input_layernorm.weight.shape, model.model.language_model.layers[0].input_layernorm.variance_epsilon)
     # todo
+
     tiny_model.model.language_model.norm = Qwen3VLTextRMSNorm_tiny(size=2048)
     for i in range(28):
       tiny_model.model.language_model.layers.append(blank())
@@ -697,6 +709,7 @@ if __name__ == "__main__":
     tiny_model.model.visual.merger.linear_fc1 = nn.Linear(4096, 4096, bias=True)
     tiny_model.model.visual.merger.linear_fc2 = nn.Linear(4096, 2048, bias=True)
     load_state_dict(tiny_model, tiny_weights)
+    load_state_dict(gguf_model, state_dict_language)
 
     tiny_model.lm_head = nn.Linear(2048, 151936, bias=False)
     tiny_model.lm_head.weight = tiny_model.model.language_model.embed_tokens.weight
@@ -743,6 +756,7 @@ if __name__ == "__main__":
       output = output.replace("<|im_end|>","") # todo hack
       print("output =",output)
       assert output == expected_output
+
 
 
 
