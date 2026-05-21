@@ -392,17 +392,8 @@ def forward(
 
 @TinyJit
 def fwd(token, position_ids, seq_len):
-  inputs_embeds = lang_model.token_embd(token)
-  hidden_states = inputs_embeds
-  inv_freq_expanded = lang_model.inv_freq[:, None]
-  position_ids_expanded = position_ids.reshape(1, 1)
-  freqs_t = (inv_freq_expanded @ position_ids_expanded).transpose(0, 1)
-  freqs_t = freqs_t.contiguous()
-  for dim, offset in enumerate((1, 2), start=1):  # H, W
-      length = lang_model.mrope_section[dim] * 3
-      idx = slice(offset, length, 3)
-      freqs_t[..., idx] = freqs_t[..., idx]
-  freqs = freqs_t
+  hidden_states = lang_model.token_embd(token)
+  freqs = lang_model.inv_freq * position_ids
   emb = Tensor.cat(freqs, freqs, dim=-1)
   cos = emb.cos()
   sin = emb.sin()
