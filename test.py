@@ -367,7 +367,7 @@ def forward(
     prefill_consumed = False
     outputs, position_ids = prefill(pixel_values=pixel_values, input_ids=input_ids, image_grid_thw=image_grid_thw)
     seq_len = position_ids.shape[-1]
-    while not this_peer_finished:
+    while True:
         ts = time.time()
         if prefill_consumed:
           position_ids, token = fwd(token=next_token_tensor.contiguous(), position_ids=position_ids.contiguous(), seq_len=Variable("pos",1,600).bind(seq_len))
@@ -387,15 +387,13 @@ def forward(
         print(f"TOK/S = {1 / (time.time() - ts):.2f}")
         print(tok.decode(toks_out), "\n", tok.decode(expected[:len(toks_out)]), "\n")
         #assert tok.decode(toks_out).replace("<|im_end|>","") == tok.decode(expected[:len(toks_out)])
-        this_peer_finished = next_token == 151645 or seq_len == 406
-
+        if next_token == 151645 or seq_len == 406: break
 
     return toks_out
 
 @TinyJit
 def fwd(token, position_ids, seq_len):
   inputs_embeds = lang_model.token_embd(token)
-
   hidden_states = inputs_embeds
   pos_ids = position_ids[1:]
   inv_freq_expanded = lang_model.inv_freq[None, None, :, None].expand(3, pos_ids.shape[1], -1, 1)
