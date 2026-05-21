@@ -193,7 +193,7 @@ def prefill(pixel_values, input_ids, image_grid_thw):
 
     deepstack_feature_lists = []
     for i in range(len(tiny_model.model.visual.blocks)):
-        hidden_states_input = tiny_model.model.visual.blocks[i].norm1(hidden_states)
+        hidden_states_input = vis_model.v.blk[i].ln1(hidden_states)
         seq_length = hidden_states_input.shape[0]
         qkv = tiny_model.model.visual.blocks[i].attn.qkv(hidden_states_input)
         
@@ -226,7 +226,7 @@ def prefill(pixel_values, input_ids, image_grid_thw):
         attn_output = attn_output.cast(dtypes.bfloat16)
         attn_output = tiny_model.model.visual.blocks[i].attn.proj(attn_output)
         hidden_states += attn_output
-        norm = tiny_model.model.visual.blocks[i].norm2(hidden_states)
+        norm = vis_model.v.blk[i].ln2(hidden_states)
         x = vis_model.v.blk[i].ffn_up(norm)
         x = Tensor.gelu(x)
         norm = vis_model.v.blk[i].ffn_down(x)
@@ -643,7 +643,8 @@ if __name__ == "__main__":
     vis_model.v.blk.append(blank())
     vis_model.v.blk[i].ffn_up = nn.Linear(1024, 4096)
     vis_model.v.blk[i].ffn_down = nn.Linear(4096, 1024)
-
+    vis_model.v.blk[i].ln1 = nn.LayerNorm(1024, eps=1e-6, elementwise_affine=True)
+    vis_model.v.blk[i].ln2 = nn.LayerNorm(1024, eps=1e-6, elementwise_affine=True)
 
   tiny_model = blank()
   tiny_model.model = blank()
@@ -683,8 +684,6 @@ if __name__ == "__main__":
       tiny_model.model.visual.blocks[i].attn.qkv = nn.Linear(1024, 3072)
       tiny_model.model.visual.blocks[i].attn.num_heads = 16
       tiny_model.model.visual.blocks[i].attn.scaling = 0.125
-      tiny_model.model.visual.blocks[i].norm1 = nn.LayerNorm(1024, eps=1e-6, elementwise_affine=True)
-      tiny_model.model.visual.blocks[i].norm2 = nn.LayerNorm(1024, eps=1e-6, elementwise_affine=True)
   tiny_model.model.visual.config = blank()
   tiny_model.model.visual.config.spatial_merge_size = 2
   tiny_model.model.visual.num_grid_per_side = 48
