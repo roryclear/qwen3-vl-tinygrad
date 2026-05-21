@@ -525,70 +525,70 @@ def sample(logits, temp: float, k: int, p: float, af: float, ap: float):
   return output_token
 
 def smart_resize(height, width, factor, min_pixels, max_pixels):
-    h_bar = round(height / factor) * factor
-    w_bar = round(width / factor) * factor
-    if h_bar * w_bar > max_pixels:
-        beta = math.sqrt((height * width) / max_pixels)
-        h_bar = max(factor, math.floor(height / beta / factor) * factor)
-        w_bar = max(factor, math.floor(width / beta / factor) * factor)
-    elif h_bar * w_bar < min_pixels:
-        beta = math.sqrt(min_pixels / (height * width))
-        h_bar = math.ceil(height * beta / factor) * factor
-        w_bar = math.ceil(width * beta / factor) * factor
-    return h_bar, w_bar
+  h_bar = round(height / factor) * factor
+  w_bar = round(width / factor) * factor
+  if h_bar * w_bar > max_pixels:
+      beta = math.sqrt((height * width) / max_pixels)
+      h_bar = max(factor, math.floor(height / beta / factor) * factor)
+      w_bar = max(factor, math.floor(width / beta / factor) * factor)
+  elif h_bar * w_bar < min_pixels:
+      beta = math.sqrt(min_pixels / (height * width))
+      h_bar = math.ceil(height * beta / factor) * factor
+      w_bar = math.ceil(width * beta / factor) * factor
+  return h_bar, w_bar
 
 def _preprocess(image):
-    patch_size = 16
-    merge_size = 2
-    rescale_factor = 0.00392156862745098
-    temporal_patch_size = 2
+  patch_size = 16
+  merge_size = 2
+  rescale_factor = 0.00392156862745098
+  temporal_patch_size = 2
 
-    # image is numpy array in (C, H, W) format with values 0-255
-    height, width = image.shape[-2:]
-    resized_height, resized_width = smart_resize(
-        height,
-        width,
-        factor=patch_size * merge_size,
-        min_pixels=65536,
-        max_pixels=16777216,
-    )
+  # image is numpy array in (C, H, W) format with values 0-255
+  height, width = image.shape[-2:]
+  resized_height, resized_width = smart_resize(
+      height,
+      width,
+      factor=patch_size * merge_size,
+      min_pixels=65536,
+      max_pixels=16777216,
+  )
 
-    # Resize using cv2 - convert to (H, W, C) for cv2
-    image_np = image.transpose(1, 2, 0)  # (C, H, W) -> (H, W, C)
-    image_np = cv2.resize(image_np, (resized_width, resized_height), interpolation=cv2.INTER_LANCZOS4)
-    image = image_np.transpose(2, 0, 1)  # Back to (C, H, W)
-    image = image.astype(np.float32)
+  # Resize using cv2 - convert to (H, W, C) for cv2
+  image_np = image.transpose(1, 2, 0)  # (C, H, W) -> (H, W, C)
+  image_np = cv2.resize(image_np, (resized_width, resized_height), interpolation=cv2.INTER_LANCZOS4)
+  image = image_np.transpose(2, 0, 1)  # Back to (C, H, W)
+  image = image.astype(np.float32)
 
-    # Normalize
-    image_mean = np.array([0.5, 0.5, 0.5]) / rescale_factor
-    image_std = np.array([0.5, 0.5, 0.5]) / rescale_factor
-    image = (image - image_mean[:, None, None]) / image_std[:, None, None]
+  # Normalize
+  image_mean = np.array([0.5, 0.5, 0.5]) / rescale_factor
+  image_std = np.array([0.5, 0.5, 0.5]) / rescale_factor
+  image = (image - image_mean[:, None, None]) / image_std[:, None, None]
 
-    channel = image.shape[0]
-    grid_h, grid_w = resized_height // patch_size, resized_width // patch_size
-    
-    # Reshape and process patches
-    patches = image.reshape(
-        channel,
-        grid_h // merge_size,
-        merge_size,
-        patch_size,
-        grid_w // merge_size,
-        merge_size,
-        patch_size,
-    )
-    patches = patches.transpose(1, 4, 2, 5, 0, 3, 6)  # Equivalent to permute
-    patches = np.expand_dims(patches, axis=4)  # Equivalent to unsqueeze(4)
-    patches = np.broadcast_to(patches, (*patches.shape[:4], temporal_patch_size, *patches.shape[5:]))  # Equivalent to expand
+  channel = image.shape[0]
+  grid_h, grid_w = resized_height // patch_size, resized_width // patch_size
+  
+  # Reshape and process patches
+  patches = image.reshape(
+      channel,
+      grid_h // merge_size,
+      merge_size,
+      patch_size,
+      grid_w // merge_size,
+      merge_size,
+      patch_size,
+  )
+  patches = patches.transpose(1, 4, 2, 5, 0, 3, 6)  # Equivalent to permute
+  patches = np.expand_dims(patches, axis=4)  # Equivalent to unsqueeze(4)
+  patches = np.broadcast_to(patches, (*patches.shape[:4], temporal_patch_size, *patches.shape[5:]))  # Equivalent to expand
 
-    flatten_patches = patches.reshape(
-        grid_h * grid_w,
-        channel * temporal_patch_size * patch_size * patch_size,
-    )
+  flatten_patches = patches.reshape(
+      grid_h * grid_w,
+      channel * temporal_patch_size * patch_size * patch_size,
+  )
 
-    pixel_values = flatten_patches
-    image_grid_thw = [1, grid_h, grid_w]
-    return pixel_values, image_grid_thw
+  pixel_values = flatten_patches
+  image_grid_thw = [1, grid_h, grid_w]
+  return pixel_values, image_grid_thw
 
 from tinygrad import Tensor
 Tensor.manual_seed(42)
@@ -597,149 +597,148 @@ from tinygrad.nn.state import safe_load, load_state_dict
 from tinygrad import dtypes
 
 class Qwen3VLTextRMSNorm_tiny():
-    def __init__(self, size):
-        self.variance_epsilon = 1e-06
-        self.weight = Tensor.zeros(size)
+  def __init__(self, size):
+    self.variance_epsilon = 1e-06
+    self.weight = Tensor.zeros(size)
 
-    def __call__(self, hidden_states):
-        variance = hidden_states.pow(2).mean(-1, keepdim=True)
-        hidden_states = hidden_states * Tensor.rsqrt(variance + self.variance_epsilon)
-        return self.weight * hidden_states
+  def __call__(self, hidden_states):
+    variance = hidden_states.pow(2).mean(-1, keepdim=True)
+    hidden_states = hidden_states * Tensor.rsqrt(variance + self.variance_epsilon)
+    return self.weight * hidden_states
     
 
 if __name__ == "__main__":
+  class blank: pass
+  _, state_dict_language = gguf_load(fetch("https://huggingface.co/Qwen/Qwen3-VL-2B-Instruct-GGUF/resolve/main/Qwen3VL-2B-Instruct-F16.gguf"))
+  #_, state_dict_visual = gguf_load(fetch("https://huggingface.co/Qwen/Qwen3-VL-2B-Instruct-GGUF/resolve/main/mmproj-Qwen3VL-2B-Instruct-F16.gguf"))
+  
 
-    class blank: pass
+  tiny_weights = safe_load(fetch(f'https://huggingface.co/Qwen/Qwen3-VL-2B-Instruct/resolve/main/model.safetensors'))
+  gguf_model = blank()
+  gguf_model.token_embd = nn.Embedding(vocab_size=151936, embed_size=2048)
+  gguf_model.blk = []
+  gguf_model.output_norm = Qwen3VLTextRMSNorm_tiny(size=2048)
+  for i in range(28):
+    gguf_model.blk.append(blank())
+    gguf_model.blk[i].attn_k = nn.Linear(2048, 1024, bias=False)
+    gguf_model.blk[i].attn_q = nn.Linear(2048, 2048, bias=False)
+    gguf_model.blk[i].attn_v = nn.Linear(2048, 1024, bias=False)
+    gguf_model.blk[i].attn_output = nn.Linear(2048, 2048, bias=False)
+    gguf_model.blk[i].ffn_gate = nn.Linear(2048, 6144, bias=False)
+    gguf_model.blk[i].ffn_up = nn.Linear(2048, 6144, bias=False)
+    gguf_model.blk[i].ffn_down = nn.Linear(6144, 2048, bias=False)
+    gguf_model.blk[i].attn_k_norm = Qwen3VLTextRMSNorm_tiny(size=128)
+    gguf_model.blk[i].attn_q_norm = Qwen3VLTextRMSNorm_tiny(size=128)
+    gguf_model.blk[i].ffn_norm = Qwen3VLTextRMSNorm_tiny(size=2048)
+    gguf_model.blk[i].attn_norm = Qwen3VLTextRMSNorm_tiny(size=2048)
 
-    _, state_dict_language = gguf_load(fetch("https://huggingface.co/Qwen/Qwen3-VL-2B-Instruct-GGUF/resolve/main/Qwen3VL-2B-Instruct-F16.gguf"))
-    #_, state_dict_visual = gguf_load(fetch("https://huggingface.co/Qwen/Qwen3-VL-2B-Instruct-GGUF/resolve/main/mmproj-Qwen3VL-2B-Instruct-F16.gguf"))
-    
-
-    tiny_weights = safe_load(fetch(f'https://huggingface.co/Qwen/Qwen3-VL-2B-Instruct/resolve/main/model.safetensors'))
-    gguf_model = blank()
-    gguf_model.token_embd = nn.Embedding(vocab_size=151936, embed_size=2048)
-    gguf_model.blk = []
-    gguf_model.output_norm = Qwen3VLTextRMSNorm_tiny(size=2048)
-    for i in range(28):
-      gguf_model.blk.append(blank())
-      gguf_model.blk[i].attn_k = nn.Linear(2048, 1024, bias=False)
-      gguf_model.blk[i].attn_q = nn.Linear(2048, 2048, bias=False)
-      gguf_model.blk[i].attn_v = nn.Linear(2048, 1024, bias=False)
-      gguf_model.blk[i].attn_output = nn.Linear(2048, 2048, bias=False)
-      gguf_model.blk[i].ffn_gate = nn.Linear(2048, 6144, bias=False)
-      gguf_model.blk[i].ffn_up = nn.Linear(2048, 6144, bias=False)
-      gguf_model.blk[i].ffn_down = nn.Linear(6144, 2048, bias=False)
-      gguf_model.blk[i].attn_k_norm = Qwen3VLTextRMSNorm_tiny(size=128)
-      gguf_model.blk[i].attn_q_norm = Qwen3VLTextRMSNorm_tiny(size=128)
-      gguf_model.blk[i].ffn_norm = Qwen3VLTextRMSNorm_tiny(size=2048)
-      gguf_model.blk[i].attn_norm = Qwen3VLTextRMSNorm_tiny(size=2048)
-
-    gguf_model.scaling = 0.08838834764831845
-    gguf_model.key_length = 128
-    gguf_model.mrope_section = [24, 20, 20]
-
-    tiny_model = blank()
-    tiny_model.model = blank()
-    tiny_model.model.config = blank()
-    tiny_model.model.config.image_token_id = 151655
-    tiny_model.model.visual = blank()
-    tiny_model.model.visual.rotary_pos_emb = blank()
-    tiny_model.model.visual.rotary_pos_emb.dim = 32
-    tiny_model.model.visual.rotary_pos_emb.theta = 10000.0
-    tiny_model.model.visual.spatial_merge_size = 2
-    tiny_model.model.visual.patch_embed = blank()
-    tiny_model.model.visual.patch_embed.embed_dim = 1024
-    tiny_model.model.visual.patch_embed.in_channels = 3
-    tiny_model.model.visual.patch_embed.temporal_patch_size = 2
-    tiny_model.model.visual.patch_embed.patch_size = 16
-    tiny_model.model.visual.patch_embed.proj = blank()
-    tiny_model.model.visual.patch_embed.proj.weight = Tensor.zeros(1024, 3, 2, 16, 16)
-    tiny_model.model.visual.patch_embed.proj.bias = Tensor.zeros(1024)
-    tiny_model.model.visual.patch_embed.proj.stride = (2, 16, 16)
-    tiny_model.model.visual.patch_embed.proj.padding = (0, 0, 0)
-    tiny_model.model.visual.patch_embed.proj.dilation = (1, 1, 1)
-    tiny_model.model.visual.patch_embed.proj.groups = 1
-    tiny_model.model.visual.deepstack_merger_list = []
-    for i in range(3):
-       tiny_model.model.visual.deepstack_merger_list.append(blank())
-       tiny_model.model.visual.deepstack_merger_list[i].norm = nn.LayerNorm(4096, eps=1e-6, elementwise_affine=True)
-       tiny_model.model.visual.deepstack_merger_list[i].hidden_size = 4096
-       tiny_model.model.visual.deepstack_merger_list[i].linear_fc1 = nn.Linear(4096, 4096)
-       tiny_model.model.visual.deepstack_merger_list[i].linear_fc2 = nn.Linear(4096, 2048)
-       
-    tiny_model.model.visual.deepstack_visual_indexes = [5, 11, 17]
-    tiny_model.model.visual.blocks = []
-    for i in range(24):
-       tiny_model.model.visual.blocks.append(blank())
-       tiny_model.model.visual.blocks[i].attn = blank()
-       tiny_model.model.visual.blocks[i].attn.proj = nn.Linear(1024, 1024)
-       tiny_model.model.visual.blocks[i].attn.qkv = nn.Linear(1024, 3072)
-       tiny_model.model.visual.blocks[i].attn.num_heads = 16
-       tiny_model.model.visual.blocks[i].attn.scaling = 0.125
-       tiny_model.model.visual.blocks[i].norm1 = nn.LayerNorm(1024, eps=1e-6, elementwise_affine=True)
-       tiny_model.model.visual.blocks[i].norm2 = nn.LayerNorm(1024, eps=1e-6, elementwise_affine=True)
-       tiny_model.model.visual.blocks[i].mlp = blank()
-       tiny_model.model.visual.blocks[i].mlp.linear_fc1 = nn.Linear(1024, 4096)
-       tiny_model.model.visual.blocks[i].mlp.linear_fc2 = nn.Linear(4096, 1024)
-    tiny_model.model.visual.config = blank()
-    tiny_model.model.visual.config.spatial_merge_size = 2
-    tiny_model.model.visual.num_grid_per_side = 48
-    tiny_model.model.visual.pos_embed = nn.Embedding(2304, 1024)
-
-    tiny_model.model.visual.pos_embed.weight.cast(dtypes.bfloat16)
-    tiny_model.model.visual.merger = blank()
-    tiny_model.model.visual.merger.hidden_size = 4096
-    tiny_model.model.visual.merger.norm = nn.LayerNorm(1024, eps=1e-6, elementwise_affine=True)
-    tiny_model.model.visual.merger.linear_fc1 = nn.Linear(4096, 4096, bias=True)
-    tiny_model.model.visual.merger.linear_fc2 = nn.Linear(4096, 2048, bias=True)
-    load_state_dict(tiny_model, tiny_weights)
-    load_state_dict(gguf_model, state_dict_language)
-
-    tiny_model.lm_head = nn.Linear(2048, 151936, bias=False)
-    tiny_model.lm_head.weight = gguf_model.token_embd.weight
-    tiny_model.model.visual.rotary_pos_emb.inv_freq = 1.0 / (tiny_model.model.visual.rotary_pos_emb.theta ** (Tensor.arange(0, tiny_model.model.visual.rotary_pos_emb.dim, 2, dtype=dtypes.float) / tiny_model.model.visual.rotary_pos_emb.dim))
-    gguf_model.inv_freq = 1.0 / (5000000 ** (Tensor.arange(0, 128, 2, dtype=dtypes.int64) / 128))
+  gguf_model.scaling = 0.08838834764831845
+  gguf_model.key_length = 128
+  gguf_model.mrope_section = [24, 20, 20]
 
 
-    images = [
-        cv2.cvtColor(cv2.imread("f40.jpeg"), cv2.COLOR_BGR2RGB),
-        cv2.cvtColor(cv2.imread("micra.jpg"), cv2.COLOR_BGR2RGB),
-        cv2.cvtColor(cv2.imread("test_img.jpg"), cv2.COLOR_BGR2RGB)
-    ]
+  tiny_model = blank()
+  tiny_model.model = blank()
+  tiny_model.model.config = blank()
+  tiny_model.model.config.image_token_id = 151655
+  tiny_model.model.visual = blank()
+  tiny_model.model.visual.rotary_pos_emb = blank()
+  tiny_model.model.visual.rotary_pos_emb.dim = 32
+  tiny_model.model.visual.rotary_pos_emb.theta = 10000.0
+  tiny_model.model.visual.spatial_merge_size = 2
+  tiny_model.model.visual.patch_embed = blank()
+  tiny_model.model.visual.patch_embed.embed_dim = 1024
+  tiny_model.model.visual.patch_embed.in_channels = 3
+  tiny_model.model.visual.patch_embed.temporal_patch_size = 2
+  tiny_model.model.visual.patch_embed.patch_size = 16
+  tiny_model.model.visual.patch_embed.proj = blank()
+  tiny_model.model.visual.patch_embed.proj.weight = Tensor.zeros(1024, 3, 2, 16, 16)
+  tiny_model.model.visual.patch_embed.proj.bias = Tensor.zeros(1024)
+  tiny_model.model.visual.patch_embed.proj.stride = (2, 16, 16)
+  tiny_model.model.visual.patch_embed.proj.padding = (0, 0, 0)
+  tiny_model.model.visual.patch_embed.proj.dilation = (1, 1, 1)
+  tiny_model.model.visual.patch_embed.proj.groups = 1
+  tiny_model.model.visual.deepstack_merger_list = []
+  for i in range(3):
+      tiny_model.model.visual.deepstack_merger_list.append(blank())
+      tiny_model.model.visual.deepstack_merger_list[i].norm = nn.LayerNorm(4096, eps=1e-6, elementwise_affine=True)
+      tiny_model.model.visual.deepstack_merger_list[i].hidden_size = 4096
+      tiny_model.model.visual.deepstack_merger_list[i].linear_fc1 = nn.Linear(4096, 4096)
+      tiny_model.model.visual.deepstack_merger_list[i].linear_fc2 = nn.Linear(4096, 2048)
+      
+  tiny_model.model.visual.deepstack_visual_indexes = [5, 11, 17]
+  tiny_model.model.visual.blocks = []
+  for i in range(24):
+      tiny_model.model.visual.blocks.append(blank())
+      tiny_model.model.visual.blocks[i].attn = blank()
+      tiny_model.model.visual.blocks[i].attn.proj = nn.Linear(1024, 1024)
+      tiny_model.model.visual.blocks[i].attn.qkv = nn.Linear(1024, 3072)
+      tiny_model.model.visual.blocks[i].attn.num_heads = 16
+      tiny_model.model.visual.blocks[i].attn.scaling = 0.125
+      tiny_model.model.visual.blocks[i].norm1 = nn.LayerNorm(1024, eps=1e-6, elementwise_affine=True)
+      tiny_model.model.visual.blocks[i].norm2 = nn.LayerNorm(1024, eps=1e-6, elementwise_affine=True)
+      tiny_model.model.visual.blocks[i].mlp = blank()
+      tiny_model.model.visual.blocks[i].mlp.linear_fc1 = nn.Linear(1024, 4096)
+      tiny_model.model.visual.blocks[i].mlp.linear_fc2 = nn.Linear(4096, 1024)
+  tiny_model.model.visual.config = blank()
+  tiny_model.model.visual.config.spatial_merge_size = 2
+  tiny_model.model.visual.num_grid_per_side = 48
+  tiny_model.model.visual.pos_embed = nn.Embedding(2304, 1024)
 
-    expected_outputs = ["This is a Ferrari F40, a classic sports car from the 1980s.",
-                        "Based on the image provided, the vehicle is a **Nissan Micra** (also known as the Nissan Primera in some markets, but this is a different model). The specific model in the image is the **Nissan Micra 1.0** (or 1.0L) from the **1995-2000** model years.\n\nHere is a detailed look at the history of the Nissan Micra:\n\n---\n\n### **Origins and Introduction**\n- **1995**: The Nissan Micra was introduced as a compact, economical, and stylish hatchback. It was designed to compete with",
-                        "A person wearing a light green hoodie and light-colored pants is standing near a silver car with the driver's side door open."]
+  tiny_model.model.visual.pos_embed.weight.cast(dtypes.bfloat16)
+  tiny_model.model.visual.merger = blank()
+  tiny_model.model.visual.merger.hidden_size = 4096
+  tiny_model.model.visual.merger.norm = nn.LayerNorm(1024, eps=1e-6, elementwise_affine=True)
+  tiny_model.model.visual.merger.linear_fc1 = nn.Linear(4096, 4096, bias=True)
+  tiny_model.model.visual.merger.linear_fc2 = nn.Linear(4096, 2048, bias=True)
+  load_state_dict(tiny_model, tiny_weights)
+  load_state_dict(gguf_model, state_dict_language)
 
-    prompts = ["<|im_start|>user\n<|vision_start|><|image_pad|><|vision_end|>\nWhat car is this? in one sentence<|im_end|>\n<|im_start|>assistant\n",
-            "<|im_start|>user\n<|vision_start|><|image_pad|><|vision_end|>\nTell me the history of this car<|im_end|>\n<|im_start|>assistant\n",
-            "<|im_start|>user\n<|vision_start|><|image_pad|><|vision_end|>\nWhat has been detected on my CCTV camera? Write in one short sentence, only info about the object(s) detected.<|im_end|>\n<|im_start|>assistant\n"]
+  tiny_model.lm_head = nn.Linear(2048, 151936, bias=False)
+  tiny_model.lm_head.weight = gguf_model.token_embd.weight
+  tiny_model.model.visual.rotary_pos_emb.inv_freq = 1.0 / (tiny_model.model.visual.rotary_pos_emb.theta ** (Tensor.arange(0, tiny_model.model.visual.rotary_pos_emb.dim, 2, dtype=dtypes.float) / tiny_model.model.visual.rotary_pos_emb.dim))
+  gguf_model.inv_freq = 1.0 / (5000000 ** (Tensor.arange(0, 128, 2, dtype=dtypes.int64) / 128))
 
-    import pickle
-    tok = pickle.load(open("tok.pkl", "rb"))
-    for image, expected_output, prompt in zip(images, expected_outputs, prompts):
-      past_keys = [Tensor.zeros(8, 500, 128).contiguous() for i in range(len(gguf_model.blk))]
-      past_values = [Tensor.zeros(8, 500, 128).contiguous() for i in range(len(gguf_model.blk))]
 
-      text_inputs = tok.encode(prompt)
+  images = [
+      cv2.cvtColor(cv2.imread("f40.jpeg"), cv2.COLOR_BGR2RGB),
+      cv2.cvtColor(cv2.imread("micra.jpg"), cv2.COLOR_BGR2RGB),
+      cv2.cvtColor(cv2.imread("test_img.jpg"), cv2.COLOR_BGR2RGB)
+  ]
 
-      image = image.transpose(2, 0, 1)
-      pixel_values, image_grid_thw = _preprocess(image=image)
+  expected_outputs = ["This is a Ferrari F40, a classic sports car from the 1980s.",
+                      "Based on the image provided, the vehicle is a **Nissan Micra** (also known as the Nissan Primera in some markets, but this is a different model). The specific model in the image is the **Nissan Micra 1.0** (or 1.0L) from the **1995-2000** model years.\n\nHere is a detailed look at the history of the Nissan Micra:\n\n---\n\n### **Origins and Introduction**\n- **1995**: The Nissan Micra was introduced as a compact, economical, and stylish hatchback. It was designed to compete with",
+                      "A person wearing a light green hoodie and light-colored pants is standing near a silver car with the driver's side door open."]
 
-      merge_size = 2
-      num_image_tokens = ((image_grid_thw[0]*image_grid_thw[1]*image_grid_thw[2]) / (merge_size ** 2))
+  prompts = ["<|im_start|>user\n<|vision_start|><|image_pad|><|vision_end|>\nWhat car is this? in one sentence<|im_end|>\n<|im_start|>assistant\n",
+          "<|im_start|>user\n<|vision_start|><|image_pad|><|vision_end|>\nTell me the history of this car<|im_end|>\n<|im_start|>assistant\n",
+          "<|im_start|>user\n<|vision_start|><|image_pad|><|vision_end|>\nWhat has been detected on my CCTV camera? Write in one short sentence, only info about the object(s) detected.<|im_end|>\n<|im_start|>assistant\n"]
 
-      image_token_id = 151655
-      image_token_positions = [i for i, tid in enumerate(text_inputs) if tid == image_token_id]
+  import pickle
+  tok = pickle.load(open("tok.pkl", "rb"))
+  for image, expected_output, prompt in zip(images, expected_outputs, prompts):
+    past_keys = [Tensor.zeros(8, 500, 128).contiguous() for i in range(len(gguf_model.blk))]
+    past_values = [Tensor.zeros(8, 500, 128).contiguous() for i in range(len(gguf_model.blk))]
 
-      for pos in reversed(image_token_positions): text_inputs[pos:pos+1] = [image_token_id] * int(num_image_tokens)
+    text_inputs = tok.encode(prompt)
 
-      outputs = forward(input_ids=Tensor([text_inputs]), pixel_values=Tensor(pixel_values.astype(np.float32)), image_grid_thw=image_grid_thw, expected=tok.encode(expected_output))
+    image = image.transpose(2, 0, 1)
+    pixel_values, image_grid_thw = _preprocess(image=image)
 
-      output = tok.decode(outputs)
-      output = output.replace("<|im_end|>","") # todo hack
-      print("output =",output)
-      assert output == expected_output
+    merge_size = 2
+    num_image_tokens = ((image_grid_thw[0]*image_grid_thw[1]*image_grid_thw[2]) / (merge_size ** 2))
+
+    image_token_id = 151655
+    image_token_positions = [i for i, tid in enumerate(text_inputs) if tid == image_token_id]
+
+    for pos in reversed(image_token_positions): text_inputs[pos:pos+1] = [image_token_id] * int(num_image_tokens)
+
+    outputs = forward(input_ids=Tensor([text_inputs]), pixel_values=Tensor(pixel_values.astype(np.float32)), image_grid_thw=image_grid_thw, expected=tok.encode(expected_output))
+
+    output = tok.decode(outputs)
+    output = output.replace("<|im_end|>","") # todo hack
+    print("output =",output)
+    assert output == expected_output
 
 
 
