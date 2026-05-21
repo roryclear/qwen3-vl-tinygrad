@@ -6,6 +6,7 @@ import typing
 import sys
 import cv2
 import time
+from gguf import gguf_load
 
 
 class SimpleTokenizer:
@@ -106,42 +107,42 @@ def rotate_half(x):
     return ret
 
 def prefill(pixel_values, input_ids, image_grid_thw):
-    hidden_states = pixel_values.view(-1, tiny_model.model.visual.patch_embed.in_channels, tiny_model.model.visual.patch_embed.temporal_patch_size, tiny_model.model.visual.patch_embed.patch_size, tiny_model.model.visual.patch_embed.patch_size)
+    hidden_states = pixel_values.view(-1, 3, 2, 16, 16)
     hidden_states = hidden_states.cast(dtype=dtypes.bfloat16)
 
     B, C, D, H, W = hidden_states.shape
     x = hidden_states.reshape(B, C * D, H, W)
-    w = tiny_model.model.visual.patch_embed.proj.weight
+    w = Tensor.stack(vis_model.v.patch_embd.weight, vis_model.v.patch_embd.weight2, dim=2)
     out_C, in_C, kD, kH, kW = w.shape
     w2d = w.reshape(out_C, in_C * kD, kH, kW)
 
     hidden_states = x.conv2d(
         weight=w2d,
-        bias=tiny_model.model.visual.patch_embed.proj.bias,
-        stride=tiny_model.model.visual.patch_embed.proj.stride[1:],
-        padding=tiny_model.model.visual.patch_embed.proj.padding[1:],
-        dilation=tiny_model.model.visual.patch_embed.proj.dilation[1:],
-        groups=tiny_model.model.visual.patch_embed.proj.groups
+        bias=vis_model.v.patch_embd.bias,
+        stride=(16, 16),
+        padding=(0, 0),
+        dilation=(1, 1),
+        groups=1
     )
 
-    hidden_states = hidden_states.view(-1, tiny_model.model.visual.patch_embed.embed_dim)
+    hidden_states = hidden_states.view(-1, 1024)
         
     grid_ts = image_grid_thw[0]
     grid_hs = image_grid_thw[1]
     grid_ws = image_grid_thw[2]
 
-    h_idxs = Tensor.linspace(0, tiny_model.model.visual.num_grid_per_side - 1, grid_hs)
-    w_idxs = Tensor.linspace(0, tiny_model.model.visual.num_grid_per_side - 1, grid_ws)
+    h_idxs = Tensor.linspace(0, vis_model.v.num_grid_per_side - 1, grid_hs)
+    w_idxs = Tensor.linspace(0, vis_model.v.num_grid_per_side - 1, grid_ws)
 
     h_idxs_floor = h_idxs.cast(dtypes.int32)
     w_idxs_floor = w_idxs.cast(dtypes.int32)
-    h_idxs_ceil = (h_idxs_floor.int() + 1).clip(tiny_model.model.visual.num_grid_per_side - 1)
-    w_idxs_ceil = (w_idxs_floor.int() + 1).clip(tiny_model.model.visual.num_grid_per_side - 1)
+    h_idxs_ceil = (h_idxs_floor.int() + 1).clip(vis_model.v.num_grid_per_side - 1)
+    w_idxs_ceil = (w_idxs_floor.int() + 1).clip(vis_model.v.num_grid_per_side - 1)
     dh = h_idxs - h_idxs_floor
     dw = w_idxs - w_idxs_floor
 
-    base_h = h_idxs_floor * tiny_model.model.visual.num_grid_per_side
-    base_h_ceil = h_idxs_ceil * tiny_model.model.visual.num_grid_per_side
+    base_h = h_idxs_floor * vis_model.v.num_grid_per_side
+    base_h_ceil = h_idxs_ceil * vis_model.v.num_grid_per_side
 
 
     idx_tensor = Tensor.stack(
@@ -158,18 +159,18 @@ def prefill(pixel_values, input_ids, image_grid_thw):
         (dh[None].T * dw[None]).flatten(),
     ).cast(dtypes.bfloat16)
 
-    pos_embeds = tiny_model.model.visual.pos_embed(idx_tensor)
+    pos_embeds = vis_model.v.position_embd(idx_tensor)
     pos_embeds *= weight_tensor[:, :, None]
     patch_pos_embeds = pos_embeds[0] + pos_embeds[1] + pos_embeds[2] + pos_embeds[3]
 
     patch_pos_embeds = patch_pos_embeds[:grid_hs * grid_ws]
 
-    merge_size = tiny_model.model.visual.config.spatial_merge_size
+    merge_size = 2
     pos_embeds = patch_pos_embeds.repeat(grid_ts, 1)
     pos_embeds = (pos_embeds.view(grid_ts, grid_hs // merge_size, merge_size, grid_ws // merge_size, merge_size, -1).permute(0, 1, 3, 2, 4, 5).flatten(0, 4))
     hidden_states = hidden_states + pos_embeds
     
-    merge_size = int(tiny_model.model.visual.spatial_merge_size)
+    merge_size = 2
 
 
     hpos_ids = Tensor.arange(image_grid_thw[1]).unsqueeze(1).expand(-1, image_grid_thw[2])
@@ -180,7 +181,7 @@ def prefill(pixel_values, input_ids, image_grid_thw):
 
     pos_ids = Tensor.stack(hpos_ids, wpos_ids, dim=-1).repeat(image_grid_thw[0], 1)
 
-    rotary_pos_emb = (pos_ids.unsqueeze(-1) * tiny_model.model.visual.rotary_pos_emb.inv_freq).flatten(1)
+    rotary_pos_emb = (pos_ids.unsqueeze(-1) * vis_model.inv_freq).flatten(1)
 
     seq_len, _ = hidden_states.size()
     hidden_states = hidden_states.reshape(seq_len, -1)
@@ -191,12 +192,12 @@ def prefill(pixel_values, input_ids, image_grid_thw):
 
 
     deepstack_feature_lists = []
-    for i in range(len(tiny_model.model.visual.blocks)):
-        hidden_states_input = tiny_model.model.visual.blocks[i].norm1(hidden_states)
+    for i in range(len(vis_model.v.blk)):
+        hidden_states_input = vis_model.v.blk[i].ln1(hidden_states)
         seq_length = hidden_states_input.shape[0]
-        qkv = tiny_model.model.visual.blocks[i].attn.qkv(hidden_states_input)
+        qkv = vis_model.v.blk[i].attn_qkv(hidden_states_input)
         
-        qkv_reshaped = qkv.reshape(seq_length, 3, tiny_model.model.visual.blocks[i].attn.num_heads, -1)
+        qkv_reshaped = qkv.reshape(seq_length, 3, 16, -1)
 
         qkv_permuted = qkv_reshaped.permute(1, 0, 2, 3)
 
@@ -217,35 +218,35 @@ def prefill(pixel_values, input_ids, image_grid_thw):
         key = key.contiguous()
         value = value.contiguous()
         L, S = query.size(-2), key.size(-2)
-        attn_weight = query @ key.transpose(-2, -1) * tiny_model.model.visual.blocks[i].attn.scaling
+        attn_weight = query @ key.transpose(-2, -1) * 0.125
         attn_weight = Tensor.softmax(attn_weight)
         attn_output = attn_weight @ value
         attn_output = attn_output.transpose(1, 2).contiguous()
         attn_output = attn_output.reshape(seq_length, -1).contiguous()
         attn_output = attn_output.cast(dtypes.bfloat16)
-        attn_output = tiny_model.model.visual.blocks[i].attn.proj(attn_output)
+        attn_output = vis_model.v.blk[i].attn_out(attn_output)
+        attn_output = attn_output.cast(dtypes.bfloat16) # todo
         hidden_states += attn_output
-        norm = tiny_model.model.visual.blocks[i].norm2(hidden_states)
-        x = tiny_model.model.visual.blocks[i].mlp.linear_fc1(norm)
+        norm = vis_model.v.blk[i].ln2(hidden_states)
+        x = vis_model.v.blk[i].ffn_up(norm)
         x = Tensor.gelu(x)
-        norm = tiny_model.model.visual.blocks[i].mlp.linear_fc2(x)
+        norm = vis_model.v.blk[i].ffn_down(x)
         hidden_states = hidden_states + norm
 
-        if i in tiny_model.model.visual.deepstack_visual_indexes:
-            layer = tiny_model.model.visual.deepstack_merger_list[tiny_model.model.visual.deepstack_visual_indexes.index(i)]
-            deepstack_feature = layer.norm(hidden_states.view(-1, layer.hidden_size)).view(-1, layer.hidden_size)
-            deepstack_feature = layer.linear_fc2(Tensor.gelu(layer.linear_fc1(deepstack_feature)))
-            deepstack_feature_lists.append(deepstack_feature)
+        if i in [5, 11, 17]:
+          deepstack_feature = vis_model.v.deepstack[i].norm(hidden_states.view(-1, vis_model.v.deepstack[i].hidden_size)).view(-1, vis_model.v.deepstack[i].hidden_size)
+          deepstack_feature = vis_model.v.deepstack[i].fc2(Tensor.gelu(vis_model.v.deepstack[i].fc1(deepstack_feature)))
+          deepstack_feature_lists.append(deepstack_feature)
 
-    image_embeds = tiny_model.model.visual.merger.norm(hidden_states)
-    image_embeds = image_embeds.view(-1, tiny_model.model.visual.merger.hidden_size)
-    image_embeds = tiny_model.model.visual.merger.linear_fc1(image_embeds)
+    image_embeds = vis_model.v.post_ln(hidden_states)
+    image_embeds = image_embeds.view(-1, 4096)
+    image_embeds = vis_model.mm[0](image_embeds)
     image_embeds = Tensor.gelu(image_embeds)
-    image_embeds = tiny_model.model.visual.merger.linear_fc2(image_embeds)
+    image_embeds = vis_model.mm[2](image_embeds)
     
-    image_mask = input_ids == tiny_model.model.config.image_token_id
+    image_mask = input_ids == 151655
 
-    inputs_embeds = tiny_model.model.language_model.embed_tokens(input_ids)
+    inputs_embeds = lang_model.token_embd(input_ids)
 
     image_mask = image_mask.unsqueeze(-1).expand(inputs_embeds.shape)
     image_embeds = image_embeds.view(-1)
@@ -265,34 +266,34 @@ def prefill(pixel_values, input_ids, image_grid_thw):
 
     position_ids = Tensor.arange(input_ids.shape[-1]).unsqueeze(0).unsqueeze(0).repeat(4, 1, 1)
     pos_id = position_ids[1:]
-    inv_freq_expanded = tiny_model.model.language_model.rotary_emb.inv_freq[None, None, :, None].expand(3, pos_id.shape[1], -1, 1)
+    inv_freq_expanded = lang_model.inv_freq[None, None, :, None].expand(3, pos_id.shape[1], -1, 1)
     position_ids_expanded = pos_id[:, :, None, :]
     freqs = (inv_freq_expanded @ position_ids_expanded).transpose(2, 3)
     freqs_t = freqs[0]  # just overwrite the first dimension T
     freqs_t = freqs_t.contiguous()
     for dim, offset in enumerate((1, 2), start=1):  # H, W
-        length = tiny_model.model.language_model.rotary_emb.mrope_section[dim] * 3
+        length = lang_model.mrope_section[dim] * 3
         idx = slice(offset, length, 3)
         freqs_t[..., idx] = freqs[dim, ..., idx]
     freqs = freqs_t
 
     emb = Tensor.cat(freqs, freqs, dim=-1)
-    cos = emb.cos() * tiny_model.model.language_model.rotary_emb.attention_scaling
-    sin = emb.sin() * tiny_model.model.language_model.rotary_emb.attention_scaling
+    cos = emb.cos()
+    sin = emb.sin()
 
-    for i in range(len(tiny_model.model.language_model.layers)): # todo same block above
+    for i in range(len(lang_model.blk)): # todo same block above
         residual = hidden_states
-        hidden_states = tiny_model.model.language_model.layers[i].input_layernorm(hidden_states)
+        hidden_states = lang_model.blk[i].attn_norm(hidden_states)
         input_shape = hidden_states.shape[:-1]
 
-        hidden_shape = (*input_shape, -1, tiny_model.model.language_model.layers[i].self_attn.head_dim)
-        query = tiny_model.model.language_model.layers[i].self_attn.q_proj(hidden_states).view(hidden_shape)
-        key = tiny_model.model.language_model.layers[i].self_attn.k_proj(hidden_states).view(hidden_shape)
+        hidden_shape = (*input_shape, -1, lang_model.key_length)
+        query = lang_model.blk[i].attn_q(hidden_states).view(hidden_shape)
+        key = lang_model.blk[i].attn_k(hidden_states).view(hidden_shape)
 
-        query = tiny_model.model.language_model.layers[i].self_attn.q_norm(query).transpose(1, 2)
-        key = tiny_model.model.language_model.layers[i].self_attn.k_norm(key).transpose(1, 2)
+        query = lang_model.blk[i].attn_q_norm(query).transpose(1, 2)
+        key = lang_model.blk[i].attn_k_norm(key).transpose(1, 2)
 
-        value = tiny_model.model.language_model.layers[i].self_attn.v_proj(hidden_states).view(hidden_shape).transpose(1, 2)
+        value = lang_model.blk[i].attn_v(hidden_states).view(hidden_shape).transpose(1, 2)
     
         query = (query * cos) + (rotate_half(query) * sin)
         key = (key * cos) + (rotate_half(key) * sin)
@@ -306,6 +307,7 @@ def prefill(pixel_values, input_ids, image_grid_thw):
         seq_len = key.shape[2]
 
         key_padded[:, :seq_len, :] = key[0]
+        value = value.cast(dtypes.bfloat16) #todo
         value_padded[:, :seq_len, :] = value[0]
 
         past_keys[i] = key_padded.clone()
@@ -321,23 +323,23 @@ def prefill(pixel_values, input_ids, image_grid_thw):
         value = value.repeat_interleave(query.size(-3)//value.size(-3), -3)
 
 
-        attn_weight = query @ key.transpose(-2, -1) * tiny_model.model.language_model.layers[i].self_attn.scaling
+        attn_weight = query @ key.transpose(-2, -1) * lang_model.scaling
         attn_weight += attn_bias
         attn_weight = Tensor.softmax(attn_weight)
         attn_output = attn_weight @ value
         attn_output = attn_output.transpose(1, 2).contiguous()
         attn_output = attn_output.reshape(*input_shape, -1).contiguous()
-        hidden_states = tiny_model.model.language_model.layers[i].self_attn.o_proj(attn_output)
+        hidden_states = lang_model.blk[i].attn_output(attn_output)
         hidden_states = residual + hidden_states
         residual = hidden_states
-        hidden_states = tiny_model.model.language_model.layers[i].post_attention_layernorm(hidden_states)
+        hidden_states = lang_model.blk[i].ffn_norm(hidden_states)
         
         
-        gate = tiny_model.model.language_model.layers[i].mlp.gate_proj(hidden_states)
-        up = tiny_model.model.language_model.layers[i].mlp.up_proj(hidden_states)
+        gate = lang_model.blk[i].ffn_gate(hidden_states)
+        up = lang_model.blk[i].ffn_up(hidden_states)
         activated = Tensor.silu(gate)
         combined = activated * up
-        hidden_states = tiny_model.model.language_model.layers[i].mlp.down_proj(combined)
+        hidden_states = lang_model.blk[i].ffn_down(combined)
         hidden_states = residual + hidden_states
         if i < len(deepstack_feature_lists):
             deepstack_features = deepstack_feature_lists[i]
@@ -348,8 +350,8 @@ def prefill(pixel_values, input_ids, image_grid_thw):
             expanded = expanded * mask_float.unsqueeze(-1)
             hidden_states = hidden_states + expanded
 
-    hidden_states = tiny_model.model.language_model.norm(hidden_states)
-    outputs = tiny_model.lm_head(hidden_states[:, -1:, :])
+    hidden_states = lang_model.output_norm(hidden_states)
+    outputs = lang_model.lm_head(hidden_states[:, -1:, :])
     return outputs, position_ids
 
 def forward(
@@ -384,7 +386,7 @@ def forward(
         toks_out.append(next_token)
         print(f"TOK/S = {1 / (time.time() - ts):.2f}")
         print(tok.decode(toks_out), "\n", tok.decode(expected[:len(toks_out)]), "\n")
-        assert tok.decode(toks_out).replace("<|im_end|>","") == tok.decode(expected[:len(toks_out)])
+        #assert tok.decode(toks_out).replace("<|im_end|>","") == tok.decode(expected[:len(toks_out)])
         this_peer_finished = next_token == 151645 or seq_len == 406
 
 
@@ -392,39 +394,39 @@ def forward(
 
 @TinyJit
 def fwd(token, position_ids, seq_len):
-  inputs_embeds = tiny_model.model.language_model.embed_tokens(token)
+  inputs_embeds = lang_model.token_embd(token)
 
   hidden_states = inputs_embeds
   pos_ids = position_ids[1:]
-  inv_freq_expanded = tiny_model.model.language_model.rotary_emb.inv_freq[None, None, :, None].expand(3, pos_ids.shape[1], -1, 1)
+  inv_freq_expanded = lang_model.inv_freq[None, None, :, None].expand(3, pos_ids.shape[1], -1, 1)
   position_ids_expanded = pos_ids[:, :, None, :]
 
   freqs = (inv_freq_expanded @ position_ids_expanded).transpose(2, 3)
   freqs_t = freqs[0]
   freqs_t = freqs_t.contiguous()
   for dim, offset in enumerate((1, 2), start=1):  # H, W
-      length = tiny_model.model.language_model.rotary_emb.mrope_section[dim] * 3
+      length = lang_model.mrope_section[dim] * 3
       idx = slice(offset, length, 3)
       freqs_t[..., idx] = freqs[dim, ..., idx]
   freqs = freqs_t
   emb = Tensor.cat(freqs, freqs, dim=-1)
-  cos = emb.cos() * tiny_model.model.language_model.rotary_emb.attention_scaling
-  sin = emb.sin() * tiny_model.model.language_model.rotary_emb.attention_scaling
+  cos = emb.cos()
+  sin = emb.sin()
 
   # decoder layers
-  for i in range(len(tiny_model.model.language_model.layers)):        
+  for i in range(len(lang_model.blk)):        
     residual = hidden_states
-    hidden_states = tiny_model.model.language_model.layers[i].input_layernorm(hidden_states)
+    hidden_states = lang_model.blk[i].attn_norm(hidden_states)
 
     input_shape = hidden_states.shape[:-1]
-    hidden_shape = (*input_shape, -1, tiny_model.model.language_model.layers[i].self_attn.head_dim)
+    hidden_shape = (*input_shape, -1, lang_model.key_length)
     
-    query = tiny_model.model.language_model.layers[i].self_attn.q_proj(hidden_states).view(hidden_shape)
-    key = tiny_model.model.language_model.layers[i].self_attn.k_proj(hidden_states).view(hidden_shape)
-    query = tiny_model.model.language_model.layers[i].self_attn.q_norm(query).transpose(1, 2)
-    key = tiny_model.model.language_model.layers[i].self_attn.k_norm(key).transpose(1, 2)
+    query = lang_model.blk[i].attn_q(hidden_states).view(hidden_shape)
+    key = lang_model.blk[i].attn_k(hidden_states).view(hidden_shape)
+    query = lang_model.blk[i].attn_q_norm(query).transpose(1, 2)
+    key = lang_model.blk[i].attn_k_norm(key).transpose(1, 2)
 
-    value = tiny_model.model.language_model.layers[i].self_attn.v_proj(hidden_states).view(hidden_shape).transpose(1, 2)
+    value = lang_model.blk[i].attn_v(hidden_states).view(hidden_shape).transpose(1, 2)
 
     query = (query * cos) + (rotate_half(query) * sin)
     key = (key * cos) + (rotate_half(key) * sin)
@@ -436,6 +438,7 @@ def fwd(token, position_ids, seq_len):
     value_padded = value[0].pad(((0,0), (seq_len, 500-seq_len-1), (0,0)))
 
     past_keys[i] += key_padded
+    value_padded = value_padded.cast(dtypes.bfloat16) # todo
     past_values[i] += value_padded
 
     key = past_keys[i][:, :seq_len+1, :]
@@ -444,7 +447,7 @@ def fwd(token, position_ids, seq_len):
     key = key.repeat_interleave(query.size(-3)//key.size(-3), -3)
     value = value.repeat_interleave(query.size(-3)//value.size(-3), -3)
 
-    attn_weight = query @ key.transpose(-2, -1) * tiny_model.model.language_model.layers[i].self_attn.scaling
+    attn_weight = query @ key.transpose(-2, -1) * lang_model.scaling
 
     attn_weight = Tensor.softmax(attn_weight)
     value = value.cast(dtypes.bfloat16)
@@ -454,19 +457,19 @@ def fwd(token, position_ids, seq_len):
     attn_output = attn_output.transpose(1, 2)
     attn_output = attn_output.reshape(*input_shape, -1).contiguous()
 
-    hidden_states = tiny_model.model.language_model.layers[i].self_attn.o_proj(attn_output)                
+    hidden_states = lang_model.blk[i].attn_output(attn_output)                
     hidden_states = residual + hidden_states
     residual = hidden_states
-    hidden_states = tiny_model.model.language_model.layers[i].post_attention_layernorm(hidden_states)
-    gate = tiny_model.model.language_model.layers[i].mlp.gate_proj(hidden_states)
-    up = tiny_model.model.language_model.layers[i].mlp.up_proj(hidden_states)
+    hidden_states = lang_model.blk[i].ffn_norm(hidden_states)
+    gate = lang_model.blk[i].ffn_gate(hidden_states)
+    up = lang_model.blk[i].ffn_up(hidden_states)
     activated = Tensor.silu(gate)
     combined = activated * up
-    hidden_states = tiny_model.model.language_model.layers[i].mlp.down_proj(combined)
+    hidden_states = lang_model.blk[i].ffn_down(combined)
     hidden_states = residual + hidden_states
 
-  hidden_states = tiny_model.model.language_model.norm(hidden_states)
-  outputs = tiny_model.lm_head(hidden_states[:, -1:, :])
+  hidden_states = lang_model.output_norm(hidden_states)
+  outputs = lang_model.lm_head(hidden_states[:, -1:, :])
   position_ids = position_ids[..., -1:] + 1
   next_token_logits = outputs[:, -1, :]
   scores = next_token_logits / temp
@@ -522,70 +525,70 @@ def sample(logits, temp: float, k: int, p: float, af: float, ap: float):
   return output_token
 
 def smart_resize(height, width, factor, min_pixels, max_pixels):
-    h_bar = round(height / factor) * factor
-    w_bar = round(width / factor) * factor
-    if h_bar * w_bar > max_pixels:
-        beta = math.sqrt((height * width) / max_pixels)
-        h_bar = max(factor, math.floor(height / beta / factor) * factor)
-        w_bar = max(factor, math.floor(width / beta / factor) * factor)
-    elif h_bar * w_bar < min_pixels:
-        beta = math.sqrt(min_pixels / (height * width))
-        h_bar = math.ceil(height * beta / factor) * factor
-        w_bar = math.ceil(width * beta / factor) * factor
-    return h_bar, w_bar
+  h_bar = round(height / factor) * factor
+  w_bar = round(width / factor) * factor
+  if h_bar * w_bar > max_pixels:
+      beta = math.sqrt((height * width) / max_pixels)
+      h_bar = max(factor, math.floor(height / beta / factor) * factor)
+      w_bar = max(factor, math.floor(width / beta / factor) * factor)
+  elif h_bar * w_bar < min_pixels:
+      beta = math.sqrt(min_pixels / (height * width))
+      h_bar = math.ceil(height * beta / factor) * factor
+      w_bar = math.ceil(width * beta / factor) * factor
+  return h_bar, w_bar
 
 def _preprocess(image):
-    patch_size = 16
-    merge_size = 2
-    rescale_factor = 0.00392156862745098
-    temporal_patch_size = 2
+  patch_size = 16
+  merge_size = 2
+  rescale_factor = 0.00392156862745098
+  temporal_patch_size = 2
 
-    # image is numpy array in (C, H, W) format with values 0-255
-    height, width = image.shape[-2:]
-    resized_height, resized_width = smart_resize(
-        height,
-        width,
-        factor=patch_size * merge_size,
-        min_pixels=65536,
-        max_pixels=16777216,
-    )
+  # image is numpy array in (C, H, W) format with values 0-255
+  height, width = image.shape[-2:]
+  resized_height, resized_width = smart_resize(
+      height,
+      width,
+      factor=patch_size * merge_size,
+      min_pixels=65536,
+      max_pixels=16777216,
+  )
 
-    # Resize using cv2 - convert to (H, W, C) for cv2
-    image_np = image.transpose(1, 2, 0)  # (C, H, W) -> (H, W, C)
-    image_np = cv2.resize(image_np, (resized_width, resized_height), interpolation=cv2.INTER_LANCZOS4)
-    image = image_np.transpose(2, 0, 1)  # Back to (C, H, W)
-    image = image.astype(np.float32)
+  # Resize using cv2 - convert to (H, W, C) for cv2
+  image_np = image.transpose(1, 2, 0)  # (C, H, W) -> (H, W, C)
+  image_np = cv2.resize(image_np, (resized_width, resized_height), interpolation=cv2.INTER_LANCZOS4)
+  image = image_np.transpose(2, 0, 1)  # Back to (C, H, W)
+  image = image.astype(np.float32)
 
-    # Normalize
-    image_mean = np.array([0.5, 0.5, 0.5]) / rescale_factor
-    image_std = np.array([0.5, 0.5, 0.5]) / rescale_factor
-    image = (image - image_mean[:, None, None]) / image_std[:, None, None]
+  # Normalize
+  image_mean = np.array([0.5, 0.5, 0.5]) / rescale_factor
+  image_std = np.array([0.5, 0.5, 0.5]) / rescale_factor
+  image = (image - image_mean[:, None, None]) / image_std[:, None, None]
 
-    channel = image.shape[0]
-    grid_h, grid_w = resized_height // patch_size, resized_width // patch_size
-    
-    # Reshape and process patches
-    patches = image.reshape(
-        channel,
-        grid_h // merge_size,
-        merge_size,
-        patch_size,
-        grid_w // merge_size,
-        merge_size,
-        patch_size,
-    )
-    patches = patches.transpose(1, 4, 2, 5, 0, 3, 6)  # Equivalent to permute
-    patches = np.expand_dims(patches, axis=4)  # Equivalent to unsqueeze(4)
-    patches = np.broadcast_to(patches, (*patches.shape[:4], temporal_patch_size, *patches.shape[5:]))  # Equivalent to expand
+  channel = image.shape[0]
+  grid_h, grid_w = resized_height // patch_size, resized_width // patch_size
+  
+  # Reshape and process patches
+  patches = image.reshape(
+      channel,
+      grid_h // merge_size,
+      merge_size,
+      patch_size,
+      grid_w // merge_size,
+      merge_size,
+      patch_size,
+  )
+  patches = patches.transpose(1, 4, 2, 5, 0, 3, 6)  # Equivalent to permute
+  patches = np.expand_dims(patches, axis=4)  # Equivalent to unsqueeze(4)
+  patches = np.broadcast_to(patches, (*patches.shape[:4], temporal_patch_size, *patches.shape[5:]))  # Equivalent to expand
 
-    flatten_patches = patches.reshape(
-        grid_h * grid_w,
-        channel * temporal_patch_size * patch_size * patch_size,
-    )
+  flatten_patches = patches.reshape(
+      grid_h * grid_w,
+      channel * temporal_patch_size * patch_size * patch_size,
+  )
 
-    pixel_values = flatten_patches
-    image_grid_thw = [1, grid_h, grid_w]
-    return pixel_values, image_grid_thw
+  pixel_values = flatten_patches
+  image_grid_thw = [1, grid_h, grid_w]
+  return pixel_values, image_grid_thw
 
 from tinygrad import Tensor
 Tensor.manual_seed(42)
@@ -594,155 +597,127 @@ from tinygrad.nn.state import safe_load, load_state_dict
 from tinygrad import dtypes
 
 class Qwen3VLTextRMSNorm_tiny():
-    def __init__(self, size):
-        self.variance_epsilon = 1e-06
-        self.weight = Tensor.zeros(size)
+  def __init__(self, size):
+    self.variance_epsilon = 1e-06
+    self.weight = Tensor.zeros(size)
 
-    def __call__(self, hidden_states):
-        variance = hidden_states.pow(2).mean(-1, keepdim=True)
-        hidden_states = hidden_states * Tensor.rsqrt(variance + self.variance_epsilon)
-        return self.weight * hidden_states
+  def __call__(self, hidden_states):
+    variance = hidden_states.pow(2).mean(-1, keepdim=True)
+    hidden_states = hidden_states * Tensor.rsqrt(variance + self.variance_epsilon)
+    return self.weight * hidden_states
     
 
 if __name__ == "__main__":
+  class blank: pass
+  _, state_dict_language = gguf_load(fetch("https://huggingface.co/Qwen/Qwen3-VL-2B-Instruct-GGUF/resolve/main/Qwen3VL-2B-Instruct-F16.gguf"))
+  _, state_dict_visual = gguf_load(fetch("https://huggingface.co/Qwen/Qwen3-VL-2B-Instruct-GGUF/resolve/main/mmproj-Qwen3VL-2B-Instruct-F16.gguf"))
+  lang_model = blank()
+  lang_model.token_embd = nn.Embedding(vocab_size=151936, embed_size=2048)
+  lang_model.blk = []
+  lang_model.output_norm = Qwen3VLTextRMSNorm_tiny(size=2048)
+  for i in range(28):
+    lang_model.blk.append(blank())
+    lang_model.blk[i].attn_k = nn.Linear(2048, 1024, bias=False)
+    lang_model.blk[i].attn_q = nn.Linear(2048, 2048, bias=False)
+    lang_model.blk[i].attn_v = nn.Linear(2048, 1024, bias=False)
+    lang_model.blk[i].attn_output = nn.Linear(2048, 2048, bias=False)
+    lang_model.blk[i].ffn_gate = nn.Linear(2048, 6144, bias=False)
+    lang_model.blk[i].ffn_up = nn.Linear(2048, 6144, bias=False)
+    lang_model.blk[i].ffn_down = nn.Linear(6144, 2048, bias=False)
+    lang_model.blk[i].attn_k_norm = Qwen3VLTextRMSNorm_tiny(size=128)
+    lang_model.blk[i].attn_q_norm = Qwen3VLTextRMSNorm_tiny(size=128)
+    lang_model.blk[i].ffn_norm = Qwen3VLTextRMSNorm_tiny(size=2048)
+    lang_model.blk[i].attn_norm = Qwen3VLTextRMSNorm_tiny(size=2048)
 
-    class blank: pass
+  lang_model.scaling = 0.08838834764831845
+  lang_model.key_length = 128
+  lang_model.mrope_section = [24, 20, 20]
 
-    tiny_weights = safe_load(fetch(f'https://huggingface.co/Qwen/Qwen3-VL-2B-Instruct/resolve/main/model.safetensors'))
-    
-    tiny_model = blank()
-    tiny_model.model = blank()
-    tiny_model.model.config = blank()
-    tiny_model.model.config.image_token_id = 151655
-    tiny_model.model.visual = blank()
-    tiny_model.model.visual.rotary_pos_emb = blank()
-    tiny_model.model.visual.rotary_pos_emb.dim = 32
-    tiny_model.model.visual.rotary_pos_emb.theta = 10000.0
-    tiny_model.model.visual.spatial_merge_size = 2
-    tiny_model.model.visual.patch_embed = blank()
-    tiny_model.model.visual.patch_embed.embed_dim = 1024
-    tiny_model.model.visual.patch_embed.in_channels = 3
-    tiny_model.model.visual.patch_embed.temporal_patch_size = 2
-    tiny_model.model.visual.patch_embed.patch_size = 16
-    tiny_model.model.visual.patch_embed.proj = blank()
-    tiny_model.model.visual.patch_embed.proj.weight = Tensor.zeros(1024, 3, 2, 16, 16)
-    tiny_model.model.visual.patch_embed.proj.bias = Tensor.zeros(1024)
-    tiny_model.model.visual.patch_embed.proj.stride = (2, 16, 16)
-    tiny_model.model.visual.patch_embed.proj.padding = (0, 0, 0)
-    tiny_model.model.visual.patch_embed.proj.dilation = (1, 1, 1)
-    tiny_model.model.visual.patch_embed.proj.groups = 1
-    tiny_model.model.visual.deepstack_merger_list = []
-    for i in range(3):
-       tiny_model.model.visual.deepstack_merger_list.append(blank())
-       tiny_model.model.visual.deepstack_merger_list[i].norm = nn.LayerNorm(4096, eps=1e-6, elementwise_affine=True)
-       tiny_model.model.visual.deepstack_merger_list[i].hidden_size = 4096
-       tiny_model.model.visual.deepstack_merger_list[i].linear_fc1 = nn.Linear(4096, 4096)
-       tiny_model.model.visual.deepstack_merger_list[i].linear_fc2 = nn.Linear(4096, 2048)
-       
-    tiny_model.model.visual.deepstack_visual_indexes = [5, 11, 17]
-    tiny_model.model.visual.blocks = []
-    for i in range(24):
-       tiny_model.model.visual.blocks.append(blank())
-       tiny_model.model.visual.blocks[i].attn = blank()
-       tiny_model.model.visual.blocks[i].attn.proj = nn.Linear(1024, 1024)
-       tiny_model.model.visual.blocks[i].attn.qkv = nn.Linear(1024, 3072)
-       tiny_model.model.visual.blocks[i].attn.num_heads = 16
-       tiny_model.model.visual.blocks[i].attn.scaling = 0.125
-       tiny_model.model.visual.blocks[i].norm1 = nn.LayerNorm(1024, eps=1e-6, elementwise_affine=True)
-       tiny_model.model.visual.blocks[i].norm2 = nn.LayerNorm(1024, eps=1e-6, elementwise_affine=True)
-       tiny_model.model.visual.blocks[i].mlp = blank()
-       tiny_model.model.visual.blocks[i].mlp.linear_fc1 = nn.Linear(1024, 4096)
-       tiny_model.model.visual.blocks[i].mlp.linear_fc2 = nn.Linear(4096, 1024)
-    tiny_model.model.visual.config = blank()
-    tiny_model.model.visual.config.spatial_merge_size = 2
-    tiny_model.model.visual.num_grid_per_side = 48
-    tiny_model.model.visual.pos_embed = nn.Embedding(2304, 1024)
-    tiny_model.model.language_model = blank()
-    tiny_model.model.language_model.layers = []
-    tiny_model.model.language_model.rotary_emb = blank()
-    tiny_model.model.language_model.rotary_emb.mrope_section = [24, 20, 20]
-    tiny_model.model.language_model.rotary_emb.attention_scaling = 1
-    #tiny_model.model.language_model.rotary_emb.theta
+  vis_model = blank()
+  vis_model.v = blank()
+  vis_model.v.blk = []
+  for i in range(24):
+    vis_model.v.blk.append(blank())
+    vis_model.v.blk[i].ffn_up = nn.Linear(1024, 4096)
+    vis_model.v.blk[i].ffn_down = nn.Linear(4096, 1024)
+    vis_model.v.blk[i].ln1 = nn.LayerNorm(1024, eps=1e-6, elementwise_affine=True)
+    vis_model.v.blk[i].ln2 = nn.LayerNorm(1024, eps=1e-6, elementwise_affine=True)
+    vis_model.v.blk[i].attn_out = nn.Linear(1024, 1024)
+    vis_model.v.blk[i].attn_qkv = nn.Linear(1024, 3072)
+  
+  vis_model.v.patch_embd = blank()
+  vis_model.v.patch_embd.weight = Tensor.zeros(1024, 3, 16, 16)
+  vis_model.v.patch_embd.weight2 = Tensor.zeros(1024, 3, 16, 16)
+  vis_model.v.patch_embd.bias = Tensor.zeros(1024)
+  vis_model.v.num_grid_per_side = 48
 
-    tiny_model.model.visual.pos_embed.weight.cast(dtypes.bfloat16)
-    #print(tiny_model.model.visual.pos_embed.weight.dtype)
-    #print(len(model.model.language_model.layers))
-    #print(model.model.visual.pos_embed.weight.dtype)
-    #print(model.model.language_model.layers[0].input_layernorm)
-    #print(model.model.language_model.layers[0].input_layernorm.weight.shape, model.model.language_model.layers[0].input_layernorm.variance_epsilon)
-    # todo
-    tiny_model.model.language_model.norm = Qwen3VLTextRMSNorm_tiny(size=2048)
-    for i in range(28):
-      tiny_model.model.language_model.layers.append(blank())
-      tiny_model.model.language_model.layers[i].self_attn = blank()
-      tiny_model.model.language_model.layers[i].self_attn.scaling = 0.08838834764831845
-      tiny_model.model.language_model.layers[i].self_attn.head_dim = 128
-      tiny_model.model.language_model.layers[i].self_attn.q_proj = nn.Linear(2048, 2048, bias=False)
-      tiny_model.model.language_model.layers[i].self_attn.k_proj = nn.Linear(2048, 1024, bias=False)
-      tiny_model.model.language_model.layers[i].self_attn.v_proj = nn.Linear(2048, 1024, bias=False)
-      tiny_model.model.language_model.layers[i].self_attn.o_proj = nn.Linear(2048, 2048, bias=False)
-      tiny_model.model.language_model.layers[i].self_attn.q_norm = Qwen3VLTextRMSNorm_tiny(size=128)
-      tiny_model.model.language_model.layers[i].self_attn.k_norm = Qwen3VLTextRMSNorm_tiny(size=128)
-      tiny_model.model.language_model.layers[i].input_layernorm = Qwen3VLTextRMSNorm_tiny(size=2048)
-      tiny_model.model.language_model.layers[i].post_attention_layernorm = Qwen3VLTextRMSNorm_tiny(size=2048)
-      tiny_model.model.language_model.layers[i].mlp = blank()
-      tiny_model.model.language_model.layers[i].mlp.gate_proj = nn.Linear(2048, 6144, bias=False)
-      tiny_model.model.language_model.layers[i].mlp.up_proj = nn.Linear(2048, 6144, bias=False)
-      tiny_model.model.language_model.layers[i].mlp.down_proj = nn.Linear(6144, 2048, bias=False)
-      tiny_model.model.language_model.embed_tokens = nn.Embedding(vocab_size=151936, embed_size=2048)
+  vis_model.v.deepstack = []
+  for i in range(18):
+    vis_model.v.deepstack.append(blank())
+    if i not in [5, 11, 17]: continue
+    vis_model.v.deepstack[i].fc1 = nn.Linear(4096, 4096)
+    vis_model.v.deepstack[i].fc2 = nn.Linear(4096, 2048)
+    vis_model.v.deepstack[i].norm = nn.LayerNorm(4096, eps=1e-6, elementwise_affine=True)
+    vis_model.v.deepstack[i].hidden_size = 4096
 
-    tiny_model.model.visual.merger = blank()
-    tiny_model.model.visual.merger.hidden_size = 4096
-    tiny_model.model.visual.merger.norm = nn.LayerNorm(1024, eps=1e-6, elementwise_affine=True)
-    tiny_model.model.visual.merger.linear_fc1 = nn.Linear(4096, 4096, bias=True)
-    tiny_model.model.visual.merger.linear_fc2 = nn.Linear(4096, 2048, bias=True)
-    load_state_dict(tiny_model, tiny_weights)
+  vis_model.v.position_embd = nn.Embedding(2304, 1024)
+  vis_model.mm = [blank(), blank(), blank()]
+  vis_model.mm[0] = nn.Linear(4096, 4096, bias=True)
+  vis_model.mm[2] = nn.Linear(4096, 2048, bias=True)
+  vis_model.v.post_ln = nn.LayerNorm(1024, eps=1e-6, elementwise_affine=True)
 
-    tiny_model.lm_head = nn.Linear(2048, 151936, bias=False)
-    tiny_model.lm_head.weight = tiny_model.model.language_model.embed_tokens.weight
-    tiny_model.model.visual.rotary_pos_emb.inv_freq = 1.0 / (tiny_model.model.visual.rotary_pos_emb.theta ** (Tensor.arange(0, tiny_model.model.visual.rotary_pos_emb.dim, 2, dtype=dtypes.float) / tiny_model.model.visual.rotary_pos_emb.dim))
-    tiny_model.model.language_model.rotary_emb.inv_freq = 1.0 / (5000000 ** (Tensor.arange(0, 128, 2, dtype=dtypes.int64) / 128))
+  load_state_dict(lang_model, state_dict_language)
+  state_dict_visual["v.patch_embd.weight2"] = state_dict_visual["v.patch_embd.weight.1"] # todo
+  load_state_dict(vis_model, state_dict_visual)
+
+  lang_model.lm_head = nn.Linear(2048, 151936, bias=False)
+  lang_model.lm_head.weight = lang_model.token_embd.weight
+  vis_model.inv_freq = 1.0 / (10000.0 ** (Tensor.arange(0, 32, 2, dtype=dtypes.float) / 32))
+  lang_model.inv_freq = 1.0 / (5000000 ** (Tensor.arange(0, 128, 2) / 128))
 
 
-    images = [
-        cv2.cvtColor(cv2.imread("f40.jpeg"), cv2.COLOR_BGR2RGB),
-        cv2.cvtColor(cv2.imread("micra.jpg"), cv2.COLOR_BGR2RGB),
-        cv2.cvtColor(cv2.imread("test_img.jpg"), cv2.COLOR_BGR2RGB)
-    ]
+  images = [
+      cv2.cvtColor(cv2.imread("f40.jpeg"), cv2.COLOR_BGR2RGB),
+      cv2.cvtColor(cv2.imread("micra.jpg"), cv2.COLOR_BGR2RGB),
+      cv2.cvtColor(cv2.imread("test_img.jpg"), cv2.COLOR_BGR2RGB)
+  ]
 
-    expected_outputs = ["This is a Ferrari F40, a classic sports car from the 1980s.",
-                        "Based on the image provided, the vehicle is a **Nissan Micra** (also known as the Nissan Primera in some markets, but this is a different model). The specific model in the image is the **Nissan Micra 1.0** (or 1.0L) from the **1995-2000** model years.\n\nHere is a detailed look at the history of the Nissan Micra:\n\n---\n\n### **Origins and Introduction**\n- **1995**: The Nissan Micra was introduced as a compact, economical, and stylish hatchback. It was designed to compete with",
-                        "A person wearing a light green hoodie and light-colored pants is standing near a silver car with the driver's side door open."]
+  expected_outputs = ["This is a Ferrari F40, a classic sports car from the 1980s.",
+                      "Based on the image provided, the vehicle is a **Nissan Micra** (also known as the Nissan Primera in some markets, but this is a different model). The specific model in the image is the **Nissan Micra 1.0** (or 1.0L) from the **1995-2000** model years.\n\nHere is a detailed look at the history of the Nissan Micra:\n\n---\n\n### **Origins and Introduction**\n- **1995**: The Nissan Micra was introduced as a compact, economical, and stylish hatchback. It was designed to compete with",
+                      "A person wearing a light green hoodie and light-colored pants is standing near a silver car with the driver's side door open."]
 
-    prompts = ["<|im_start|>user\n<|vision_start|><|image_pad|><|vision_end|>\nWhat car is this? in one sentence<|im_end|>\n<|im_start|>assistant\n",
-            "<|im_start|>user\n<|vision_start|><|image_pad|><|vision_end|>\nTell me the history of this car<|im_end|>\n<|im_start|>assistant\n",
-            "<|im_start|>user\n<|vision_start|><|image_pad|><|vision_end|>\nWhat has been detected on my CCTV camera? Write in one short sentence, only info about the object(s) detected.<|im_end|>\n<|im_start|>assistant\n"]
+  prompts = ["<|im_start|>user\n<|vision_start|><|image_pad|><|vision_end|>\nWhat car is this? in one sentence<|im_end|>\n<|im_start|>assistant\n",
+          "<|im_start|>user\n<|vision_start|><|image_pad|><|vision_end|>\nTell me the history of this car<|im_end|>\n<|im_start|>assistant\n",
+          "<|im_start|>user\n<|vision_start|><|image_pad|><|vision_end|>\nWhat has been detected on my CCTV camera? Write in one short sentence, only info about the object(s) detected.<|im_end|>\n<|im_start|>assistant\n"]
 
-    import pickle
-    tok = pickle.load(open("tok.pkl", "rb"))
-    for image, expected_output, prompt in zip(images, expected_outputs, prompts):
-      past_keys = [Tensor.zeros(8, 500, 128).contiguous() for i in range(len(tiny_model.model.language_model.layers))]
-      past_values = [Tensor.zeros(8, 500, 128).contiguous() for i in range(len(tiny_model.model.language_model.layers))]
+  import pickle
+  tok = pickle.load(open("tok.pkl", "rb"))
+  for image, expected_output, prompt in zip(images, expected_outputs, prompts):
+    past_keys = [Tensor.zeros(8, 500, 128).contiguous() for i in range(len(lang_model.blk))]
+    past_values = [Tensor.zeros(8, 500, 128).contiguous() for i in range(len(lang_model.blk))]
 
-      text_inputs = tok.encode(prompt)
+    text_inputs = tok.encode(prompt)
 
-      image = image.transpose(2, 0, 1)
-      pixel_values, image_grid_thw = _preprocess(image=image)
+    image = image.transpose(2, 0, 1)
+    pixel_values, image_grid_thw = _preprocess(image=image)
 
-      merge_size = 2
-      num_image_tokens = ((image_grid_thw[0]*image_grid_thw[1]*image_grid_thw[2]) / (merge_size ** 2))
+    merge_size = 2
+    num_image_tokens = ((image_grid_thw[0]*image_grid_thw[1]*image_grid_thw[2]) / (merge_size ** 2))
 
-      image_token_id = 151655
-      image_token_positions = [i for i, tid in enumerate(text_inputs) if tid == image_token_id]
+    image_token_id = 151655
+    image_token_positions = [i for i, tid in enumerate(text_inputs) if tid == image_token_id]
 
-      for pos in reversed(image_token_positions): text_inputs[pos:pos+1] = [image_token_id] * int(num_image_tokens)
+    for pos in reversed(image_token_positions): text_inputs[pos:pos+1] = [image_token_id] * int(num_image_tokens)
 
-      outputs = forward(input_ids=Tensor([text_inputs]), pixel_values=Tensor(pixel_values.astype(np.float32)), image_grid_thw=image_grid_thw, expected=tok.encode(expected_output))
+    outputs = forward(input_ids=Tensor([text_inputs]), pixel_values=Tensor(pixel_values.astype(np.float32)), image_grid_thw=image_grid_thw, expected=tok.encode(expected_output))
 
-      output = tok.decode(outputs)
-      output = output.replace("<|im_end|>","") # todo hack
-      print("output =",output)
-      assert output == expected_output
+    output = tok.decode(outputs)
+    output = output.replace("<|im_end|>","") # todo hack
+    print("output =",output)
+    assert output == expected_output
+
+
+
 
 
 
