@@ -227,9 +227,9 @@ def prefill(pixel_values, input_ids, image_grid_thw):
         attn_output = tiny_model.model.visual.blocks[i].attn.proj(attn_output)
         hidden_states += attn_output
         norm = tiny_model.model.visual.blocks[i].norm2(hidden_states)
-        x = tiny_model.model.visual.blocks[i].mlp.linear_fc1(norm)
+        x = vis_model.v.blk[i].ffn_up(norm)
         x = Tensor.gelu(x)
-        norm = tiny_model.model.visual.blocks[i].mlp.linear_fc2(x)
+        norm = vis_model.v.blk[i].ffn_down(x)
         hidden_states = hidden_states + norm
 
         if i in tiny_model.model.visual.deepstack_visual_indexes:
@@ -610,7 +610,7 @@ class Qwen3VLTextRMSNorm_tiny():
 if __name__ == "__main__":
   class blank: pass
   _, state_dict_language = gguf_load(fetch("https://huggingface.co/Qwen/Qwen3-VL-2B-Instruct-GGUF/resolve/main/Qwen3VL-2B-Instruct-F16.gguf"))
-  #_, state_dict_visual = gguf_load(fetch("https://huggingface.co/Qwen/Qwen3-VL-2B-Instruct-GGUF/resolve/main/mmproj-Qwen3VL-2B-Instruct-F16.gguf"))
+  _, state_dict_visual = gguf_load(fetch("https://huggingface.co/Qwen/Qwen3-VL-2B-Instruct-GGUF/resolve/main/mmproj-Qwen3VL-2B-Instruct-F16.gguf"))
   
 
   tiny_weights = safe_load(fetch(f'https://huggingface.co/Qwen/Qwen3-VL-2B-Instruct/resolve/main/model.safetensors'))
@@ -635,6 +635,14 @@ if __name__ == "__main__":
   gguf_model.scaling = 0.08838834764831845
   gguf_model.key_length = 128
   gguf_model.mrope_section = [24, 20, 20]
+
+  vis_model = blank()
+  vis_model.v = blank()
+  vis_model.v.blk = []
+  for i in range(24):
+    vis_model.v.blk.append(blank())
+    vis_model.v.blk[i].ffn_up = nn.Linear(1024, 4096)
+    vis_model.v.blk[i].ffn_down = nn.Linear(4096, 1024)
 
 
   tiny_model = blank()
@@ -677,9 +685,6 @@ if __name__ == "__main__":
       tiny_model.model.visual.blocks[i].attn.scaling = 0.125
       tiny_model.model.visual.blocks[i].norm1 = nn.LayerNorm(1024, eps=1e-6, elementwise_affine=True)
       tiny_model.model.visual.blocks[i].norm2 = nn.LayerNorm(1024, eps=1e-6, elementwise_affine=True)
-      tiny_model.model.visual.blocks[i].mlp = blank()
-      tiny_model.model.visual.blocks[i].mlp.linear_fc1 = nn.Linear(1024, 4096)
-      tiny_model.model.visual.blocks[i].mlp.linear_fc2 = nn.Linear(4096, 1024)
   tiny_model.model.visual.config = blank()
   tiny_model.model.visual.config.spatial_merge_size = 2
   tiny_model.model.visual.num_grid_per_side = 48
@@ -693,6 +698,7 @@ if __name__ == "__main__":
   tiny_model.model.visual.merger.linear_fc2 = nn.Linear(4096, 2048, bias=True)
   load_state_dict(tiny_model, tiny_weights)
   load_state_dict(gguf_model, state_dict_language)
+  load_state_dict(vis_model, state_dict_visual)
 
   tiny_model.lm_head = nn.Linear(2048, 151936, bias=False)
   tiny_model.lm_head.weight = gguf_model.token_embd.weight
