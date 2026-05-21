@@ -283,15 +283,15 @@ def prefill(pixel_values, input_ids, image_grid_thw):
 
     for i in range(len(tiny_model.model.language_model.layers)): # todo same block above
         residual = hidden_states
-        hidden_states = tiny_model.model.language_model.layers[i].input_layernorm(hidden_states)
+        hidden_states = gguf_model.blk[i].attn_norm(hidden_states)
         input_shape = hidden_states.shape[:-1]
 
         hidden_shape = (*input_shape, -1, tiny_model.model.language_model.layers[i].self_attn.head_dim)
         query = gguf_model.blk[i].attn_q(hidden_states).view(hidden_shape)
         key = gguf_model.blk[i].attn_k(hidden_states).view(hidden_shape)
 
-        query = tiny_model.model.language_model.layers[i].self_attn.q_norm(query).transpose(1, 2)
-        key = tiny_model.model.language_model.layers[i].self_attn.k_norm(key).transpose(1, 2)
+        query = gguf_model.blk[i].attn_q_norm(query).transpose(1, 2)
+        key = gguf_model.blk[i].attn_k_norm(key).transpose(1, 2)
 
         value = gguf_model.blk[i].attn_v(hidden_states).view(hidden_shape).transpose(1, 2)
     
@@ -332,7 +332,7 @@ def prefill(pixel_values, input_ids, image_grid_thw):
         hidden_states = gguf_model.blk[i].attn_output(attn_output)
         hidden_states = residual + hidden_states
         residual = hidden_states
-        hidden_states = tiny_model.model.language_model.layers[i].post_attention_layernorm(hidden_states)
+        hidden_states = gguf_model.blk[i].ffn_norm(hidden_states)
         
         
         gate = gguf_model.blk[i].ffn_gate(hidden_states)
@@ -416,15 +416,15 @@ def fwd(token, position_ids, seq_len):
   # decoder layers
   for i in range(len(tiny_model.model.language_model.layers)):        
     residual = hidden_states
-    hidden_states = tiny_model.model.language_model.layers[i].input_layernorm(hidden_states)
+    hidden_states = gguf_model.blk[i].attn_norm(hidden_states)
 
     input_shape = hidden_states.shape[:-1]
     hidden_shape = (*input_shape, -1, tiny_model.model.language_model.layers[i].self_attn.head_dim)
     
     query = gguf_model.blk[i].attn_q(hidden_states).view(hidden_shape)
     key = gguf_model.blk[i].attn_k(hidden_states).view(hidden_shape)
-    query = tiny_model.model.language_model.layers[i].self_attn.q_norm(query).transpose(1, 2)
-    key = tiny_model.model.language_model.layers[i].self_attn.k_norm(key).transpose(1, 2)
+    query = gguf_model.blk[i].attn_q_norm(query).transpose(1, 2)
+    key = gguf_model.blk[i].attn_k_norm(key).transpose(1, 2)
 
     value = gguf_model.blk[i].attn_v(hidden_states).view(hidden_shape).transpose(1, 2)
 
@@ -628,6 +628,11 @@ if __name__ == "__main__":
       gguf_model.blk[i].ffn_gate = nn.Linear(2048, 6144, bias=False)
       gguf_model.blk[i].ffn_up = nn.Linear(2048, 6144, bias=False)
       gguf_model.blk[i].ffn_down = nn.Linear(6144, 2048, bias=False)
+      gguf_model.blk[i].attn_k_norm = Qwen3VLTextRMSNorm_tiny(size=128)
+      gguf_model.blk[i].attn_q_norm = Qwen3VLTextRMSNorm_tiny(size=128)
+      gguf_model.blk[i].ffn_norm = Qwen3VLTextRMSNorm_tiny(size=2048)
+      gguf_model.blk[i].attn_norm = Qwen3VLTextRMSNorm_tiny(size=2048)
+      
 
     tiny_model = blank()
     tiny_model.model = blank()
@@ -697,18 +702,7 @@ if __name__ == "__main__":
       tiny_model.model.language_model.layers[i].self_attn = blank()
       tiny_model.model.language_model.layers[i].self_attn.scaling = 0.08838834764831845
       tiny_model.model.language_model.layers[i].self_attn.head_dim = 128
-      tiny_model.model.language_model.layers[i].self_attn.q_proj = nn.Linear(2048, 2048, bias=False)
-      tiny_model.model.language_model.layers[i].self_attn.k_proj = nn.Linear(2048, 1024, bias=False)
-      tiny_model.model.language_model.layers[i].self_attn.v_proj = nn.Linear(2048, 1024, bias=False)
-      tiny_model.model.language_model.layers[i].self_attn.o_proj = nn.Linear(2048, 2048, bias=False)
-      tiny_model.model.language_model.layers[i].self_attn.q_norm = Qwen3VLTextRMSNorm_tiny(size=128)
-      tiny_model.model.language_model.layers[i].self_attn.k_norm = Qwen3VLTextRMSNorm_tiny(size=128)
-      tiny_model.model.language_model.layers[i].input_layernorm = Qwen3VLTextRMSNorm_tiny(size=2048)
       tiny_model.model.language_model.layers[i].post_attention_layernorm = Qwen3VLTextRMSNorm_tiny(size=2048)
-      tiny_model.model.language_model.layers[i].mlp = blank()
-      tiny_model.model.language_model.layers[i].mlp.gate_proj = nn.Linear(2048, 6144, bias=False)
-      tiny_model.model.language_model.layers[i].mlp.up_proj = nn.Linear(2048, 6144, bias=False)
-      tiny_model.model.language_model.layers[i].mlp.down_proj = nn.Linear(6144, 2048, bias=False)
       tiny_model.model.language_model.embed_tokens = nn.Embedding(vocab_size=151936, embed_size=2048)
 
     tiny_model.model.visual.merger = blank()
@@ -764,6 +758,7 @@ if __name__ == "__main__":
       output = output.replace("<|im_end|>","") # todo hack
       print("output =",output)
       assert output == expected_output
+
 
 
 
