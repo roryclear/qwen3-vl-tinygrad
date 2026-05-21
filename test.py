@@ -329,17 +329,17 @@ def prefill(pixel_values, input_ids, image_grid_thw):
         attn_output = attn_weight @ value
         attn_output = attn_output.transpose(1, 2).contiguous()
         attn_output = attn_output.reshape(*input_shape, -1).contiguous()
-        hidden_states = tiny_model.model.language_model.layers[i].self_attn.o_proj(attn_output)
+        hidden_states = gguf_model.blk[i].attn_output(attn_output)
         hidden_states = residual + hidden_states
         residual = hidden_states
         hidden_states = tiny_model.model.language_model.layers[i].post_attention_layernorm(hidden_states)
         
         
-        gate = tiny_model.model.language_model.layers[i].mlp.gate_proj(hidden_states)
-        up = tiny_model.model.language_model.layers[i].mlp.up_proj(hidden_states)
+        gate = gguf_model.blk[i].ffn_gate(hidden_states)
+        up = gguf_model.blk[i].ffn_up(hidden_states)
         activated = Tensor.silu(gate)
         combined = activated * up
-        hidden_states = tiny_model.model.language_model.layers[i].mlp.down_proj(combined)
+        hidden_states = gguf_model.blk[i].ffn_down(combined)
         hidden_states = residual + hidden_states
         if i < len(deepstack_feature_lists):
             deepstack_features = deepstack_feature_lists[i]
@@ -457,15 +457,15 @@ def fwd(token, position_ids, seq_len):
     attn_output = attn_output.transpose(1, 2)
     attn_output = attn_output.reshape(*input_shape, -1).contiguous()
 
-    hidden_states = tiny_model.model.language_model.layers[i].self_attn.o_proj(attn_output)                
+    hidden_states = gguf_model.blk[i].attn_output(attn_output)                
     hidden_states = residual + hidden_states
     residual = hidden_states
     hidden_states = tiny_model.model.language_model.layers[i].post_attention_layernorm(hidden_states)
-    gate = tiny_model.model.language_model.layers[i].mlp.gate_proj(hidden_states)
-    up = tiny_model.model.language_model.layers[i].mlp.up_proj(hidden_states)
+    gate = gguf_model.blk[i].ffn_gate(hidden_states)
+    up = gguf_model.blk[i].ffn_up(hidden_states)
     activated = Tensor.silu(gate)
     combined = activated * up
-    hidden_states = tiny_model.model.language_model.layers[i].mlp.down_proj(combined)
+    hidden_states = gguf_model.blk[i].ffn_down(combined)
     hidden_states = residual + hidden_states
 
   hidden_states = tiny_model.model.language_model.norm(hidden_states)
@@ -624,6 +624,10 @@ if __name__ == "__main__":
       gguf_model.blk[i].attn_k = nn.Linear(2048, 1024, bias=False)
       gguf_model.blk[i].attn_q = nn.Linear(2048, 2048, bias=False)
       gguf_model.blk[i].attn_v = nn.Linear(2048, 1024, bias=False)
+      gguf_model.blk[i].attn_output = nn.Linear(2048, 2048, bias=False)
+      gguf_model.blk[i].ffn_gate = nn.Linear(2048, 6144, bias=False)
+      gguf_model.blk[i].ffn_up = nn.Linear(2048, 6144, bias=False)
+      gguf_model.blk[i].ffn_down = nn.Linear(6144, 2048, bias=False)
 
     tiny_model = blank()
     tiny_model.model = blank()
