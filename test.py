@@ -159,7 +159,7 @@ def prefill(pixel_values, input_ids, image_grid_thw):
         (dh[None].T * dw[None]).flatten(),
     ).cast(dtypes.bfloat16)
 
-    pos_embeds = tiny_model.model.visual.pos_embed(idx_tensor)
+    pos_embeds = vis_model.v.position_embd(idx_tensor)
     pos_embeds *= weight_tensor[:, :, None]
     patch_pos_embeds = pos_embeds[0] + pos_embeds[1] + pos_embeds[2] + pos_embeds[3]
 
@@ -170,7 +170,7 @@ def prefill(pixel_values, input_ids, image_grid_thw):
     pos_embeds = (pos_embeds.view(grid_ts, grid_hs // merge_size, merge_size, grid_ws // merge_size, merge_size, -1).permute(0, 1, 3, 2, 4, 5).flatten(0, 4))
     hidden_states = hidden_states + pos_embeds
     
-    merge_size = int(tiny_model.model.visual.spatial_merge_size)
+    merge_size = 2
 
 
     hpos_ids = Tensor.arange(image_grid_thw[1]).unsqueeze(1).expand(-1, image_grid_thw[2])
@@ -239,12 +239,12 @@ def prefill(pixel_values, input_ids, image_grid_thw):
             deepstack_feature_lists.append(deepstack_feature)
 
     image_embeds = tiny_model.model.visual.merger.norm(hidden_states)
-    image_embeds = image_embeds.view(-1, tiny_model.model.visual.merger.hidden_size)
+    image_embeds = image_embeds.view(-1, 4096)
     image_embeds = tiny_model.model.visual.merger.linear_fc1(image_embeds)
     image_embeds = Tensor.gelu(image_embeds)
     image_embeds = tiny_model.model.visual.merger.linear_fc2(image_embeds)
     
-    image_mask = input_ids == tiny_model.model.config.image_token_id
+    image_mask = input_ids == 151655
 
     inputs_embeds = gguf_model.token_embd(input_ids)
 
@@ -663,23 +663,13 @@ if __name__ == "__main__":
     vis_model.v.deepstack[i].norm = nn.LayerNorm(4096, eps=1e-6, elementwise_affine=True)
     vis_model.v.deepstack[i].hidden_size = 4096
 
+  vis_model.v.position_embd = nn.Embedding(2304, 1024)
+
   tiny_model = blank()
   tiny_model.model = blank()
-  tiny_model.model.config = blank()
-  tiny_model.model.config.image_token_id = 151655
   tiny_model.model.visual = blank()
-  tiny_model.model.visual.rotary_pos_emb = blank()
-  tiny_model.model.visual.rotary_pos_emb.theta = 10000.0
-  tiny_model.model.visual.spatial_merge_size = 2
       
-  tiny_model.model.visual.deepstack_visual_indexes = [5, 11, 17]
-  tiny_model.model.visual.blocks = []
-  tiny_model.model.visual.config = blank()
-  tiny_model.model.visual.pos_embed = nn.Embedding(2304, 1024)
-
-  tiny_model.model.visual.pos_embed.weight.cast(dtypes.bfloat16)
   tiny_model.model.visual.merger = blank()
-  tiny_model.model.visual.merger.hidden_size = 4096
   tiny_model.model.visual.merger.norm = nn.LayerNorm(1024, eps=1e-6, elementwise_affine=True)
   tiny_model.model.visual.merger.linear_fc1 = nn.Linear(4096, 4096, bias=True)
   tiny_model.model.visual.merger.linear_fc2 = nn.Linear(4096, 2048, bias=True)
@@ -690,7 +680,7 @@ if __name__ == "__main__":
 
   tiny_model.lm_head = nn.Linear(2048, 151936, bias=False)
   tiny_model.lm_head.weight = gguf_model.token_embd.weight
-  vis_model.inv_freq = 1.0 / (tiny_model.model.visual.rotary_pos_emb.theta ** (Tensor.arange(0, 32, 2, dtype=dtypes.float) / 32))
+  vis_model.inv_freq = 1.0 / (10000.0 ** (Tensor.arange(0, 32, 2, dtype=dtypes.float) / 32))
   gguf_model.inv_freq = 1.0 / (5000000 ** (Tensor.arange(0, 128, 2) / 128))
 
 
