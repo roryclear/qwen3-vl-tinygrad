@@ -301,14 +301,12 @@ def prefill2(past_keys, past_values, hidden_states, cos, sin, position_ids, seq_
         key_padded = key[0].pad(((0,0), (0, 500-seq_len), (0,0)))
         value_padded = value[0].pad(((0,0), (0, 500-seq_len), (0,0)))
 
-        key_padded = key_padded.cast(dtypes.bfloat16) # todo
-        key_padded[:, :seq_len, :] = key[0]
-        value = value.cast(dtypes.bfloat16) #todo
+        past_keys[i] += key_padded
         value_padded = value_padded.cast(dtypes.bfloat16) # todo
-        value_padded[:, :seq_len, :] = value[0]
+        past_values[i] += value_padded
 
-        past_keys[i] = key_padded.clone()
-        past_values[i] = value_padded.clone()
+        key = past_keys[i][:, :seq_len+1, :]
+        value = past_values[i][:, :seq_len+1, :]
 
         L, S = query.size(-2), key.size(-2)
         attn_bias = Tensor.zeros(L, S, dtype=dtypes.bfloat16)
@@ -697,9 +695,3 @@ if __name__ == "__main__":
     output = output.replace("<|im_end|>","") # todo hack
     print("output =",output)
     #assert output == expected_output
-
-
-
-
-
-
