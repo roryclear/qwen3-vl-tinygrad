@@ -277,7 +277,7 @@ def prefill(pixel_values, input_ids, image_grid_thw, past_keys, past_values):
     return hidden_states, cos, sin, position_ids
 
 
-def prefill2(past_keys, past_values, hidden_states, cos, sin, position_ids):
+def prefill2(past_keys, past_values, hidden_states, cos, sin, position_ids, seq_len):
     for i in range(len(lang_model.blk)): # todo same block above
         residual = hidden_states
         hidden_states = lang_model.blk[i].attn_norm(hidden_states)
@@ -300,8 +300,6 @@ def prefill2(past_keys, past_values, hidden_states, cos, sin, position_ids):
 
         key_padded = Tensor.zeros(8, 500, 128, dtype=dtypes.bfloat16).contiguous()
         value_padded = Tensor.zeros(8, 500, 128, dtype=dtypes.bfloat16).contiguous()
-
-        seq_len = key.shape[2]
 
         key_padded[:, :seq_len, :] = key[0]
         value = value.cast(dtypes.bfloat16) #todo
@@ -348,6 +346,7 @@ def forward(
     input_ids,
     pixel_values,
     image_grid_thw,
+    seq_len,
     expected
 ):
     toks_out = []
@@ -355,8 +354,7 @@ def forward(
 
     prefill_consumed = False
     hidden_states, cos, sin, position_ids = prefill(pixel_values=pixel_values, input_ids=input_ids, image_grid_thw=image_grid_thw, past_keys=past_keys, past_values=past_values)
-    outputs, position_ids = prefill2(past_keys=past_keys, past_values=past_values, hidden_states=hidden_states, cos=cos, sin=sin, position_ids=position_ids)
-    seq_len = position_ids.shape[-1]
+    outputs, position_ids = prefill2(past_keys=past_keys, past_values=past_values, hidden_states=hidden_states, cos=cos, sin=sin, position_ids=position_ids, seq_len=seq_len)
     while True:
         ts = time.time()
         if prefill_consumed:
@@ -691,7 +689,7 @@ if __name__ == "__main__":
 
     for pos in reversed(image_token_positions): text_inputs[pos:pos+1] = [image_token_id] * int(num_image_tokens)
 
-    outputs = forward(input_ids=Tensor([text_inputs]), pixel_values=Tensor(pixel_values.astype(np.float32)), image_grid_thw=image_grid_thw, expected=tok.encode(expected_output))
+    outputs = forward(input_ids=Tensor([text_inputs]), pixel_values=Tensor(pixel_values.astype(np.float32)), image_grid_thw=image_grid_thw, expected=tok.encode(expected_output), seq_len=len(text_inputs))
 
     output = tok.decode(outputs)
     output = output.replace("<|im_end|>","") # todo hack
