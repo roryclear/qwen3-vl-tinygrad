@@ -93,20 +93,14 @@ temp = 0.7
 top_k = 20
 top_p = 0.8
 
-def set_seed(seed: int, deterministic: bool = False):
-    random.seed(seed)
-    np.random.seed(seed)
-
-
-set_seed(42)
-
 def rotate_half(x):
     x1 = x[..., : x.shape[-1] // 2]
     x2 = x[..., x.shape[-1] // 2 :]
     ret = Tensor.cat(-x2, x1, dim=-1)
     return ret
 
-def prefill(pixel_values, input_ids, image_grid_thw):
+@TinyJit
+def prefill(pixel_values, input_ids, image_grid_thw, past_keys, past_values, seq_len):
     hidden_states = pixel_values.view(-1, 3, 2, 16, 16)
     hidden_states = hidden_states.cast(dtype=dtypes.bfloat16)
 
@@ -183,13 +177,13 @@ def prefill(pixel_values, input_ids, image_grid_thw):
 
     rotary_pos_emb = (pos_ids.unsqueeze(-1) * vis_model.inv_freq).flatten(1)
 
-    seq_len, _ = hidden_states.size()
-    hidden_states = hidden_states.reshape(seq_len, -1)
-    rotary_pos_emb = rotary_pos_emb.reshape(seq_len, -1)
+    sqlen, _ = hidden_states.size()
+    hidden_states = hidden_states.reshape(sqlen, -1)
+    rotary_pos_emb = rotary_pos_emb.reshape(sqlen, -1)
     emb = Tensor.cat(rotary_pos_emb, rotary_pos_emb, dim=-1)
     cos, sin = emb.cos(), emb.sin()
     cos, sin = cos.unsqueeze(-2), sin.unsqueeze(-2)
-
+    
     for i in range(len(vis_model.v.blk)):
         hidden_states_input = vis_model.v.blk[i].ln1(hidden_states)
         seq_length = hidden_states_input.shape[0]
@@ -230,8 +224,7 @@ def prefill(pixel_values, input_ids, image_grid_thw):
         x = Tensor.gelu(x)
         norm = vis_model.v.blk[i].ffn_down(x)
         hidden_states = hidden_states + norm
-
-
+    
     image_embeds = vis_model.v.post_ln(hidden_states)
     image_embeds = image_embeds.view(-1, 4096)
     image_embeds = vis_model.mm[0](image_embeds)
@@ -295,17 +288,15 @@ def prefill(pixel_values, input_ids, image_grid_thw):
         query = query.cast(dtypes.bfloat16)
         key = key.cast(dtypes.bfloat16)
 
-        key_padded = Tensor.zeros(8, 500, 128, dtype=dtypes.bfloat16).contiguous()
-        value_padded = Tensor.zeros(8, 500, 128, dtype=dtypes.bfloat16).contiguous()
+        key_padded = key[0].pad(((0,0), (0, 500-seq_len), (0,0)))
+        value_padded = value[0].pad(((0,0), (0, 500-seq_len), (0,0)))
 
-        seq_len = key.shape[2]
+        past_keys[i] += key_padded
+        value_padded = value_padded.cast(dtypes.bfloat16) # todo
+        past_values[i] += value_padded
 
-        key_padded[:, :seq_len, :] = key[0]
-        value = value.cast(dtypes.bfloat16) #todo
-        value_padded[:, :seq_len, :] = value[0]
-
-        past_keys[i] = key_padded.clone()
-        past_values[i] = value_padded.clone()
+        key = past_keys[i][:, :seq_len, :]
+        value = past_values[i][:, :seq_len, :]
 
         L, S = query.size(-2), key.size(-2)
         attn_bias = Tensor.zeros(L, S, dtype=dtypes.bfloat16)
@@ -339,34 +330,33 @@ def prefill(pixel_values, input_ids, image_grid_thw):
 
     hidden_states = lang_model.output_norm(hidden_states)
     outputs = lang_model.lm_head(hidden_states[:, -1:, :])
-    return outputs, position_ids[0][0]
+
+    position_ids = position_ids[0][0][-1] + 1
+    next_token_logits = outputs[:, -1, :]
+    scores = next_token_logits / temp
+    token = sample(scores[0], temp=temp, k=top_k, p=top_p, af=None, ap=None)
+    return position_ids, token
 
 def forward(
     input_ids,
     pixel_values,
     image_grid_thw,
+    seq_len,
     expected
 ):
     toks_out = []
-    scores = None
 
-    prefill_consumed = False
-    outputs, position_ids = prefill(pixel_values=pixel_values, input_ids=input_ids, image_grid_thw=image_grid_thw)
-    seq_len = position_ids.shape[-1]
+    prefill_done = False
+    ts = time.time()
+    position_ids, token = prefill(pixel_values=pixel_values, input_ids=input_ids, image_grid_thw=image_grid_thw, past_keys=past_keys, past_values=past_values, seq_len=seq_len)
     while True:
-        ts = time.time()
-        if prefill_consumed:
-          position_ids, token = fwd(token=next_token_tensor.contiguous(), position_ids=position_ids.contiguous(), seq_len=Variable("pos",1,600).bind(seq_len), past_keys=past_keys, past_values=past_values)
+        if prefill_done:
+          ts = time.time()
+          position_ids, token = fwd(token=next_token_tensor.contiguous(), position_ids=position_ids.contiguous(), seq_len=Variable("pos",1,500).bind(seq_len), past_keys=past_keys, past_values=past_values)
           seq_len+=1
         else:
-          prefill_consumed = True
-          position_ids = position_ids[-1] + 1
-          next_token_logits = outputs[:, -1, :]
-          scores = next_token_logits / temp
-          token = sample(scores[0], temp=temp, k=top_k, p=top_p, af=None, ap=None)
-
+          prefill_done = True
         next_token = int(token.numpy()[0])
-
         next_token_tensor = Tensor([[next_token]])  # shape (1,1)
 
         toks_out.append(next_token)
@@ -566,7 +556,7 @@ from tinygrad.helpers import fetch
 from tinygrad.nn.state import safe_load, load_state_dict
 from tinygrad import dtypes
 
-class Qwen3VLTextRMSNorm_tiny():
+class Qwen3VLTextRMSNorm():
   def __init__(self, size):
     self.variance_epsilon = 1e-06
     self.weight = Tensor.zeros(size)
@@ -575,75 +565,74 @@ class Qwen3VLTextRMSNorm_tiny():
     variance = hidden_states.pow(2).mean(-1, keepdim=True)
     hidden_states = hidden_states * Tensor.rsqrt(variance + self.variance_epsilon)
     return self.weight * hidden_states
+
+class qwen3vl_lang:
+  def __init__(self):
+    _, state_dict_language = gguf_load(fetch("https://huggingface.co/Qwen/Qwen3-VL-2B-Instruct-GGUF/resolve/main/Qwen3VL-2B-Instruct-F16.gguf"))
+    self.token_embd = nn.Embedding(vocab_size=151936, embed_size=2048)
+    self.blk = []
+    for _ in range(28): self.blk.append(qwen3_lang_block())
+    self.output_norm = Qwen3VLTextRMSNorm(size=2048)
+
+
+    self.scaling = 0.08838834764831845
+    self.key_length = 128
+    self.mrope_section = [24, 20, 20]
+    load_state_dict(self, state_dict_language)
+    self.lm_head = nn.Linear(2048, 151936, bias=False)
+    self.lm_head.weight = self.token_embd.weight
+    self.inv_freq = 1.0 / (5000000 ** (Tensor.arange(0, 128, 2) / 128))
+
+class qwen3_lang_block():
+  def __init__(self):
+    self.attn_k = nn.Linear(2048, 1024, bias=False)
+    self.attn_q = nn.Linear(2048, 2048, bias=False)
+    self.attn_v = nn.Linear(2048, 1024, bias=False)
+    self.attn_output = nn.Linear(2048, 2048, bias=False)
+    self.ffn_gate = nn.Linear(2048, 6144, bias=False)
+    self.ffn_up = nn.Linear(2048, 6144, bias=False)
+    self.ffn_down = nn.Linear(6144, 2048, bias=False)
+    self.attn_k_norm = Qwen3VLTextRMSNorm(size=128)
+    self.attn_q_norm = Qwen3VLTextRMSNorm(size=128)
+    self.ffn_norm = Qwen3VLTextRMSNorm(size=2048)
+    self.attn_norm = Qwen3VLTextRMSNorm(size=2048)
+
+class qwen3vl_vis():
+  def __init__(self):
+    _, state_dict_visual = gguf_load(fetch("https://huggingface.co/Qwen/Qwen3-VL-2B-Instruct-GGUF/resolve/main/mmproj-Qwen3VL-2B-Instruct-F16.gguf"))
+    self.v = qwen3_vis_v()
+    self.mm = [nn.Linear(4096, 4096, bias=True), None, nn.Linear(4096, 2048, bias=True)]
+    state_dict_visual["v.patch_embd.weight2"] = state_dict_visual["v.patch_embd.weight.1"] # todo
+    load_state_dict(self, state_dict_visual)
+    self.inv_freq = 1.0 / (10000.0 ** (Tensor.arange(0, 32, 2, dtype=dtypes.float) / 32))
+
+class qwen3_patch_embd():
+  def __init__(self):
+    self.weight = Tensor.zeros(1024, 3, 16, 16)
+    self.weight2 = Tensor.zeros(1024, 3, 16, 16)
+    self.bias = Tensor.zeros(1024)
     
+class qwen3_vis_v():
+  def __init__(self):
+    self.blk = []
+    for _ in range(24): self.blk.append(qwen3_vis_block())
+    self.patch_embd = qwen3_patch_embd()
+    self.num_grid_per_side = 48
+    self.position_embd = nn.Embedding(2304, 1024)
+    self.post_ln = nn.LayerNorm(1024, eps=1e-6, elementwise_affine=True)
 
+class qwen3_vis_block():
+  def __init__(self):
+    self.ffn_up = nn.Linear(1024, 4096)
+    self.ffn_down = nn.Linear(4096, 1024)
+    self.ln1 = nn.LayerNorm(1024, eps=1e-6, elementwise_affine=True)
+    self.ln2 = nn.LayerNorm(1024, eps=1e-6, elementwise_affine=True)
+    self.attn_out = nn.Linear(1024, 1024)
+    self.attn_qkv = nn.Linear(1024, 3072)
+    
 if __name__ == "__main__":
-  class blank: pass
-  _, state_dict_language = gguf_load(fetch("https://huggingface.co/Qwen/Qwen3-VL-2B-Instruct-GGUF/resolve/main/Qwen3VL-2B-Instruct-F16.gguf"))
-  _, state_dict_visual = gguf_load(fetch("https://huggingface.co/Qwen/Qwen3-VL-2B-Instruct-GGUF/resolve/main/mmproj-Qwen3VL-2B-Instruct-F16.gguf"))
-  lang_model = blank()
-  lang_model.token_embd = nn.Embedding(vocab_size=151936, embed_size=2048)
-  lang_model.blk = []
-  lang_model.output_norm = Qwen3VLTextRMSNorm_tiny(size=2048)
-  for i in range(28):
-    lang_model.blk.append(blank())
-    lang_model.blk[i].attn_k = nn.Linear(2048, 1024, bias=False)
-    lang_model.blk[i].attn_q = nn.Linear(2048, 2048, bias=False)
-    lang_model.blk[i].attn_v = nn.Linear(2048, 1024, bias=False)
-    lang_model.blk[i].attn_output = nn.Linear(2048, 2048, bias=False)
-    lang_model.blk[i].ffn_gate = nn.Linear(2048, 6144, bias=False)
-    lang_model.blk[i].ffn_up = nn.Linear(2048, 6144, bias=False)
-    lang_model.blk[i].ffn_down = nn.Linear(6144, 2048, bias=False)
-    lang_model.blk[i].attn_k_norm = Qwen3VLTextRMSNorm_tiny(size=128)
-    lang_model.blk[i].attn_q_norm = Qwen3VLTextRMSNorm_tiny(size=128)
-    lang_model.blk[i].ffn_norm = Qwen3VLTextRMSNorm_tiny(size=2048)
-    lang_model.blk[i].attn_norm = Qwen3VLTextRMSNorm_tiny(size=2048)
-
-  lang_model.scaling = 0.08838834764831845
-  lang_model.key_length = 128
-  lang_model.mrope_section = [24, 20, 20]
-
-  vis_model = blank()
-  vis_model.v = blank()
-  vis_model.v.blk = []
-  for i in range(24):
-    vis_model.v.blk.append(blank())
-    vis_model.v.blk[i].ffn_up = nn.Linear(1024, 4096)
-    vis_model.v.blk[i].ffn_down = nn.Linear(4096, 1024)
-    vis_model.v.blk[i].ln1 = nn.LayerNorm(1024, eps=1e-6, elementwise_affine=True)
-    vis_model.v.blk[i].ln2 = nn.LayerNorm(1024, eps=1e-6, elementwise_affine=True)
-    vis_model.v.blk[i].attn_out = nn.Linear(1024, 1024)
-    vis_model.v.blk[i].attn_qkv = nn.Linear(1024, 3072)
-  
-  vis_model.v.patch_embd = blank()
-  vis_model.v.patch_embd.weight = Tensor.zeros(1024, 3, 16, 16)
-  vis_model.v.patch_embd.weight2 = Tensor.zeros(1024, 3, 16, 16)
-  vis_model.v.patch_embd.bias = Tensor.zeros(1024)
-  vis_model.v.num_grid_per_side = 48
-
-  vis_model.v.deepstack = []
-  for i in range(18):
-    vis_model.v.deepstack.append(blank())
-    if i not in [5, 11, 17]: continue
-    vis_model.v.deepstack[i].fc1 = nn.Linear(4096, 4096)
-    vis_model.v.deepstack[i].fc2 = nn.Linear(4096, 2048)
-    vis_model.v.deepstack[i].norm = nn.LayerNorm(4096, eps=1e-6, elementwise_affine=True)
-    vis_model.v.deepstack[i].hidden_size = 4096
-
-  vis_model.v.position_embd = nn.Embedding(2304, 1024)
-  vis_model.mm = [blank(), blank(), blank()]
-  vis_model.mm[0] = nn.Linear(4096, 4096, bias=True)
-  vis_model.mm[2] = nn.Linear(4096, 2048, bias=True)
-  vis_model.v.post_ln = nn.LayerNorm(1024, eps=1e-6, elementwise_affine=True)
-
-  load_state_dict(lang_model, state_dict_language)
-  state_dict_visual["v.patch_embd.weight2"] = state_dict_visual["v.patch_embd.weight.1"] # todo
-  load_state_dict(vis_model, state_dict_visual)
-
-  lang_model.lm_head = nn.Linear(2048, 151936, bias=False)
-  lang_model.lm_head.weight = lang_model.token_embd.weight
-  vis_model.inv_freq = 1.0 / (10000.0 ** (Tensor.arange(0, 32, 2, dtype=dtypes.float) / 32))
-  lang_model.inv_freq = 1.0 / (5000000 ** (Tensor.arange(0, 128, 2) / 128))
+  lang_model = qwen3vl_lang()
+  vis_model = qwen3vl_vis()
 
   # first three are all 256x256
   images = [
@@ -687,15 +676,9 @@ if __name__ == "__main__":
 
     for pos in reversed(image_token_positions): text_inputs[pos:pos+1] = [image_token_id] * int(num_image_tokens)
 
-    outputs = forward(input_ids=Tensor([text_inputs]), pixel_values=Tensor(pixel_values.astype(np.float32)), image_grid_thw=image_grid_thw, expected=tok.encode(expected_output))
+    outputs = forward(input_ids=Tensor([text_inputs]), pixel_values=Tensor(pixel_values.astype(np.float32)), image_grid_thw=image_grid_thw, expected=tok.encode(expected_output), seq_len=len(text_inputs))
 
     output = tok.decode(outputs)
     output = output.replace("<|im_end|>","") # todo hack
     print("output =",output)
     #assert output == expected_output
-
-
-
-
-
-
