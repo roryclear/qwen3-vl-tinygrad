@@ -106,13 +106,13 @@ def prefill(pixel_values, input_ids, image_grid_thw, past_keys, past_values, seq
 
     B, C, D, H, W = hidden_states.shape
     x = hidden_states.reshape(B, C * D, H, W)
-    w = Tensor.stack(vis_model.v.patch_embd.weight, vis_model.v.patch_embd.weight2, dim=2)
+    w = Tensor.stack(qwen.vis.v.patch_embd.weight, qwen.vis.v.patch_embd.weight2, dim=2)
     out_C, in_C, kD, kH, kW = w.shape
     w2d = w.reshape(out_C, in_C * kD, kH, kW)
 
     hidden_states = x.conv2d(
         weight=w2d,
-        bias=vis_model.v.patch_embd.bias,
+        bias=qwen.vis.v.patch_embd.bias,
         stride=(16, 16),
         padding=(0, 0),
         dilation=(1, 1),
@@ -125,18 +125,18 @@ def prefill(pixel_values, input_ids, image_grid_thw, past_keys, past_values, seq
     grid_hs = image_grid_thw[1]
     grid_ws = image_grid_thw[2]
 
-    h_idxs = Tensor.linspace(0, vis_model.v.num_grid_per_side - 1, grid_hs)
-    w_idxs = Tensor.linspace(0, vis_model.v.num_grid_per_side - 1, grid_ws)
+    h_idxs = Tensor.linspace(0, qwen.vis.v.num_grid_per_side - 1, grid_hs)
+    w_idxs = Tensor.linspace(0, qwen.vis.v.num_grid_per_side - 1, grid_ws)
 
     h_idxs_floor = h_idxs.cast(dtypes.int32)
     w_idxs_floor = w_idxs.cast(dtypes.int32)
-    h_idxs_ceil = (h_idxs_floor.int() + 1).clip(vis_model.v.num_grid_per_side - 1)
-    w_idxs_ceil = (w_idxs_floor.int() + 1).clip(vis_model.v.num_grid_per_side - 1)
+    h_idxs_ceil = (h_idxs_floor.int() + 1).clip(qwen.vis.v.num_grid_per_side - 1)
+    w_idxs_ceil = (w_idxs_floor.int() + 1).clip(qwen.vis.v.num_grid_per_side - 1)
     dh = h_idxs - h_idxs_floor
     dw = w_idxs - w_idxs_floor
 
-    base_h = h_idxs_floor * vis_model.v.num_grid_per_side
-    base_h_ceil = h_idxs_ceil * vis_model.v.num_grid_per_side
+    base_h = h_idxs_floor * qwen.vis.v.num_grid_per_side
+    base_h_ceil = h_idxs_ceil * qwen.vis.v.num_grid_per_side
 
 
     idx_tensor = Tensor.stack(
@@ -153,7 +153,7 @@ def prefill(pixel_values, input_ids, image_grid_thw, past_keys, past_values, seq
         (dh[None].T * dw[None]).flatten(),
     ).cast(dtypes.bfloat16)
 
-    pos_embeds = vis_model.v.position_embd(idx_tensor)
+    pos_embeds = qwen.vis.v.position_embd(idx_tensor)
     pos_embeds *= weight_tensor[:, :, None]
     patch_pos_embeds = pos_embeds[0] + pos_embeds[1] + pos_embeds[2] + pos_embeds[3]
 
@@ -175,7 +175,7 @@ def prefill(pixel_values, input_ids, image_grid_thw, past_keys, past_values, seq
 
     pos_ids = Tensor.stack(hpos_ids, wpos_ids, dim=-1).repeat(image_grid_thw[0], 1)
 
-    rotary_pos_emb = (pos_ids.unsqueeze(-1) * vis_model.inv_freq).flatten(1)
+    rotary_pos_emb = (pos_ids.unsqueeze(-1) * qwen.vis.inv_freq).flatten(1)
 
     sqlen, _ = hidden_states.size()
     hidden_states = hidden_states.reshape(sqlen, -1)
@@ -184,10 +184,10 @@ def prefill(pixel_values, input_ids, image_grid_thw, past_keys, past_values, seq
     cos, sin = emb.cos(), emb.sin()
     cos, sin = cos.unsqueeze(-2), sin.unsqueeze(-2)
     
-    for i in range(len(vis_model.v.blk)):
-        hidden_states_input = vis_model.v.blk[i].ln1(hidden_states)
+    for i in range(len(qwen.vis.v.blk)):
+        hidden_states_input = qwen.vis.v.blk[i].ln1(hidden_states)
         seq_length = hidden_states_input.shape[0]
-        qkv = vis_model.v.blk[i].attn_qkv(hidden_states_input)
+        qkv = qwen.vis.v.blk[i].attn_qkv(hidden_states_input)
         
         qkv_reshaped = qkv.reshape(seq_length, 3, 16, -1)
 
@@ -216,24 +216,24 @@ def prefill(pixel_values, input_ids, image_grid_thw, past_keys, past_values, seq
         attn_output = attn_output.transpose(1, 2).contiguous()
         attn_output = attn_output.reshape(seq_length, -1).contiguous()
         attn_output = attn_output.cast(dtypes.bfloat16)
-        attn_output = vis_model.v.blk[i].attn_out(attn_output)
+        attn_output = qwen.vis.v.blk[i].attn_out(attn_output)
         attn_output = attn_output.cast(dtypes.bfloat16) # todo
         hidden_states += attn_output
-        norm = vis_model.v.blk[i].ln2(hidden_states)
-        x = vis_model.v.blk[i].ffn_up(norm)
+        norm = qwen.vis.v.blk[i].ln2(hidden_states)
+        x = qwen.vis.v.blk[i].ffn_up(norm)
         x = Tensor.gelu(x)
-        norm = vis_model.v.blk[i].ffn_down(x)
+        norm = qwen.vis.v.blk[i].ffn_down(x)
         hidden_states = hidden_states + norm
     
-    image_embeds = vis_model.v.post_ln(hidden_states)
+    image_embeds = qwen.vis.v.post_ln(hidden_states)
     image_embeds = image_embeds.view(-1, 4096)
-    image_embeds = vis_model.mm[0](image_embeds)
+    image_embeds = qwen.vis.mm[0](image_embeds)
     image_embeds = Tensor.gelu(image_embeds)
-    image_embeds = vis_model.mm[2](image_embeds)
+    image_embeds = qwen.vis.mm[2](image_embeds)
     
     image_mask = input_ids == 151655
 
-    inputs_embeds = lang_model.token_embd(input_ids)
+    inputs_embeds = qwen.lang.token_embd(input_ids)
 
     image_mask = image_mask.unsqueeze(-1).expand(inputs_embeds.shape)
     image_embeds = image_embeds.view(-1)
@@ -253,7 +253,7 @@ def prefill(pixel_values, input_ids, image_grid_thw, past_keys, past_values, seq
 
     position_ids = Tensor.arange(input_ids.shape[-1]).unsqueeze(0).unsqueeze(0).repeat(4, 1, 1)
     pos_id = Tensor.arange(input_ids.shape[-1])[None, :]
-    inv_freq = lang_model.inv_freq[:, None]
+    inv_freq = qwen.lang.inv_freq[:, None]
     freqs = inv_freq * pos_id
     freqs = freqs.transpose(0, 1)
 
@@ -261,19 +261,19 @@ def prefill(pixel_values, input_ids, image_grid_thw, past_keys, past_values, seq
     cos = emb.cos()
     sin = emb.sin()
 
-    for i in range(len(lang_model.blk)): # todo same block above
+    for i in range(len(qwen.lang.blk)): # todo same block above
         residual = hidden_states
-        hidden_states = lang_model.blk[i].attn_norm(hidden_states)
+        hidden_states = qwen.lang.blk[i].attn_norm(hidden_states)
         input_shape = hidden_states.shape[:-1]
 
-        hidden_shape = (*input_shape, -1, lang_model.key_length)
-        query = lang_model.blk[i].attn_q(hidden_states).view(hidden_shape)
-        key = lang_model.blk[i].attn_k(hidden_states).view(hidden_shape)
+        hidden_shape = (*input_shape, -1, qwen.lang.key_length)
+        query = qwen.lang.blk[i].attn_q(hidden_states).view(hidden_shape)
+        key = qwen.lang.blk[i].attn_k(hidden_states).view(hidden_shape)
 
-        query = lang_model.blk[i].attn_q_norm(query).transpose(1, 2)
-        key = lang_model.blk[i].attn_k_norm(key).transpose(1, 2)
+        query = qwen.lang.blk[i].attn_q_norm(query).transpose(1, 2)
+        key = qwen.lang.blk[i].attn_k_norm(key).transpose(1, 2)
 
-        value = lang_model.blk[i].attn_v(hidden_states).view(hidden_shape).transpose(1, 2)
+        value = qwen.lang.blk[i].attn_v(hidden_states).view(hidden_shape).transpose(1, 2)
     
         query = (query * cos) + (rotate_half(query) * sin)
         key = (key * cos) + (rotate_half(key) * sin)
@@ -301,28 +301,28 @@ def prefill(pixel_values, input_ids, image_grid_thw, past_keys, past_values, seq
         value = value.repeat_interleave(query.size(-3)//value.size(-3), -3)
 
 
-        attn_weight = query @ key.transpose(-2, -1) * lang_model.scaling
+        attn_weight = query @ key.transpose(-2, -1) * qwen.lang.scaling
         attn_weight += attn_bias
         attn_weight = Tensor.softmax(attn_weight)
         attn_output = attn_weight @ value
         attn_output = attn_output.transpose(1, 2).contiguous()
         attn_output = attn_output.reshape(*input_shape, -1).contiguous()
-        hidden_states = lang_model.blk[i].attn_output(attn_output)
+        hidden_states = qwen.lang.blk[i].attn_output(attn_output)
         hidden_states = residual + hidden_states
         residual = hidden_states
-        hidden_states = lang_model.blk[i].ffn_norm(hidden_states)
+        hidden_states = qwen.lang.blk[i].ffn_norm(hidden_states)
         
         
-        gate = lang_model.blk[i].ffn_gate(hidden_states)
-        up = lang_model.blk[i].ffn_up(hidden_states)
+        gate = qwen.lang.blk[i].ffn_gate(hidden_states)
+        up = qwen.lang.blk[i].ffn_up(hidden_states)
         activated = Tensor.silu(gate)
         combined = activated * up
-        hidden_states = lang_model.blk[i].ffn_down(combined)
+        hidden_states = qwen.lang.blk[i].ffn_down(combined)
         hidden_states = residual + hidden_states
 
 
-    hidden_states = lang_model.output_norm(hidden_states)
-    outputs = lang_model.lm_head(hidden_states[:, -1:, :])
+    hidden_states = qwen.lang.output_norm(hidden_states)
+    outputs = qwen.lang.lm_head(hidden_states[:, -1:, :])
 
     position_ids = position_ids[0][0][-1] + 1
     next_token_logits = outputs[:, -1, :]
@@ -362,26 +362,26 @@ def forward(
 
 @TinyJit
 def fwd(token, position_ids, seq_len, past_keys, past_values):
-  hidden_states = lang_model.token_embd(token)
-  freqs = lang_model.inv_freq * position_ids
+  hidden_states = qwen.lang.token_embd(token)
+  freqs = qwen.lang.inv_freq * position_ids
   emb = Tensor.cat(freqs, freqs, dim=-1)
   cos = emb.cos()
   sin = emb.sin()
 
   # decoder layers
-  for i in range(len(lang_model.blk)):        
+  for i in range(len(qwen.lang.blk)):        
     residual = hidden_states
-    hidden_states = lang_model.blk[i].attn_norm(hidden_states)
+    hidden_states = qwen.lang.blk[i].attn_norm(hidden_states)
 
     input_shape = hidden_states.shape[:-1]
-    hidden_shape = (*input_shape, -1, lang_model.key_length)
+    hidden_shape = (*input_shape, -1, qwen.lang.key_length)
     
-    query = lang_model.blk[i].attn_q(hidden_states).view(hidden_shape)
-    key = lang_model.blk[i].attn_k(hidden_states).view(hidden_shape)
-    query = lang_model.blk[i].attn_q_norm(query).transpose(1, 2)
-    key = lang_model.blk[i].attn_k_norm(key).transpose(1, 2)
+    query = qwen.lang.blk[i].attn_q(hidden_states).view(hidden_shape)
+    key = qwen.lang.blk[i].attn_k(hidden_states).view(hidden_shape)
+    query = qwen.lang.blk[i].attn_q_norm(query).transpose(1, 2)
+    key = qwen.lang.blk[i].attn_k_norm(key).transpose(1, 2)
 
-    value = lang_model.blk[i].attn_v(hidden_states).view(hidden_shape).transpose(1, 2)
+    value = qwen.lang.blk[i].attn_v(hidden_states).view(hidden_shape).transpose(1, 2)
 
     query = (query * cos) + (rotate_half(query) * sin)
     key = (key * cos) + (rotate_half(key) * sin)
@@ -402,7 +402,7 @@ def fwd(token, position_ids, seq_len, past_keys, past_values):
     key = key.repeat_interleave(query.size(-3)//key.size(-3), -3)
     value = value.repeat_interleave(query.size(-3)//value.size(-3), -3)
 
-    attn_weight = query @ key.transpose(-2, -1) * lang_model.scaling
+    attn_weight = query @ key.transpose(-2, -1) * qwen.lang.scaling
 
     attn_weight = Tensor.softmax(attn_weight)
     value = value.cast(dtypes.bfloat16)
@@ -412,18 +412,18 @@ def fwd(token, position_ids, seq_len, past_keys, past_values):
     attn_output = attn_output.transpose(1, 2)
     attn_output = attn_output.reshape(*input_shape, -1).contiguous()
 
-    hidden_states = lang_model.blk[i].attn_output(attn_output)                
+    hidden_states = qwen.lang.blk[i].attn_output(attn_output)                
     hidden_states = residual = residual + hidden_states
-    hidden_states = lang_model.blk[i].ffn_norm(hidden_states)
-    gate = lang_model.blk[i].ffn_gate(hidden_states)
-    up = lang_model.blk[i].ffn_up(hidden_states)
+    hidden_states = qwen.lang.blk[i].ffn_norm(hidden_states)
+    gate = qwen.lang.blk[i].ffn_gate(hidden_states)
+    up = qwen.lang.blk[i].ffn_up(hidden_states)
     activated = Tensor.silu(gate)
     combined = activated * up
-    hidden_states = lang_model.blk[i].ffn_down(combined)
+    hidden_states = qwen.lang.blk[i].ffn_down(combined)
     hidden_states = residual + hidden_states
 
-  hidden_states = lang_model.output_norm(hidden_states)
-  outputs = lang_model.lm_head(hidden_states[:, -1:, :])
+  hidden_states = qwen.lang.output_norm(hidden_states)
+  outputs = qwen.lang.lm_head(hidden_states[:, -1:, :])
   next_token_logits = outputs[:, -1, :]
   scores = next_token_logits / temp
   token = sample(scores[0], temp=temp, k=top_k, p=top_p, af=None, ap=None)
@@ -529,6 +529,11 @@ from tinygrad.helpers import fetch
 from tinygrad.nn.state import safe_load, load_state_dict
 from tinygrad import dtypes
 
+class Qwen3VL():
+  def __init__(self):
+    self.vis = qwen3vl_vis()
+    self.lang = qwen3vl_lang()
+
 class Qwen3VLTextRMSNorm():
   def __init__(self, size):
     self.variance_epsilon = 1e-06
@@ -604,8 +609,7 @@ class qwen3_vis_block():
     self.attn_qkv = nn.Linear(1024, 3072)
     
 if __name__ == "__main__":
-  lang_model = qwen3vl_lang()
-  vis_model = qwen3vl_vis()
+  qwen = Qwen3VL()
 
   # first three are all 256x256
   images = [
@@ -630,10 +634,10 @@ if __name__ == "__main__":
 
   import pickle
   tok = pickle.load(open("tok.pkl", "rb"))
-  past_keys = [Tensor.zeros(8, 500, 128).contiguous() for i in range(len(lang_model.blk))]
-  past_values = [Tensor.zeros(8, 500, 128).contiguous() for i in range(len(lang_model.blk))]
+  past_keys = [Tensor.zeros(8, 500, 128).contiguous() for i in range(len(qwen.lang.blk))]
+  past_values = [Tensor.zeros(8, 500, 128).contiguous() for i in range(len(qwen.lang.blk))]
   for image, expected_output, prompt in zip(images, expected_outputs, prompts):
-    for i in range(len(lang_model.blk)):
+    for i in range(len(qwen.lang.blk)):
       past_keys[i] *= 0
       past_values[i] *= 0
     text_inputs = tok.encode(prompt)
