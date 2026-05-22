@@ -574,28 +574,14 @@ class Qwen3VLTextRMSNorm():
     hidden_states = hidden_states * Tensor.rsqrt(variance + self.variance_epsilon)
     return self.weight * hidden_states
 
-
-class blank: pass
-
 class qwen3vl_lang:
   def __init__(self):
     _, state_dict_language = gguf_load(fetch("https://huggingface.co/Qwen/Qwen3-VL-2B-Instruct-GGUF/resolve/main/Qwen3VL-2B-Instruct-F16.gguf"))
     self.token_embd = nn.Embedding(vocab_size=151936, embed_size=2048)
     self.blk = []
+    for _ in range(28): self.blk.append(qwen3_lang_block())
     self.output_norm = Qwen3VLTextRMSNorm(size=2048)
-    for i in range(28):
-      self.blk.append(blank())
-      self.blk[i].attn_k = nn.Linear(2048, 1024, bias=False)
-      self.blk[i].attn_q = nn.Linear(2048, 2048, bias=False)
-      self.blk[i].attn_v = nn.Linear(2048, 1024, bias=False)
-      self.blk[i].attn_output = nn.Linear(2048, 2048, bias=False)
-      self.blk[i].ffn_gate = nn.Linear(2048, 6144, bias=False)
-      self.blk[i].ffn_up = nn.Linear(2048, 6144, bias=False)
-      self.blk[i].ffn_down = nn.Linear(6144, 2048, bias=False)
-      self.blk[i].attn_k_norm = Qwen3VLTextRMSNorm(size=128)
-      self.blk[i].attn_q_norm = Qwen3VLTextRMSNorm(size=128)
-      self.blk[i].ffn_norm = Qwen3VLTextRMSNorm(size=2048)
-      self.blk[i].attn_norm = Qwen3VLTextRMSNorm(size=2048)
+
 
     self.scaling = 0.08838834764831845
     self.key_length = 128
@@ -604,7 +590,21 @@ class qwen3vl_lang:
     self.lm_head = nn.Linear(2048, 151936, bias=False)
     self.lm_head.weight = self.token_embd.weight
     self.inv_freq = 1.0 / (5000000 ** (Tensor.arange(0, 128, 2) / 128))
-  
+
+class qwen3_lang_block():
+  def __init__(self):
+    self.attn_k = nn.Linear(2048, 1024, bias=False)
+    self.attn_q = nn.Linear(2048, 2048, bias=False)
+    self.attn_v = nn.Linear(2048, 1024, bias=False)
+    self.attn_output = nn.Linear(2048, 2048, bias=False)
+    self.ffn_gate = nn.Linear(2048, 6144, bias=False)
+    self.ffn_up = nn.Linear(2048, 6144, bias=False)
+    self.ffn_down = nn.Linear(6144, 2048, bias=False)
+    self.attn_k_norm = Qwen3VLTextRMSNorm(size=128)
+    self.attn_q_norm = Qwen3VLTextRMSNorm(size=128)
+    self.ffn_norm = Qwen3VLTextRMSNorm(size=2048)
+    self.attn_norm = Qwen3VLTextRMSNorm(size=2048)
+
 class qwen3vl_vis():
   def __init__(self):
     _, state_dict_visual = gguf_load(fetch("https://huggingface.co/Qwen/Qwen3-VL-2B-Instruct-GGUF/resolve/main/mmproj-Qwen3VL-2B-Instruct-F16.gguf"))
@@ -623,7 +623,7 @@ class qwen3_patch_embd():
 class qwen3_vis_v():
   def __init__(self):
     self.blk = []
-    for i in range(24): self.blk.append(qwen3_vis_block())
+    for _ in range(24): self.blk.append(qwen3_vis_block())
     self.patch_embd = qwen3_patch_embd()
     self.num_grid_per_side = 48
     self.position_embd = nn.Embedding(2304, 1024)
