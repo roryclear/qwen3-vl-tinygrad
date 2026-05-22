@@ -484,34 +484,25 @@ def sample(logits, temp: float, k: int, p: float, af: float, ap: float):
 
   return output_token
 
-def _preprocess(image):
+def preprocess(image):
   patch_size = 16
   merge_size = 2
   rescale_factor = 0.00392156862745098
   temporal_patch_size = 2
-
-  # image is numpy array in (C, H, W) format with values 0-255
   height, width = image.shape[-2:]
-
   factor = patch_size * merge_size
   h_bar = round(height / factor) * factor
   w_bar = round(width / factor) * factor
-
   pixels = h_bar * w_bar
   beta = math.sqrt(max(1.0, pixels / 16777216, 65536 / pixels))
-
   h_bar = max(factor, round((h_bar / beta) / factor) * factor)
   w_bar = max(factor, round((w_bar / beta) / factor) * factor)
 
   resized_height, resized_width = h_bar, w_bar
-
-  # Resize using cv2 - convert to (H, W, C) for cv2
-  image_np = image.transpose(1, 2, 0)  # (C, H, W) -> (H, W, C)
+  image_np = image.transpose(1, 2, 0)
   image_np = cv2.resize(image_np, (resized_width, resized_height), interpolation=cv2.INTER_LANCZOS4)
-  image = image_np.transpose(2, 0, 1)  # Back to (C, H, W)
+  image = image_np.transpose(2, 0, 1)
   image = image.astype(np.float32)
-
-  # Normalize
   image_mean = np.array([0.5, 0.5, 0.5]) / rescale_factor
   image_std = np.array([0.5, 0.5, 0.5]) / rescale_factor
   image = (image - image_mean[:, None, None]) / image_std[:, None, None]
@@ -519,7 +510,6 @@ def _preprocess(image):
   channel = image.shape[0]
   grid_h, grid_w = resized_height // patch_size, resized_width // patch_size
   
-  # Reshape and process patches
   patches = image.reshape(
       channel,
       grid_h // merge_size,
@@ -529,18 +519,16 @@ def _preprocess(image):
       merge_size,
       patch_size,
   )
-  patches = patches.transpose(1, 4, 2, 5, 0, 3, 6)  # Equivalent to permute
-  patches = np.expand_dims(patches, axis=4)  # Equivalent to unsqueeze(4)
-  patches = np.broadcast_to(patches, (*patches.shape[:4], temporal_patch_size, *patches.shape[5:]))  # Equivalent to expand
-
+  patches = patches.transpose(1, 4, 2, 5, 0, 3, 6)
+  patches = np.expand_dims(patches, axis=4)
+  patches = np.broadcast_to(patches, (*patches.shape[:4], temporal_patch_size, *patches.shape[5:]))
   flatten_patches = patches.reshape(
       grid_h * grid_w,
       channel * temporal_patch_size * patch_size * patch_size,
   )
-
   pixel_values = flatten_patches
   image_grid_thw = [1, grid_h, grid_w]
-  return pixel_values, image_grid_thw
+  return pixel_values.astype(np.float32), image_grid_thw
 
 from tinygrad import Tensor
 Tensor.manual_seed(42)
@@ -658,7 +646,7 @@ if __name__ == "__main__":
     text_inputs = tok.encode(prompt)
 
     image = image.transpose(2, 0, 1)
-    pixel_values, image_grid_thw = _preprocess(image=image)
+    pixel_values, image_grid_thw = preprocess(image=image)
 
     merge_size = 2
     num_image_tokens = ((image_grid_thw[0]*image_grid_thw[1]*image_grid_thw[2]) / (merge_size ** 2))
@@ -668,7 +656,7 @@ if __name__ == "__main__":
 
     for pos in reversed(image_token_positions): text_inputs[pos:pos+1] = [image_token_id] * int(num_image_tokens)
 
-    outputs = forward(input_ids=Tensor([text_inputs]), pixel_values=Tensor(pixel_values.astype(np.float32)), image_grid_thw=image_grid_thw, expected=tok.encode(expected_output), seq_len=len(text_inputs))
+    outputs = forward(input_ids=Tensor([text_inputs]), pixel_values=Tensor(pixel_values), image_grid_thw=image_grid_thw, expected=tok.encode(expected_output), seq_len=len(text_inputs))
 
     output = tok.decode(outputs)
     output = output.replace("<|im_end|>","") # todo hack
