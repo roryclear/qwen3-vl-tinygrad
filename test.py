@@ -564,7 +564,7 @@ from tinygrad.helpers import fetch
 from tinygrad.nn.state import safe_load, load_state_dict
 from tinygrad import dtypes
 
-class Qwen3VLTextRMSNorm_tiny():
+class Qwen3VLTextRMSNorm():
   def __init__(self, size):
     self.variance_epsilon = 1e-06
     self.weight = Tensor.zeros(size)
@@ -582,7 +582,7 @@ class qwen3vl_lang:
     _, state_dict_language = gguf_load(fetch("https://huggingface.co/Qwen/Qwen3-VL-2B-Instruct-GGUF/resolve/main/Qwen3VL-2B-Instruct-F16.gguf"))
     self.token_embd = nn.Embedding(vocab_size=151936, embed_size=2048)
     self.blk = []
-    self.output_norm = Qwen3VLTextRMSNorm_tiny(size=2048)
+    self.output_norm = Qwen3VLTextRMSNorm(size=2048)
     for i in range(28):
       self.blk.append(blank())
       self.blk[i].attn_k = nn.Linear(2048, 1024, bias=False)
@@ -592,10 +592,10 @@ class qwen3vl_lang:
       self.blk[i].ffn_gate = nn.Linear(2048, 6144, bias=False)
       self.blk[i].ffn_up = nn.Linear(2048, 6144, bias=False)
       self.blk[i].ffn_down = nn.Linear(6144, 2048, bias=False)
-      self.blk[i].attn_k_norm = Qwen3VLTextRMSNorm_tiny(size=128)
-      self.blk[i].attn_q_norm = Qwen3VLTextRMSNorm_tiny(size=128)
-      self.blk[i].ffn_norm = Qwen3VLTextRMSNorm_tiny(size=2048)
-      self.blk[i].attn_norm = Qwen3VLTextRMSNorm_tiny(size=2048)
+      self.blk[i].attn_k_norm = Qwen3VLTextRMSNorm(size=128)
+      self.blk[i].attn_q_norm = Qwen3VLTextRMSNorm(size=128)
+      self.blk[i].ffn_norm = Qwen3VLTextRMSNorm(size=2048)
+      self.blk[i].attn_norm = Qwen3VLTextRMSNorm(size=2048)
 
     self.scaling = 0.08838834764831845
     self.key_length = 128
@@ -609,33 +609,23 @@ class qwen3vl_vis():
   def __init__(self):
     _, state_dict_visual = gguf_load(fetch("https://huggingface.co/Qwen/Qwen3-VL-2B-Instruct-GGUF/resolve/main/mmproj-Qwen3VL-2B-Instruct-F16.gguf"))
     self.v = qwen3_vis_v()
-
-    self.mm = [blank(), blank(), blank()]
-    self.mm[0] = nn.Linear(4096, 4096, bias=True)
-    self.mm[2] = nn.Linear(4096, 2048, bias=True)
+    self.mm = [nn.Linear(4096, 4096, bias=True), None, nn.Linear(4096, 2048, bias=True)]
     state_dict_visual["v.patch_embd.weight2"] = state_dict_visual["v.patch_embd.weight.1"] # todo
     load_state_dict(self, state_dict_visual)
     self.inv_freq = 1.0 / (10000.0 ** (Tensor.arange(0, 32, 2, dtype=dtypes.float) / 32))
 
+class qwen3_patch_embd():
+  def __init__(self):
+    self.weight = Tensor.zeros(1024, 3, 16, 16)
+    self.weight2 = Tensor.zeros(1024, 3, 16, 16)
+    self.bias = Tensor.zeros(1024)
+    
 class qwen3_vis_v():
   def __init__(self):
     self.blk = []
     for i in range(24): self.blk.append(qwen3_vis_block())
-    
-    self.patch_embd = blank()
-    self.patch_embd.weight = Tensor.zeros(1024, 3, 16, 16)
-    self.patch_embd.weight2 = Tensor.zeros(1024, 3, 16, 16)
-    self.patch_embd.bias = Tensor.zeros(1024)
+    self.patch_embd = qwen3_patch_embd()
     self.num_grid_per_side = 48
-
-    self.deepstack = []
-    for i in range(18):
-      self.deepstack.append(blank())
-      if i not in [5, 11, 17]: continue
-      self.deepstack[i].fc1 = nn.Linear(4096, 4096)
-      self.deepstack[i].fc2 = nn.Linear(4096, 2048)
-      self.deepstack[i].norm = nn.LayerNorm(4096, eps=1e-6, elementwise_affine=True)
-      self.deepstack[i].hidden_size = 4096
     self.position_embd = nn.Embedding(2304, 1024)
     self.post_ln = nn.LayerNorm(1024, eps=1e-6, elementwise_affine=True)
 
