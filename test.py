@@ -298,11 +298,12 @@ def prefill2(past_keys, past_values, hidden_states, cos, sin, position_ids, seq_
         query = query.cast(dtypes.bfloat16)
         key = key.cast(dtypes.bfloat16)
 
-        key_padded = Tensor.zeros(8, 500, 128, dtype=dtypes.bfloat16).contiguous()
-        value_padded = Tensor.zeros(8, 500, 128, dtype=dtypes.bfloat16).contiguous()
-
+        key_padded = past_keys[i]
+        value_padded = past_values[i]
+        key_padded = key_padded.cast(dtypes.bfloat16) # todo
         key_padded[:, :seq_len, :] = key[0]
         value = value.cast(dtypes.bfloat16) #todo
+        value_padded = value_padded.cast(dtypes.bfloat16) # todo
         value_padded[:, :seq_len, :] = value[0]
 
         past_keys[i] = key_padded.clone()
