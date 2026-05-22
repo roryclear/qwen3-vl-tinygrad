@@ -330,7 +330,12 @@ def prefill(pixel_values, input_ids, image_grid_thw, past_keys, past_values, seq
 
     hidden_states = lang_model.output_norm(hidden_states)
     outputs = lang_model.lm_head(hidden_states[:, -1:, :])
-    return outputs, position_ids[0][0]
+
+    position_ids = position_ids[0][0][-1] + 1
+    next_token_logits = outputs[:, -1, :]
+    scores = next_token_logits / temp
+    token = sample(scores[0], temp=temp, k=top_k, p=top_p, af=None, ap=None)
+    return position_ids, token
 
 def forward(
     input_ids,
@@ -340,24 +345,18 @@ def forward(
     expected
 ):
     toks_out = []
-    scores = None
 
-    prefill_consumed = False
-    outputs, position_ids = prefill(pixel_values=pixel_values, input_ids=input_ids, image_grid_thw=image_grid_thw, past_keys=past_keys, past_values=past_values, seq_len=seq_len)
+    prefill_done = False
+    ts = time.time()
+    position_ids, token = prefill(pixel_values=pixel_values, input_ids=input_ids, image_grid_thw=image_grid_thw, past_keys=past_keys, past_values=past_values, seq_len=seq_len)
     while True:
-        ts = time.time()
-        if prefill_consumed:
+        if prefill_done:
+          ts = time.time()
           position_ids, token = fwd(token=next_token_tensor.contiguous(), position_ids=position_ids.contiguous(), seq_len=Variable("pos",1,500).bind(seq_len), past_keys=past_keys, past_values=past_values)
           seq_len+=1
         else:
-          prefill_consumed = True
-          position_ids = position_ids[-1] + 1
-          next_token_logits = outputs[:, -1, :]
-          scores = next_token_logits / temp
-          token = sample(scores[0], temp=temp, k=top_k, p=top_p, af=None, ap=None)
-
+          prefill_done = True
         next_token = int(token.numpy()[0])
-
         next_token_tensor = Tensor([[next_token]])  # shape (1,1)
 
         toks_out.append(next_token)
