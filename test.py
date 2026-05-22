@@ -298,8 +298,9 @@ def prefill2(past_keys, past_values, hidden_states, cos, sin, position_ids, seq_
         query = query.cast(dtypes.bfloat16)
         key = key.cast(dtypes.bfloat16)
 
-        key_padded = past_keys[i]
-        value_padded = past_values[i]
+        key_padded = key[0].pad(((0,0), (0, 500-seq_len), (0,0)))
+        value_padded = value[0].pad(((0,0), (0, 500-seq_len), (0,0)))
+
         key_padded = key_padded.cast(dtypes.bfloat16) # todo
         key_padded[:, :seq_len, :] = key[0]
         value = value.cast(dtypes.bfloat16) #todo
