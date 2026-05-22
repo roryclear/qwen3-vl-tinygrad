@@ -204,6 +204,9 @@ class Qwen3VL():
   def __init__(self):
     self.vis = qwen3vl_vis()
     self.lang = qwen3vl_lang()
+    self.past_keys = [Tensor.zeros(8, 500, 128).contiguous() for i in range(len(self.lang.blk))]
+    self.past_values = [Tensor.zeros(8, 500, 128).contiguous() for i in range(len(self.lang.blk))]
+    self.prewarm = False
 
 
   def forward(
@@ -214,28 +217,37 @@ class Qwen3VL():
       seq_len,
       expected
   ):
-      toks_out = []
+    if not self.prewarm:
+      for _ in range(3):
+        self.prefill(pixel_values=pixel_values, input_ids=input_ids, image_grid_thw=image_grid_thw, past_keys=self.past_keys, past_values=self.past_values, seq_len=seq_len)
+        self.fwd(token=Tensor([[42]]).contiguous(), position_ids=Tensor(42).contiguous(), seq_len=Variable("pos",1,500).bind(seq_len), past_keys=self.past_keys, past_values=self.past_values)
+        self.prewarm = True
 
-      prefill_done = False
-      ts = time.time()
-      position_ids, token = self.prefill(pixel_values=pixel_values, input_ids=input_ids, image_grid_thw=image_grid_thw, past_keys=past_keys, past_values=past_values, seq_len=seq_len)
-      while True:
-          if prefill_done:
-            ts = time.time()
-            position_ids, token = self.fwd(token=next_token_tensor.contiguous(), position_ids=position_ids.contiguous(), seq_len=Variable("pos",1,500).bind(seq_len), past_keys=past_keys, past_values=past_values)
-            seq_len+=1
-          else:
-            prefill_done = True
-          next_token = int(token.numpy()[0])
-          next_token_tensor = Tensor([[next_token]])  # shape (1,1)
+    for i in range(len(self.lang.blk)):
+      self.past_keys[i] *= 0
+      self.past_values[i] *= 0
 
-          toks_out.append(next_token)
-          print(f"TOK/S = {1 / (time.time() - ts):.2f}")
-          print(tok.decode(toks_out), "\n", tok.decode(expected[:len(toks_out)]), "\n")
-          #assert tok.decode(toks_out).replace("<|im_end|>","") == tok.decode(expected[:len(toks_out)])
-          if next_token == 151645 or seq_len == 406: break
+    toks_out = []
+    prefill_done = False
+    ts = time.time()
+    position_ids, token = self.prefill(pixel_values=pixel_values, input_ids=input_ids, image_grid_thw=image_grid_thw, past_keys=self.past_keys, past_values=self.past_values, seq_len=seq_len)
+    while True:
+        if prefill_done:
+          ts = time.time()
+          position_ids, token = self.fwd(token=next_token_tensor.contiguous(), position_ids=position_ids.contiguous(), seq_len=Variable("pos",1,500).bind(seq_len), past_keys=self.past_keys, past_values=self.past_values)
+          seq_len+=1
+        else:
+          prefill_done = True
+        next_token = int(token.numpy()[0])
+        next_token_tensor = Tensor([[next_token]])  # shape (1,1)
 
-      return toks_out
+        toks_out.append(next_token)
+        print(f"TOK/S = {1 / (time.time() - ts):.2f}")
+        print(tok.decode(toks_out), "\n", tok.decode(expected[:len(toks_out)]), "\n")
+        #assert tok.decode(toks_out).replace("<|im_end|>","") == tok.decode(expected[:len(toks_out)])
+        if next_token == 151645 or seq_len == 406: break
+
+    return toks_out
 
 
   @TinyJit
@@ -638,12 +650,10 @@ if __name__ == "__main__":
 
   import pickle
   tok = pickle.load(open("tok.pkl", "rb"))
-  past_keys = [Tensor.zeros(8, 500, 128).contiguous() for i in range(len(qwen.lang.blk))]
-  past_values = [Tensor.zeros(8, 500, 128).contiguous() for i in range(len(qwen.lang.blk))]
+  z = 0
   for image, expected_output, prompt in zip(images, expected_outputs, prompts):
-    for i in range(len(qwen.lang.blk)):
-      past_keys[i] *= 0
-      past_values[i] *= 0
+    z+=1
+    if z > 3: break
     text_inputs = tok.encode(prompt)
 
     image = image.transpose(2, 0, 1)
