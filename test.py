@@ -100,7 +100,7 @@ def rotate_half(x):
     return ret
 
 @TinyJit
-def prefill(pixel_values, input_ids, image_grid_thw, past_keys, past_values, seq_len):
+def prefill_vis(pixel_values, input_ids, image_grid_thw):
     hidden_states = pixel_values.view(-1, 3, 2, 16, 16)
     hidden_states = hidden_states.cast(dtype=dtypes.bfloat16)
 
@@ -250,6 +250,11 @@ def prefill(pixel_values, input_ids, image_grid_thw, past_keys, past_values, seq
 
     image_mask = image_mask[..., 0]
     hidden_states = inputs_embeds
+    return hidden_states
+
+
+@TinyJit
+def prefill(input_ids, past_keys, past_values, seq_len, hidden_states):
 
     position_ids = Tensor.arange(input_ids.shape[-1]).unsqueeze(0).unsqueeze(0).repeat(4, 1, 1)
     pos_id = Tensor.arange(input_ids.shape[-1])[None, :]
@@ -339,24 +344,30 @@ def forward(
 ):
     toks_out = []
 
-    prefill_done = False
     ts = time.time()
-    position_ids, token = prefill(pixel_values=pixel_values, input_ids=input_ids, image_grid_thw=image_grid_thw, past_keys=past_keys, past_values=past_values, seq_len=seq_len)
-    while True:
-        if prefill_done:
-          ts = time.time()
-          position_ids, token = fwd(token=next_token_tensor.contiguous(), position_ids=position_ids.contiguous(), seq_len=Variable("pos",1,500).bind(seq_len), past_keys=past_keys, past_values=past_values)
-          seq_len+=1
-        else:
-          prefill_done = True
-        next_token = int(token.numpy()[0])
-        next_token_tensor = Tensor([[next_token]])  # shape (1,1)
+    hidden_states = prefill_vis(pixel_values=pixel_values, input_ids=input_ids, image_grid_thw=image_grid_thw)
+    position_ids, token = prefill(input_ids=input_ids, past_keys=past_keys, past_values=past_values, seq_len=seq_len, hidden_states=hidden_states)
 
-        toks_out.append(next_token)
-        print(f"TOK/S = {1 / (time.time() - ts):.2f}")
-        print(tok.decode(toks_out), "\n", tok.decode(expected[:len(toks_out)]), "\n")
-        #assert tok.decode(toks_out).replace("<|im_end|>","") == tok.decode(expected[:len(toks_out)])
-        if next_token == 151645 or seq_len == 406: break
+    next_token = int(token.numpy()[0])
+    next_token_tensor = Tensor([[next_token]])  # shape (1,1)
+
+    toks_out.append(next_token)
+    print(f"TOK/S = {1 / (time.time() - ts):.2f}")
+    print(tok.decode(toks_out), "\n", tok.decode(expected[:len(toks_out)]), "\n")
+
+    while True:
+      ts = time.time()
+      position_ids, token = fwd(token=next_token_tensor.contiguous(), position_ids=position_ids.contiguous(), seq_len=Variable("pos",1,500).bind(seq_len), past_keys=past_keys, past_values=past_values)
+      seq_len+=1
+
+      next_token = int(token.numpy()[0])
+      next_token_tensor = Tensor([[next_token]])  # shape (1,1)
+
+      toks_out.append(next_token)
+      print(f"TOK/S = {1 / (time.time() - ts):.2f}")
+      print(tok.decode(toks_out), "\n", tok.decode(expected[:len(toks_out)]), "\n")
+      #assert tok.decode(toks_out).replace("<|im_end|>","") == tok.decode(expected[:len(toks_out)])
+      if next_token == 151645 or seq_len == 406: break
 
     return toks_out
 
@@ -655,4 +666,5 @@ if __name__ == "__main__":
     output = output.replace("<|im_end|>","") # todo hack
     print("output =",output)
     #assert output == expected_output
+
 
