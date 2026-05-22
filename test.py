@@ -190,9 +190,7 @@ def prefill(pixel_values, input_ids, image_grid_thw, past_keys, past_values):
     emb = Tensor.cat(rotary_pos_emb, rotary_pos_emb, dim=-1)
     cos, sin = emb.cos(), emb.sin()
     cos, sin = cos.unsqueeze(-2), sin.unsqueeze(-2)
-    return hidden_states, cos, sin
-
-def prefill2(pixel_values, input_ids, image_grid_thw, past_keys, past_values, hidden_states, cos, sin):
+    
     for i in range(len(vis_model.v.blk)):
         hidden_states_input = vis_model.v.blk[i].ln1(hidden_states)
         seq_length = hidden_states_input.shape[0]
@@ -233,8 +231,9 @@ def prefill2(pixel_values, input_ids, image_grid_thw, past_keys, past_values, hi
         x = Tensor.gelu(x)
         norm = vis_model.v.blk[i].ffn_down(x)
         hidden_states = hidden_states + norm
+    return hidden_states
 
-
+def prefill2(pixel_values, input_ids, image_grid_thw, past_keys, past_values, hidden_states):
     image_embeds = vis_model.v.post_ln(hidden_states)
     image_embeds = image_embeds.view(-1, 4096)
     image_embeds = vis_model.mm[0](image_embeds)
@@ -354,8 +353,8 @@ def forward(
     scores = None
 
     prefill_consumed = False
-    hidden_states, cos, sin = prefill(pixel_values=pixel_values, input_ids=input_ids, image_grid_thw=image_grid_thw, past_keys=past_keys, past_values=past_values)
-    outputs, position_ids = prefill2(pixel_values=pixel_values, input_ids=input_ids, image_grid_thw=image_grid_thw, past_keys=past_keys, past_values=past_values, hidden_states=hidden_states, cos=cos, sin=sin)
+    hidden_states = prefill(pixel_values=pixel_values, input_ids=input_ids, image_grid_thw=image_grid_thw, past_keys=past_keys, past_values=past_values)
+    outputs, position_ids = prefill2(pixel_values=pixel_values, input_ids=input_ids, image_grid_thw=image_grid_thw, past_keys=past_keys, past_values=past_values, hidden_states=hidden_states)
     seq_len = position_ids.shape[-1]
     while True:
         ts = time.time()
