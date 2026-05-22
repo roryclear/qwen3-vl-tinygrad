@@ -277,7 +277,7 @@ def prefill(pixel_values, input_ids, image_grid_thw, past_keys, past_values):
     return hidden_states, cos, sin, position_ids
 
 
-def prefill2(pixel_values, input_ids, image_grid_thw, past_keys, past_values, hidden_states, cos, sin, position_ids):
+def prefill2(past_keys, past_values, hidden_states, cos, sin, position_ids):
     for i in range(len(lang_model.blk)): # todo same block above
         residual = hidden_states
         hidden_states = lang_model.blk[i].attn_norm(hidden_states)
@@ -355,7 +355,7 @@ def forward(
 
     prefill_consumed = False
     hidden_states, cos, sin, position_ids = prefill(pixel_values=pixel_values, input_ids=input_ids, image_grid_thw=image_grid_thw, past_keys=past_keys, past_values=past_values)
-    outputs, position_ids = prefill2(pixel_values=pixel_values, input_ids=input_ids, image_grid_thw=image_grid_thw, past_keys=past_keys, past_values=past_values, hidden_states=hidden_states, cos=cos, sin=sin, position_ids=position_ids)
+    outputs, position_ids = prefill2(past_keys=past_keys, past_values=past_values, hidden_states=hidden_states, cos=cos, sin=sin, position_ids=position_ids)
     seq_len = position_ids.shape[-1]
     while True:
         ts = time.time()
