@@ -573,33 +573,41 @@ class Qwen3VLTextRMSNorm_tiny():
     variance = hidden_states.pow(2).mean(-1, keepdim=True)
     hidden_states = hidden_states * Tensor.rsqrt(variance + self.variance_epsilon)
     return self.weight * hidden_states
+
+
+class blank: pass
+
+class qwen3vl_lang:
+  def __init__(self):
+    _, state_dict_language = gguf_load(fetch("https://huggingface.co/Qwen/Qwen3-VL-2B-Instruct-GGUF/resolve/main/Qwen3VL-2B-Instruct-F16.gguf"))
+    self.token_embd = nn.Embedding(vocab_size=151936, embed_size=2048)
+    self.blk = []
+    self.output_norm = Qwen3VLTextRMSNorm_tiny(size=2048)
+    for i in range(28):
+      self.blk.append(blank())
+      self.blk[i].attn_k = nn.Linear(2048, 1024, bias=False)
+      self.blk[i].attn_q = nn.Linear(2048, 2048, bias=False)
+      self.blk[i].attn_v = nn.Linear(2048, 1024, bias=False)
+      self.blk[i].attn_output = nn.Linear(2048, 2048, bias=False)
+      self.blk[i].ffn_gate = nn.Linear(2048, 6144, bias=False)
+      self.blk[i].ffn_up = nn.Linear(2048, 6144, bias=False)
+      self.blk[i].ffn_down = nn.Linear(6144, 2048, bias=False)
+      self.blk[i].attn_k_norm = Qwen3VLTextRMSNorm_tiny(size=128)
+      self.blk[i].attn_q_norm = Qwen3VLTextRMSNorm_tiny(size=128)
+      self.blk[i].ffn_norm = Qwen3VLTextRMSNorm_tiny(size=2048)
+      self.blk[i].attn_norm = Qwen3VLTextRMSNorm_tiny(size=2048)
+
+    self.scaling = 0.08838834764831845
+    self.key_length = 128
+    self.mrope_section = [24, 20, 20]
+    load_state_dict(self, state_dict_language)
+    self.lm_head = nn.Linear(2048, 151936, bias=False)
+    self.lm_head.weight = self.token_embd.weight
+    self.inv_freq = 1.0 / (5000000 ** (Tensor.arange(0, 128, 2) / 128))
     
-
 if __name__ == "__main__":
-  class blank: pass
-  _, state_dict_language = gguf_load(fetch("https://huggingface.co/Qwen/Qwen3-VL-2B-Instruct-GGUF/resolve/main/Qwen3VL-2B-Instruct-F16.gguf"))
   _, state_dict_visual = gguf_load(fetch("https://huggingface.co/Qwen/Qwen3-VL-2B-Instruct-GGUF/resolve/main/mmproj-Qwen3VL-2B-Instruct-F16.gguf"))
-  lang_model = blank()
-  lang_model.token_embd = nn.Embedding(vocab_size=151936, embed_size=2048)
-  lang_model.blk = []
-  lang_model.output_norm = Qwen3VLTextRMSNorm_tiny(size=2048)
-  for i in range(28):
-    lang_model.blk.append(blank())
-    lang_model.blk[i].attn_k = nn.Linear(2048, 1024, bias=False)
-    lang_model.blk[i].attn_q = nn.Linear(2048, 2048, bias=False)
-    lang_model.blk[i].attn_v = nn.Linear(2048, 1024, bias=False)
-    lang_model.blk[i].attn_output = nn.Linear(2048, 2048, bias=False)
-    lang_model.blk[i].ffn_gate = nn.Linear(2048, 6144, bias=False)
-    lang_model.blk[i].ffn_up = nn.Linear(2048, 6144, bias=False)
-    lang_model.blk[i].ffn_down = nn.Linear(6144, 2048, bias=False)
-    lang_model.blk[i].attn_k_norm = Qwen3VLTextRMSNorm_tiny(size=128)
-    lang_model.blk[i].attn_q_norm = Qwen3VLTextRMSNorm_tiny(size=128)
-    lang_model.blk[i].ffn_norm = Qwen3VLTextRMSNorm_tiny(size=2048)
-    lang_model.blk[i].attn_norm = Qwen3VLTextRMSNorm_tiny(size=2048)
-
-  lang_model.scaling = 0.08838834764831845
-  lang_model.key_length = 128
-  lang_model.mrope_section = [24, 20, 20]
+  lang_model = qwen3vl_lang()
 
   vis_model = blank()
   vis_model.v = blank()
@@ -634,14 +642,10 @@ if __name__ == "__main__":
   vis_model.mm[2] = nn.Linear(4096, 2048, bias=True)
   vis_model.v.post_ln = nn.LayerNorm(1024, eps=1e-6, elementwise_affine=True)
 
-  load_state_dict(lang_model, state_dict_language)
   state_dict_visual["v.patch_embd.weight2"] = state_dict_visual["v.patch_embd.weight.1"] # todo
   load_state_dict(vis_model, state_dict_visual)
 
-  lang_model.lm_head = nn.Linear(2048, 151936, bias=False)
-  lang_model.lm_head.weight = lang_model.token_embd.weight
   vis_model.inv_freq = 1.0 / (10000.0 ** (Tensor.arange(0, 32, 2, dtype=dtypes.float) / 32))
-  lang_model.inv_freq = 1.0 / (5000000 ** (Tensor.arange(0, 128, 2) / 128))
 
   # first three are all 256x256
   images = [
