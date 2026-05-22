@@ -93,13 +93,6 @@ temp = 0.7
 top_k = 20
 top_p = 0.8
 
-def set_seed(seed: int, deterministic: bool = False):
-    random.seed(seed)
-    np.random.seed(seed)
-
-
-set_seed(42)
-
 def rotate_half(x):
     x1 = x[..., : x.shape[-1] // 2]
     x2 = x[..., x.shape[-1] // 2 :]
