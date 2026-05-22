@@ -604,48 +604,48 @@ class qwen3vl_lang:
     self.lm_head = nn.Linear(2048, 151936, bias=False)
     self.lm_head.weight = self.token_embd.weight
     self.inv_freq = 1.0 / (5000000 ** (Tensor.arange(0, 128, 2) / 128))
-    
-if __name__ == "__main__":
-  _, state_dict_visual = gguf_load(fetch("https://huggingface.co/Qwen/Qwen3-VL-2B-Instruct-GGUF/resolve/main/mmproj-Qwen3VL-2B-Instruct-F16.gguf"))
-  lang_model = qwen3vl_lang()
-
-  vis_model = blank()
-  vis_model.v = blank()
-  vis_model.v.blk = []
-  for i in range(24):
-    vis_model.v.blk.append(blank())
-    vis_model.v.blk[i].ffn_up = nn.Linear(1024, 4096)
-    vis_model.v.blk[i].ffn_down = nn.Linear(4096, 1024)
-    vis_model.v.blk[i].ln1 = nn.LayerNorm(1024, eps=1e-6, elementwise_affine=True)
-    vis_model.v.blk[i].ln2 = nn.LayerNorm(1024, eps=1e-6, elementwise_affine=True)
-    vis_model.v.blk[i].attn_out = nn.Linear(1024, 1024)
-    vis_model.v.blk[i].attn_qkv = nn.Linear(1024, 3072)
   
-  vis_model.v.patch_embd = blank()
-  vis_model.v.patch_embd.weight = Tensor.zeros(1024, 3, 16, 16)
-  vis_model.v.patch_embd.weight2 = Tensor.zeros(1024, 3, 16, 16)
-  vis_model.v.patch_embd.bias = Tensor.zeros(1024)
-  vis_model.v.num_grid_per_side = 48
+class qwen3vl_vis():
+  def __init__(self):
+    _, state_dict_visual = gguf_load(fetch("https://huggingface.co/Qwen/Qwen3-VL-2B-Instruct-GGUF/resolve/main/mmproj-Qwen3VL-2B-Instruct-F16.gguf"))
+    self.v = blank()
+    self.v.blk = []
+    for i in range(24):
+      self.v.blk.append(blank())
+      self.v.blk[i].ffn_up = nn.Linear(1024, 4096)
+      self.v.blk[i].ffn_down = nn.Linear(4096, 1024)
+      self.v.blk[i].ln1 = nn.LayerNorm(1024, eps=1e-6, elementwise_affine=True)
+      self.v.blk[i].ln2 = nn.LayerNorm(1024, eps=1e-6, elementwise_affine=True)
+      self.v.blk[i].attn_out = nn.Linear(1024, 1024)
+      self.v.blk[i].attn_qkv = nn.Linear(1024, 3072)
+    
+    self.v.patch_embd = blank()
+    self.v.patch_embd.weight = Tensor.zeros(1024, 3, 16, 16)
+    self.v.patch_embd.weight2 = Tensor.zeros(1024, 3, 16, 16)
+    self.v.patch_embd.bias = Tensor.zeros(1024)
+    self.v.num_grid_per_side = 48
 
-  vis_model.v.deepstack = []
-  for i in range(18):
-    vis_model.v.deepstack.append(blank())
-    if i not in [5, 11, 17]: continue
-    vis_model.v.deepstack[i].fc1 = nn.Linear(4096, 4096)
-    vis_model.v.deepstack[i].fc2 = nn.Linear(4096, 2048)
-    vis_model.v.deepstack[i].norm = nn.LayerNorm(4096, eps=1e-6, elementwise_affine=True)
-    vis_model.v.deepstack[i].hidden_size = 4096
+    self.v.deepstack = []
+    for i in range(18):
+      self.v.deepstack.append(blank())
+      if i not in [5, 11, 17]: continue
+      self.v.deepstack[i].fc1 = nn.Linear(4096, 4096)
+      self.v.deepstack[i].fc2 = nn.Linear(4096, 2048)
+      self.v.deepstack[i].norm = nn.LayerNorm(4096, eps=1e-6, elementwise_affine=True)
+      self.v.deepstack[i].hidden_size = 4096
 
-  vis_model.v.position_embd = nn.Embedding(2304, 1024)
-  vis_model.mm = [blank(), blank(), blank()]
-  vis_model.mm[0] = nn.Linear(4096, 4096, bias=True)
-  vis_model.mm[2] = nn.Linear(4096, 2048, bias=True)
-  vis_model.v.post_ln = nn.LayerNorm(1024, eps=1e-6, elementwise_affine=True)
+    self.v.position_embd = nn.Embedding(2304, 1024)
+    self.mm = [blank(), blank(), blank()]
+    self.mm[0] = nn.Linear(4096, 4096, bias=True)
+    self.mm[2] = nn.Linear(4096, 2048, bias=True)
+    self.v.post_ln = nn.LayerNorm(1024, eps=1e-6, elementwise_affine=True)
+    state_dict_visual["v.patch_embd.weight2"] = state_dict_visual["v.patch_embd.weight.1"] # todo
+    load_state_dict(self, state_dict_visual)
+    self.inv_freq = 1.0 / (10000.0 ** (Tensor.arange(0, 32, 2, dtype=dtypes.float) / 32))
 
-  state_dict_visual["v.patch_embd.weight2"] = state_dict_visual["v.patch_embd.weight.1"] # todo
-  load_state_dict(vis_model, state_dict_visual)
-
-  vis_model.inv_freq = 1.0 / (10000.0 ** (Tensor.arange(0, 32, 2, dtype=dtypes.float) / 32))
+if __name__ == "__main__":
+  lang_model = qwen3vl_lang()
+  vis_model = qwen3vl_vis()
 
   # first three are all 256x256
   images = [
