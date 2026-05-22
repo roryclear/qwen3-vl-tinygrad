@@ -276,7 +276,7 @@ def prefill(pixel_values, input_ids, image_grid_thw, past_keys, past_values):
     sin = emb.sin()
     return hidden_states, cos, sin, position_ids
 
-
+@TinyJit
 def prefill2(past_keys, past_values, hidden_states, cos, sin, position_ids, seq_len):
     for i in range(len(lang_model.blk)): # todo same block above
         residual = hidden_states
@@ -305,8 +305,8 @@ def prefill2(past_keys, past_values, hidden_states, cos, sin, position_ids, seq_
         value_padded = value_padded.cast(dtypes.bfloat16) # todo
         past_values[i] += value_padded
 
-        key = past_keys[i][:, :seq_len+1, :]
-        value = past_values[i][:, :seq_len+1, :]
+        key = past_keys[i][:, :seq_len, :]
+        value = past_values[i][:, :seq_len, :]
 
         L, S = query.size(-2), key.size(-2)
         attn_bias = Tensor.zeros(L, S, dtype=dtypes.bfloat16)
@@ -358,7 +358,7 @@ def forward(
     while True:
         ts = time.time()
         if prefill_consumed:
-          position_ids, token = fwd(token=next_token_tensor.contiguous(), position_ids=position_ids.contiguous(), seq_len=Variable("pos",1,600).bind(seq_len), past_keys=past_keys, past_values=past_values)
+          position_ids, token = fwd(token=next_token_tensor.contiguous(), position_ids=position_ids.contiguous(), seq_len=Variable("pos",1,500).bind(seq_len), past_keys=past_keys, past_values=past_values)
           seq_len+=1
         else:
           prefill_consumed = True
