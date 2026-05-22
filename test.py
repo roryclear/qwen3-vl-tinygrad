@@ -611,13 +611,7 @@ class qwen3vl_vis():
     self.v = blank()
     self.v.blk = []
     for i in range(24):
-      self.v.blk.append(blank())
-      self.v.blk[i].ffn_up = nn.Linear(1024, 4096)
-      self.v.blk[i].ffn_down = nn.Linear(4096, 1024)
-      self.v.blk[i].ln1 = nn.LayerNorm(1024, eps=1e-6, elementwise_affine=True)
-      self.v.blk[i].ln2 = nn.LayerNorm(1024, eps=1e-6, elementwise_affine=True)
-      self.v.blk[i].attn_out = nn.Linear(1024, 1024)
-      self.v.blk[i].attn_qkv = nn.Linear(1024, 3072)
+      self.v.blk.append(qwen3_vis_block())
     
     self.v.patch_embd = blank()
     self.v.patch_embd.weight = Tensor.zeros(1024, 3, 16, 16)
@@ -643,6 +637,15 @@ class qwen3vl_vis():
     load_state_dict(self, state_dict_visual)
     self.inv_freq = 1.0 / (10000.0 ** (Tensor.arange(0, 32, 2, dtype=dtypes.float) / 32))
 
+class qwen3_vis_block():
+  def __init__(self):
+    self.ffn_up = nn.Linear(1024, 4096)
+    self.ffn_down = nn.Linear(4096, 1024)
+    self.ln1 = nn.LayerNorm(1024, eps=1e-6, elementwise_affine=True)
+    self.ln2 = nn.LayerNorm(1024, eps=1e-6, elementwise_affine=True)
+    self.attn_out = nn.Linear(1024, 1024)
+    self.attn_qkv = nn.Linear(1024, 3072)
+    
 if __name__ == "__main__":
   lang_model = qwen3vl_lang()
   vis_model = qwen3vl_vis()
