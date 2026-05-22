@@ -106,7 +106,8 @@ def rotate_half(x):
     ret = Tensor.cat(-x2, x1, dim=-1)
     return ret
 
-def prefill(pixel_values, input_ids, image_grid_thw):
+@TinyJit
+def prefill(pixel_values, input_ids, image_grid_thw, past_keys, past_values):
     hidden_states = pixel_values.view(-1, 3, 2, 16, 16)
     hidden_states = hidden_states.cast(dtype=dtypes.bfloat16)
 
@@ -189,7 +190,9 @@ def prefill(pixel_values, input_ids, image_grid_thw):
     emb = Tensor.cat(rotary_pos_emb, rotary_pos_emb, dim=-1)
     cos, sin = emb.cos(), emb.sin()
     cos, sin = cos.unsqueeze(-2), sin.unsqueeze(-2)
+    return hidden_states, cos, sin
 
+def prefill2(pixel_values, input_ids, image_grid_thw, past_keys, past_values, hidden_states, cos, sin):
     for i in range(len(vis_model.v.blk)):
         hidden_states_input = vis_model.v.blk[i].ln1(hidden_states)
         seq_length = hidden_states_input.shape[0]
@@ -351,7 +354,8 @@ def forward(
     scores = None
 
     prefill_consumed = False
-    outputs, position_ids = prefill(pixel_values=pixel_values, input_ids=input_ids, image_grid_thw=image_grid_thw)
+    hidden_states, cos, sin = prefill(pixel_values=pixel_values, input_ids=input_ids, image_grid_thw=image_grid_thw, past_keys=past_keys, past_values=past_values)
+    outputs, position_ids = prefill2(pixel_values=pixel_values, input_ids=input_ids, image_grid_thw=image_grid_thw, past_keys=past_keys, past_values=past_values, hidden_states=hidden_states, cos=cos, sin=sin)
     seq_len = position_ids.shape[-1]
     while True:
         ts = time.time()
