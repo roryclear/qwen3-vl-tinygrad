@@ -484,19 +484,6 @@ def sample(logits, temp: float, k: int, p: float, af: float, ap: float):
 
   return output_token
 
-def smart_resize(height, width, factor, min_pixels, max_pixels):
-  h_bar = round(height / factor) * factor
-  w_bar = round(width / factor) * factor
-  if h_bar * w_bar > max_pixels:
-      beta = math.sqrt((height * width) / max_pixels)
-      h_bar = max(factor, math.floor(height / beta / factor) * factor)
-      w_bar = max(factor, math.floor(width / beta / factor) * factor)
-  elif h_bar * w_bar < min_pixels:
-      beta = math.sqrt(min_pixels / (height * width))
-      h_bar = math.ceil(height * beta / factor) * factor
-      w_bar = math.ceil(width * beta / factor) * factor
-  return h_bar, w_bar
-
 def _preprocess(image):
   patch_size = 16
   merge_size = 2
@@ -505,13 +492,18 @@ def _preprocess(image):
 
   # image is numpy array in (C, H, W) format with values 0-255
   height, width = image.shape[-2:]
-  resized_height, resized_width = smart_resize(
-      height,
-      width,
-      factor=patch_size * merge_size,
-      min_pixels=65536,
-      max_pixels=16777216,
-  )
+
+  factor = patch_size * merge_size
+  h_bar = round(height / factor) * factor
+  w_bar = round(width / factor) * factor
+
+  pixels = h_bar * w_bar
+  beta = math.sqrt(max(1.0, pixels / 16777216, 65536 / pixels))
+
+  h_bar = max(factor, round((h_bar / beta) / factor) * factor)
+  w_bar = max(factor, round((w_bar / beta) / factor) * factor)
+
+  resized_height, resized_width = h_bar, w_bar
 
   # Resize using cv2 - convert to (H, W, C) for cv2
   image_np = image.transpose(1, 2, 0)  # (C, H, W) -> (H, W, C)
