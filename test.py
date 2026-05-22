@@ -608,34 +608,36 @@ class qwen3vl_lang:
 class qwen3vl_vis():
   def __init__(self):
     _, state_dict_visual = gguf_load(fetch("https://huggingface.co/Qwen/Qwen3-VL-2B-Instruct-GGUF/resolve/main/mmproj-Qwen3VL-2B-Instruct-F16.gguf"))
-    self.v = blank()
-    self.v.blk = []
-    for i in range(24):
-      self.v.blk.append(qwen3_vis_block())
-    
-    self.v.patch_embd = blank()
-    self.v.patch_embd.weight = Tensor.zeros(1024, 3, 16, 16)
-    self.v.patch_embd.weight2 = Tensor.zeros(1024, 3, 16, 16)
-    self.v.patch_embd.bias = Tensor.zeros(1024)
-    self.v.num_grid_per_side = 48
+    self.v = qwen3_vis_v()
 
-    self.v.deepstack = []
-    for i in range(18):
-      self.v.deepstack.append(blank())
-      if i not in [5, 11, 17]: continue
-      self.v.deepstack[i].fc1 = nn.Linear(4096, 4096)
-      self.v.deepstack[i].fc2 = nn.Linear(4096, 2048)
-      self.v.deepstack[i].norm = nn.LayerNorm(4096, eps=1e-6, elementwise_affine=True)
-      self.v.deepstack[i].hidden_size = 4096
-
-    self.v.position_embd = nn.Embedding(2304, 1024)
     self.mm = [blank(), blank(), blank()]
     self.mm[0] = nn.Linear(4096, 4096, bias=True)
     self.mm[2] = nn.Linear(4096, 2048, bias=True)
-    self.v.post_ln = nn.LayerNorm(1024, eps=1e-6, elementwise_affine=True)
     state_dict_visual["v.patch_embd.weight2"] = state_dict_visual["v.patch_embd.weight.1"] # todo
     load_state_dict(self, state_dict_visual)
     self.inv_freq = 1.0 / (10000.0 ** (Tensor.arange(0, 32, 2, dtype=dtypes.float) / 32))
+
+class qwen3_vis_v():
+  def __init__(self):
+    self.blk = []
+    for i in range(24): self.blk.append(qwen3_vis_block())
+    
+    self.patch_embd = blank()
+    self.patch_embd.weight = Tensor.zeros(1024, 3, 16, 16)
+    self.patch_embd.weight2 = Tensor.zeros(1024, 3, 16, 16)
+    self.patch_embd.bias = Tensor.zeros(1024)
+    self.num_grid_per_side = 48
+
+    self.deepstack = []
+    for i in range(18):
+      self.deepstack.append(blank())
+      if i not in [5, 11, 17]: continue
+      self.deepstack[i].fc1 = nn.Linear(4096, 4096)
+      self.deepstack[i].fc2 = nn.Linear(4096, 2048)
+      self.deepstack[i].norm = nn.LayerNorm(4096, eps=1e-6, elementwise_affine=True)
+      self.deepstack[i].hidden_size = 4096
+    self.position_embd = nn.Embedding(2304, 1024)
+    self.post_ln = nn.LayerNorm(1024, eps=1e-6, elementwise_affine=True)
 
 class qwen3_vis_block():
   def __init__(self):
