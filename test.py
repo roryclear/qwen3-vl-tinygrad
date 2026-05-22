@@ -252,17 +252,10 @@ def prefill(pixel_values, input_ids, image_grid_thw, past_keys, past_values, seq
     hidden_states = inputs_embeds
 
     position_ids = Tensor.arange(input_ids.shape[-1]).unsqueeze(0).unsqueeze(0).repeat(4, 1, 1)
-    pos_id = position_ids[1:]
-    inv_freq_expanded = lang_model.inv_freq[None, None, :, None].expand(3, pos_id.shape[1], -1, 1)
-    position_ids_expanded = pos_id[:, :, None, :]
-    freqs = (inv_freq_expanded @ position_ids_expanded).transpose(2, 3)
-    freqs_t = freqs[0]  # just overwrite the first dimension T
-    freqs_t = freqs_t.contiguous()
-    for dim, offset in enumerate((1, 2), start=1):  # H, W
-        length = lang_model.mrope_section[dim] * 3
-        idx = slice(offset, length, 3)
-        freqs_t[..., idx] = freqs[dim, ..., idx]
-    freqs = freqs_t
+    pos_id = Tensor.arange(input_ids.shape[-1])[None, :]
+    inv_freq = lang_model.inv_freq[:, None]
+    freqs = inv_freq * pos_id
+    freqs = freqs.transpose(0, 1)
 
     emb = Tensor.cat(freqs, freqs, dim=-1)
     cos = emb.cos()
@@ -662,3 +655,4 @@ if __name__ == "__main__":
     output = output.replace("<|im_end|>","") # todo hack
     print("output =",output)
     #assert output == expected_output
+
