@@ -385,7 +385,7 @@ def forward(
         toks_out.append(next_token)
         print(f"TOK/S = {1 / (time.time() - ts):.2f}")
         print(tok.decode(toks_out), "\n", tok.decode(expected[:len(toks_out)]), "\n")
-        #assert tok.decode(toks_out).replace("<|im_end|>","") == tok.decode(expected[:len(toks_out)])
+        assert tok.decode(toks_out).replace("<|im_end|>","") == tok.decode(expected[:len(toks_out)])
         if next_token == 151645 or seq_len == 406: break
 
     return toks_out
@@ -658,7 +658,7 @@ if __name__ == "__main__":
   vis_model.inv_freq = 1.0 / (10000.0 ** (Tensor.arange(0, 32, 2, dtype=dtypes.float) / 32))
   lang_model.inv_freq = 1.0 / (5000000 ** (Tensor.arange(0, 128, 2) / 128))
 
-
+  # first three are all 256x256
   images = [
       cv2.cvtColor(cv2.imread("f40.jpeg"), cv2.COLOR_BGR2RGB),
       cv2.cvtColor(cv2.imread("gtr.jpg"), cv2.COLOR_BGR2RGB),
@@ -668,9 +668,9 @@ if __name__ == "__main__":
   ]
 
   expected_outputs = ["This is a Ferrari F40, a classic supercar known for its sleek design and powerful performance.",
-                      "",
-                      "",
-                      "The car in the image is a Nissan Micra, a compact car produced by Nissan. The Micra was first introduced in 1990 and has since been a popular choice for its affordability, fuel efficiency, and compact size.\n\nThe Micra was designed to be a practical and economical car for urban driving, and it quickly gained popularity in many markets around the world. It was one of the first cars to feature a 1.2-liter engine, which was a significant improvement over the previous 1.0-liter engines.\n\nThe Micra has undergone several model updates over the years, with the most recent version being the 2",
+                      "This is a Nissan GT-R, a high-performance sports car known for its powerful engine and sleek design.",
+                      "This is a white 2023 Toyota Yaris, a compact hatchback with a sleek design and modern features.",
+                      "The car shown in the image is the Nissan Micra, a compact car produced by Nissan. The Micra was first introduced in 1990 and has been a popular choice for its affordability, fuel efficiency, and reliability.\n\nThe Micra has undergone several generations, with the first generation being produced from 1990 to 1998. The second generation was introduced in 1998 and continued until 2005. The third generation was launched in 2005 and was produced until 2010. The fourth generation was introduced in 2010 and continued until",
                       "A person wearing a light green hoodie and light-colored pants is standing near a silver car with the driver's side door open."]
 
   prompts = ["<|im_start|>user\n<|vision_start|><|image_pad|><|vision_end|>\nWhat car is this? in one sentence<|im_end|>\n<|im_start|>assistant\n",
@@ -705,7 +705,7 @@ if __name__ == "__main__":
     output = tok.decode(outputs)
     output = output.replace("<|im_end|>","") # todo hack
     print("output =",output)
-    #assert output == expected_output
+    assert output == expected_output
 
 
 
