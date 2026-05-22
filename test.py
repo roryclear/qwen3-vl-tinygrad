@@ -369,7 +369,7 @@ def forward(
     while True:
         ts = time.time()
         if prefill_consumed:
-          position_ids, token = fwd(token=next_token_tensor.contiguous(), position_ids=position_ids.contiguous(), seq_len=Variable("pos",1,600).bind(seq_len))
+          position_ids, token = fwd(token=next_token_tensor.contiguous(), position_ids=position_ids.contiguous(), seq_len=Variable("pos",1,600).bind(seq_len), past_keys=past_keys, past_values=past_values)
           seq_len+=1
         else:
           prefill_consumed = True
@@ -391,7 +391,7 @@ def forward(
     return toks_out
 
 @TinyJit
-def fwd(token, position_ids, seq_len):
+def fwd(token, position_ids, seq_len, past_keys, past_values):
   hidden_states = lang_model.token_embd(token)
   freqs = lang_model.inv_freq * position_ids
   emb = Tensor.cat(freqs, freqs, dim=-1)
