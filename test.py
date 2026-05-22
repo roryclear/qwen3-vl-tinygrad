@@ -107,7 +107,7 @@ def rotate_half(x):
     return ret
 
 @TinyJit
-def prefill(pixel_values, input_ids, image_grid_thw, past_keys, past_values):
+def prefill(pixel_values, input_ids, image_grid_thw, past_keys, past_values, seq_len):
     hidden_states = pixel_values.view(-1, 3, 2, 16, 16)
     hidden_states = hidden_states.cast(dtype=dtypes.bfloat16)
 
@@ -184,9 +184,9 @@ def prefill(pixel_values, input_ids, image_grid_thw, past_keys, past_values):
 
     rotary_pos_emb = (pos_ids.unsqueeze(-1) * vis_model.inv_freq).flatten(1)
 
-    seq_len, _ = hidden_states.size()
-    hidden_states = hidden_states.reshape(seq_len, -1)
-    rotary_pos_emb = rotary_pos_emb.reshape(seq_len, -1)
+    sqlen, _ = hidden_states.size()
+    hidden_states = hidden_states.reshape(sqlen, -1)
+    rotary_pos_emb = rotary_pos_emb.reshape(sqlen, -1)
     emb = Tensor.cat(rotary_pos_emb, rotary_pos_emb, dim=-1)
     cos, sin = emb.cos(), emb.sin()
     cos, sin = cos.unsqueeze(-2), sin.unsqueeze(-2)
@@ -274,10 +274,7 @@ def prefill(pixel_values, input_ids, image_grid_thw, past_keys, past_values):
     emb = Tensor.cat(freqs, freqs, dim=-1)
     cos = emb.cos()
     sin = emb.sin()
-    return hidden_states, cos, sin, position_ids
 
-@TinyJit
-def prefill2(past_keys, past_values, hidden_states, cos, sin, position_ids, seq_len):
     for i in range(len(lang_model.blk)): # todo same block above
         residual = hidden_states
         hidden_states = lang_model.blk[i].attn_norm(hidden_states)
@@ -353,8 +350,7 @@ def forward(
     scores = None
 
     prefill_consumed = False
-    hidden_states, cos, sin, position_ids = prefill(pixel_values=pixel_values, input_ids=input_ids, image_grid_thw=image_grid_thw, past_keys=past_keys, past_values=past_values)
-    outputs, position_ids = prefill2(past_keys=past_keys, past_values=past_values, hidden_states=hidden_states, cos=cos, sin=sin, position_ids=position_ids, seq_len=seq_len)
+    outputs, position_ids = prefill(pixel_values=pixel_values, input_ids=input_ids, image_grid_thw=image_grid_thw, past_keys=past_keys, past_values=past_values, seq_len=seq_len)
     while True:
         ts = time.time()
         if prefill_consumed:
