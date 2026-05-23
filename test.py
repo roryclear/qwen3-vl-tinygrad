@@ -205,8 +205,6 @@ class Qwen3VL():
   def __init__(self):
     self.vis = qwen3vl_vis()
     self.lang = qwen3vl_lang()
-    self.past_keys = [Tensor.zeros(8, 500, 128).contiguous() for i in range(len(self.lang.blk))]
-    self.past_values = [Tensor.zeros(8, 500, 128).contiguous() for i in range(len(self.lang.blk))]
     self.prewarm = False
 
 
@@ -224,18 +222,15 @@ class Qwen3VL():
     #    self.fwd(token=Tensor([[42]]).contiguous(), position_ids=Tensor(42).contiguous(), seq_len=Variable("pos",1,500).bind(seq_len), past_keys=self.past_keys, past_values=self.past_values)
     #    self.prewarm = True
 
-    for i in range(len(self.lang.blk)):
-      self.past_keys[i] *= 0
-      self.past_values[i] *= 0
 
     toks_out = []
     prefill_done = False
     ts = time.time()
-    position_ids, token = self.prefill(pixel_values=pixel_values, input_ids=input_ids, image_grid_thw=image_grid_thw, past_keys=self.past_keys, past_values=self.past_values, seq_len=seq_len)
+    position_ids, token = self.prefill(pixel_values=pixel_values, input_ids=input_ids, image_grid_thw=image_grid_thw)
     while True:
         if prefill_done:
           ts = time.time()
-          position_ids, token = self.fwd(token=next_token_tensor.contiguous(), position_ids=position_ids.contiguous(), seq_len=Variable("pos",1,500).bind(seq_len), past_keys=self.past_keys, past_values=self.past_values)
+          position_ids, token = self.fwd(token=next_token_tensor.contiguous(), position_ids=position_ids.contiguous(), seq_len=Variable("pos",1,500).bind(seq_len))
           seq_len+=1
         else:
           prefill_done = True
@@ -252,14 +247,8 @@ class Qwen3VL():
 
 
   @TinyJit
-  def fwd(self, token, position_ids, seq_len, past_keys, past_values):
+  def fwd(self, token, position_ids, seq_len):
     hidden_states = self.lang.token_embd(token)
-    freqs = self.lang.inv_freq * position_ids
-    emb = Tensor.cat(freqs, freqs, dim=-1)
-    cos = emb.cos()
-    sin = emb.sin()
-
-    # decoder layers
     for i in range(len(self.lang.blk)): hidden_states = self.lang.blk[i](hidden_states, start_pos=seq_len)  
     hidden_states = self.lang.output_norm(hidden_states)
     outputs = self.lang.lm_head(hidden_states[:, -1:, :])
@@ -269,7 +258,7 @@ class Qwen3VL():
     return position_ids + 1, token
 
   @TinyJit
-  def prefill(self, pixel_values, input_ids, image_grid_thw, past_keys, past_values, seq_len):
+  def prefill(self, pixel_values, input_ids, image_grid_thw):
       hidden_states = pixel_values.view(-1, 3, 2, 16, 16)
       hidden_states = hidden_states.cast(dtype=dtypes.bfloat16)
 
