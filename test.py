@@ -1,6 +1,7 @@
-import random
+import unicodedata, re
 import numpy as np
 from tinygrad import Tensor, nn, TinyJit, Variable
+from tinygrad.helpers import partition
 import math
 import typing
 import sys
@@ -204,7 +205,8 @@ from tinygrad import dtypes
 class Qwen3VL():
   def __init__(self):
     self.vis = qwen3vl_vis()
-    self.lang, _ = Transformer.from_gguf(fetch("https://huggingface.co/Qwen/Qwen3-VL-2B-Instruct-GGUF/resolve/main/Qwen3VL-2B-Instruct-F16.gguf"), 500) # max context
+    self.lang, kv = Transformer.from_gguf(fetch("https://huggingface.co/Qwen/Qwen3-VL-2B-Instruct-GGUF/resolve/main/Qwen3VL-2B-Instruct-F16.gguf"), 500) # max context
+    self.tok = SimpleTokenizer.from_gguf_kv(kv)
     self.prewarm = False
 
 
@@ -239,8 +241,8 @@ class Qwen3VL():
 
         toks_out.append(next_token)
         print(f"TOK/S = {1 / (time.time() - ts):.2f}")
-        print(tok.decode(toks_out), "\n", tok.decode(expected[:len(toks_out)]), "\n")
-        #assert tok.decode(toks_out).replace("<|im_end|>","") == tok.decode(expected[:len(toks_out)])
+        print(self.tok.decode(toks_out), "\n", self.tok.decode(expected[:len(toks_out)]), "\n")
+        #assert self.tok.decode(toks_out).replace("<|im_end|>","") == self.tok.decode(expected[:len(toks_out)])
         if next_token == 151645 or seq_len == 406: break
 
     return toks_out
@@ -472,13 +474,11 @@ if __name__ == "__main__":
           "<|im_start|>user\n<|vision_start|><|image_pad|><|vision_end|>\nTell me the history of this car<|im_end|>\n<|im_start|>assistant\n",
           "<|im_start|>user\n<|vision_start|><|image_pad|><|vision_end|>\nWhat has been detected on my CCTV camera? Write in one short sentence, only info about the object(s) detected.<|im_end|>\n<|im_start|>assistant\n"]
 
-  import pickle
-  tok = pickle.load(open("tok.pkl", "rb"))
   z = 0
   for image, expected_output, prompt in zip(images, expected_outputs, prompts):
     z += 1
     if z > 3: break
-    text_inputs = tok.encode(prompt)
+    text_inputs = qwen.tok.encode(prompt)
 
     image = image.transpose(2, 0, 1)
     pixel_values, image_grid_thw = preprocess(image=image)
@@ -491,9 +491,9 @@ if __name__ == "__main__":
 
     for pos in reversed(image_token_positions): text_inputs[pos:pos+1] = [image_token_id] * int(num_image_tokens)
 
-    outputs = qwen.forward(input_ids=Tensor([text_inputs]), pixel_values=Tensor(pixel_values), image_grid_thw=image_grid_thw, expected=tok.encode(expected_output), seq_len=len(text_inputs))
+    outputs = qwen.forward(input_ids=Tensor([text_inputs]), pixel_values=Tensor(pixel_values), image_grid_thw=image_grid_thw, expected=qwen.tok.encode(expected_output), seq_len=len(text_inputs))
 
-    output = tok.decode(outputs)
+    output = qwen.tok.decode(outputs)
     output = output.replace("<|im_end|>","") # todo hack
     print("output =",output)
     #assert output == expected_output
