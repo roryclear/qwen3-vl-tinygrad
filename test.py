@@ -219,10 +219,9 @@ class Qwen3VL():
       expected
   ):
     if not self.prewarm:
-      for _ in range(3):
-        self.prefill(pixel_values=pixel_values, input_ids=input_ids, image_grid_thw=image_grid_thw)
-        self.fwd(token=Tensor([[42]]).contiguous(), seq_len=Variable("pos",1,500).bind(seq_len))
-        self.prewarm = True
+      for _ in range(3): self.prefill(pixel_values=pixel_values, input_ids=input_ids, image_grid_thw=image_grid_thw)
+      for _ in range(3):  self.fwd(token=Tensor([[42]]).contiguous(), seq_len=Variable("pos",1,500).bind(seq_len))
+      self.prewarm = True
 
 
     toks_out = []
