@@ -342,45 +342,44 @@ class Qwen3VL():
       cos, sin = cos.unsqueeze(-2), sin.unsqueeze(-2)
       
       for i in range(len(self.vis.v.blk)):
-          hidden_states_input = self.vis.v.blk[i].ln1(hidden_states)
-          seq_length = hidden_states_input.shape[0]
-          qkv = self.vis.v.blk[i].attn_qkv(hidden_states_input)
-          
-          qkv_reshaped = qkv.reshape(seq_length, 3, 16, -1)
+        hidden_states_input = self.vis.v.blk[i].ln1(hidden_states)
+        seq_length = hidden_states_input.shape[0]
+        qkv = self.vis.v.blk[i].attn_qkv(hidden_states_input)
+        
+        qkv_reshaped = qkv.reshape(seq_length, 3, 16, -1)
 
-          qkv_permuted = qkv_reshaped.permute(1, 0, 2, 3)
+        qkv_permuted = qkv_reshaped.permute(1, 0, 2, 3)
 
-          query, key, value = qkv_permuted.chunk(3, dim=0)
-          query = query.squeeze(0)
-          key   = key.squeeze(0)
-          value = value.squeeze(0)
+        query, key, value = qkv_permuted.chunk(3, dim=0)
+        query = query.squeeze(0)
+        key   = key.squeeze(0)
+        value = value.squeeze(0)
 
-          query, key = query.cast(dtypes.float32), key.cast(dtypes.float32)
-          query = (query * cos) + (rotate_half(query) * sin)
-          key = (key * cos) + (rotate_half(key) * sin)
+        query, key = query.cast(dtypes.float32), key.cast(dtypes.float32)
+        query = (query * cos) + (rotate_half(query) * sin)
+        key = (key * cos) + (rotate_half(key) * sin)
 
-          query = query.transpose(0, 1).unsqueeze(0)
-          key = key.transpose(0, 1).unsqueeze(0)
-          value = value.transpose(0, 1).unsqueeze(0)
+        query = query.transpose(0, 1).unsqueeze(0)
+        key = key.transpose(0, 1).unsqueeze(0)
+        value = value.transpose(0, 1).unsqueeze(0)
 
-          query = query.contiguous()
-          key = key.contiguous()
-          value = value.contiguous()
-          L, S = query.size(-2), key.size(-2)
-          attn_weight = query @ key.transpose(-2, -1) * 0.125
-          attn_weight = Tensor.softmax(attn_weight)
-          attn_output = attn_weight @ value
-          attn_output = attn_output.transpose(1, 2).contiguous()
-          attn_output = attn_output.reshape(seq_length, -1).contiguous()
-          attn_output = attn_output.cast(dtypes.bfloat16)
-          attn_output = self.vis.v.blk[i].attn_out(attn_output)
-          attn_output = attn_output.cast(dtypes.bfloat16) # todo
-          hidden_states += attn_output
-          norm = self.vis.v.blk[i].ln2(hidden_states)
-          x = self.vis.v.blk[i].ffn_up(norm)
-          x = Tensor.gelu(x)
-          norm = self.vis.v.blk[i].ffn_down(x)
-          hidden_states = hidden_states + norm
+        query = query.contiguous()
+        key = key.contiguous()
+        value = value.contiguous()
+        attn_weight = query @ key.transpose(-2, -1) * 0.125
+        attn_weight = Tensor.softmax(attn_weight)
+        attn_output = attn_weight @ value
+        attn_output = attn_output.transpose(1, 2).contiguous()
+        attn_output = attn_output.reshape(seq_length, -1).contiguous()
+        attn_output = attn_output.cast(dtypes.bfloat16)
+        attn_output = self.vis.v.blk[i].attn_out(attn_output)
+        attn_output = attn_output.cast(dtypes.bfloat16) # todo
+        hidden_states += attn_output
+        norm = self.vis.v.blk[i].ln2(hidden_states)
+        x = self.vis.v.blk[i].ffn_up(norm)
+        x = Tensor.gelu(x)
+        norm = self.vis.v.blk[i].ffn_down(x)
+        hidden_states = hidden_states + norm
       
       image_embeds = self.vis.v.post_ln(hidden_states)
       image_embeds = image_embeds.view(-1, 4096)
@@ -406,7 +405,6 @@ class Qwen3VL():
       for i in range(len(self.lang.blk)): # todo same block above
         self.lang.blk[i]._init_state(Tensor.zeros(1, 1))
         hidden_states = self.lang.blk[i](hidden_states, start_pos=0)
-
 
       hidden_states = self.lang.output_norm(hidden_states)
       outputs = hidden_states[:, -1:, :] @ self.lang.token_embd.weight.T
