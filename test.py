@@ -212,12 +212,18 @@ class Qwen3VL():
 
   def forward(
       self,
-      input_ids,
+      prompt,
       pixel_values,
       image_grid_thw,
-      seq_len,
       expected
   ):
+    text_inputs = self.tok.encode(prompt)
+    image_token_id = 151655
+    image_token_positions = [i for i, tid in enumerate(text_inputs) if tid == image_token_id]
+    num_image_tokens = ((image_grid_thw[0]*image_grid_thw[1]*image_grid_thw[2]) / 4)
+    for pos in reversed(image_token_positions): text_inputs[pos:pos+1] = [image_token_id] * int(num_image_tokens)
+    seq_len=len(text_inputs)
+    input_ids = Tensor([text_inputs])
     if not self.prewarm:
       for _ in range(3): self.prefill(pixel_values=pixel_values, input_ids=input_ids, image_grid_thw=image_grid_thw)
       for _ in range(3):  self.fwd(token=Tensor([[42]]).contiguous(), seq_len=Variable("pos",1,500).bind(seq_len))
@@ -471,20 +477,10 @@ if __name__ == "__main__":
   for image, expected_output, prompt in zip(images, expected_outputs, prompts):
     z += 1
     if z > 3: break
-    text_inputs = qwen.tok.encode(prompt)
 
     image = image.transpose(2, 0, 1)
     pixel_values, image_grid_thw = preprocess(image=image)
-
-    merge_size = 2
-    num_image_tokens = ((image_grid_thw[0]*image_grid_thw[1]*image_grid_thw[2]) / (merge_size ** 2))
-
-    image_token_id = 151655
-    image_token_positions = [i for i, tid in enumerate(text_inputs) if tid == image_token_id]
-
-    for pos in reversed(image_token_positions): text_inputs[pos:pos+1] = [image_token_id] * int(num_image_tokens)
-
-    outputs = qwen.forward(input_ids=Tensor([text_inputs]), pixel_values=Tensor(pixel_values), image_grid_thw=image_grid_thw, expected=qwen.tok.encode(expected_output), seq_len=len(text_inputs))
+    outputs = qwen.forward(prompt=prompt, pixel_values=Tensor(pixel_values), image_grid_thw=image_grid_thw, expected=qwen.tok.encode(expected_output))
 
     output = qwen.tok.decode(outputs)
     output = output.replace("<|im_end|>","") # todo hack
