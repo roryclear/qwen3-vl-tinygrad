@@ -221,18 +221,18 @@ class Qwen3VL():
     if not self.prewarm:
       for _ in range(3):
         self.prefill(pixel_values=pixel_values, input_ids=input_ids, image_grid_thw=image_grid_thw)
-        self.fwd(token=Tensor([[42]]).contiguous(), position_ids=Tensor(42).contiguous(), seq_len=Variable("pos",1,500).bind(seq_len))
+        self.fwd(token=Tensor([[42]]).contiguous(), seq_len=Variable("pos",1,500).bind(seq_len))
         self.prewarm = True
 
 
     toks_out = []
     prefill_done = False
     ts = time.time()
-    position_ids, token = self.prefill(pixel_values=pixel_values, input_ids=input_ids, image_grid_thw=image_grid_thw)
+    token = self.prefill(pixel_values=pixel_values, input_ids=input_ids, image_grid_thw=image_grid_thw)
     while True:
         if prefill_done:
           ts = time.time()
-          position_ids, token = self.fwd(token=next_token_tensor.contiguous(), position_ids=position_ids.contiguous(), seq_len=Variable("pos",1,500).bind(seq_len))
+          token = self.fwd(token=next_token_tensor.contiguous(), seq_len=Variable("pos",1,500).bind(seq_len))
           seq_len+=1
         else:
           prefill_done = True
@@ -249,7 +249,7 @@ class Qwen3VL():
 
 
   @TinyJit
-  def fwd(self, token, position_ids, seq_len):
+  def fwd(self, token, seq_len):
     hidden_states = self.lang.token_embd(token)
     for i in range(len(self.lang.blk)): hidden_states = self.lang.blk[i](hidden_states, start_pos=seq_len)  
     hidden_states = self.lang.output_norm(hidden_states)
@@ -257,7 +257,7 @@ class Qwen3VL():
     next_token_logits = outputs[:, -1, :]
     scores = next_token_logits / temp
     token = sample(scores[0], temp=temp, k=top_k, p=top_p, af=None, ap=None)
-    return position_ids + 1, token
+    return token
 
   @TinyJit
   def prefill(self, pixel_values, input_ids, image_grid_thw):
@@ -398,9 +398,6 @@ class Qwen3VL():
       flat_inputs = inputs_embeds.view(-1)
       flat_inputs = flat_inputs * (~flat_mask) + expanded
       hidden_states = flat_inputs.view(inputs_embeds.shape)
-
-
-      position_ids = Tensor.arange(input_ids.shape[-1]).unsqueeze(0).unsqueeze(0).repeat(4, 1, 1)
       
       for i in range(len(self.lang.blk)): # todo same block above
         self.lang.blk[i]._init_state(Tensor.zeros(1, 1))
@@ -409,11 +406,10 @@ class Qwen3VL():
       hidden_states = self.lang.output_norm(hidden_states)
       outputs = hidden_states[:, -1:, :] @ self.lang.token_embd.weight.T
 
-      position_ids = position_ids[0][0][-1] + 1
       next_token_logits = outputs[:, -1, :]
       scores = next_token_logits / temp
       token = sample(scores[0], temp=temp, k=top_k, p=top_p, af=None, ap=None)
-      return position_ids, token
+      return token
 
 class qwen3vl_vis():
   def __init__(self):
@@ -495,5 +491,6 @@ if __name__ == "__main__":
     output = output.replace("<|im_end|>","") # todo hack
     print("output =",output)
     #assert output == expected_output
+
 
 
