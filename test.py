@@ -218,11 +218,11 @@ class Qwen3VL():
       seq_len,
       expected
   ):
-    if not self.prewarm:
-      for _ in range(3):
-        self.prefill(pixel_values=pixel_values, input_ids=input_ids, image_grid_thw=image_grid_thw, past_keys=self.past_keys, past_values=self.past_values, seq_len=seq_len)
-        self.fwd(token=Tensor([[42]]).contiguous(), position_ids=Tensor(42).contiguous(), seq_len=Variable("pos",1,500).bind(seq_len), past_keys=self.past_keys, past_values=self.past_values)
-        self.prewarm = True
+    #if not self.prewarm:
+    #  for _ in range(3):
+    #    self.prefill(pixel_values=pixel_values, input_ids=input_ids, image_grid_thw=image_grid_thw, past_keys=self.past_keys, past_values=self.past_values, seq_len=seq_len)
+    #    self.fwd(token=Tensor([[42]]).contiguous(), position_ids=Tensor(42).contiguous(), seq_len=Variable("pos",1,500).bind(seq_len), past_keys=self.past_keys, past_values=self.past_values)
+    #    self.prewarm = True
 
     for i in range(len(self.lang.blk)):
       self.past_keys[i] *= 0
@@ -483,66 +483,31 @@ class Qwen3VL():
       sin = emb.sin()
       
       for i in range(len(self.lang.blk)): # todo same block above
-          residual = hidden_states
+          self.lang.blk[i]._init_state(Tensor.zeros(1, 1))
+          hidden_states2 = self.lang.blk[i](hidden_states, start_pos=0)
           hidden_states = self.lang.blk[i].attn_norm(hidden_states)
           input_shape = hidden_states.shape[:-1]
 
+
+          # todo remove once past_keys and values isn't needed
           hidden_shape = (*input_shape, -1, self.lang.key_length)
           query = self.lang.blk[i].attn_q(hidden_states).view(hidden_shape)
           key = self.lang.blk[i].attn_k(hidden_states).view(hidden_shape)
-
           query = self.lang.blk[i].attn_q_norm(query).transpose(1, 2)
           key = self.lang.blk[i].attn_k_norm(key).transpose(1, 2)
-
           value = self.lang.blk[i].attn_v(hidden_states).view(hidden_shape).transpose(1, 2)
-      
           query = (query * cos) + (rotate_half(query) * sin)
           key = (key * cos) + (rotate_half(key) * sin)
-
           query = query.cast(dtypes.bfloat16)
           key = key.cast(dtypes.bfloat16)
-
           key_padded = key[0].pad(((0,0), (0, 500-seq_len), (0,0)))
           value_padded = value[0].pad(((0,0), (0, 500-seq_len), (0,0)))
-
           past_keys[i] += key_padded
-          value_padded = value_padded.cast(dtypes.bfloat16) # todo
           past_values[i] += value_padded
-
-          key = past_keys[i][:, :seq_len, :]
-          value = past_values[i][:, :seq_len, :]
-
-          L, S = query.size(-2), key.size(-2)
-          attn_bias = Tensor.zeros(L, S, dtype=dtypes.bfloat16)
-
-          temp_mask = Tensor.ones(L, S, dtype=dtypes.bool).tril(diagonal=0)
-          attn_bias = temp_mask.logical_not().where(Tensor(float("-inf"), dtype=attn_bias.dtype), attn_bias)
-
-          key = key.repeat_interleave(query.size(-3)//key.size(-3), -3)
-          value = value.repeat_interleave(query.size(-3)//value.size(-3), -3)
+          hidden_states = hidden_states2
 
 
-          attn_weight = query @ key.transpose(-2, -1) * self.lang.scaling
-          attn_weight += attn_bias
-          attn_weight = Tensor.softmax(attn_weight)
-          attn_output = attn_weight @ value
-          attn_output = attn_output.transpose(1, 2).contiguous()
-          attn_output = attn_output.reshape(*input_shape, -1).contiguous()
-          hidden_states = self.lang.blk[i].attn_output(attn_output)
-          hidden_states = residual + hidden_states
-          residual = hidden_states
-          hidden_states = self.lang.blk[i].ffn_norm(hidden_states)
-          
-          
-          gate = self.lang.blk[i].ffn_gate(hidden_states)
-          up = self.lang.blk[i].ffn_up(hidden_states)
-          activated = Tensor.silu(gate)
-          combined = activated * up
-          hidden_states = self.lang.blk[i].ffn_down(combined)
-          hidden_states = residual + hidden_states
-
-
-      hidden_states = self.lang.output_norm(hidden_states)
+      hidden_states = self.lang.output_norm(hidden_states2)
       outputs = self.lang.lm_head(hidden_states[:, -1:, :])
 
       position_ids = position_ids[0][0][-1] + 1
@@ -655,7 +620,7 @@ if __name__ == "__main__":
   z = 0
   for image, expected_output, prompt in zip(images, expected_outputs, prompts):
     z+=1
-    if z > 3: break
+    if z > 1: break
     text_inputs = tok.encode(prompt)
 
     image = image.transpose(2, 0, 1)
