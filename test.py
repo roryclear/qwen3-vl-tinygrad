@@ -260,59 +260,7 @@ class Qwen3VL():
     sin = emb.sin()
 
     # decoder layers
-    for i in range(len(self.lang.blk)):        
-      residual = hidden_states
-      hidden_states = self.lang.blk[i].attn_norm(hidden_states)
-
-      input_shape = hidden_states.shape[:-1]
-      hidden_shape = (*input_shape, -1, self.lang.key_length)
-      
-      query = self.lang.blk[i].attn_q(hidden_states).view(hidden_shape)
-      key = self.lang.blk[i].attn_k(hidden_states).view(hidden_shape)
-      query = self.lang.blk[i].attn_q_norm(query).transpose(1, 2)
-      key = self.lang.blk[i].attn_k_norm(key).transpose(1, 2)
-
-      value = self.lang.blk[i].attn_v(hidden_states).view(hidden_shape).transpose(1, 2)
-
-      query = (query * cos) + (rotate_half(query) * sin)
-      key = (key * cos) + (rotate_half(key) * sin)
-
-      query = query.cast(dtypes.bfloat16)
-      key = key.cast(dtypes.bfloat16)
-
-      key_padded = key[0].pad(((0,0), (seq_len, 500-seq_len-1), (0,0)))
-      value_padded = value[0].pad(((0,0), (seq_len, 500-seq_len-1), (0,0)))
-
-      past_keys[i] += key_padded
-      value_padded = value_padded.cast(dtypes.bfloat16) # todo
-      past_values[i] += value_padded
-
-      key = past_keys[i][:, :seq_len+1, :]
-      value = past_values[i][:, :seq_len+1, :]
-
-      key = key.repeat_interleave(query.size(-3)//key.size(-3), -3)
-      value = value.repeat_interleave(query.size(-3)//value.size(-3), -3)
-
-      attn_weight = query @ key.transpose(-2, -1) * self.lang.scaling
-
-      attn_weight = Tensor.softmax(attn_weight)
-      value = value.cast(dtypes.bfloat16)
-      attn_output = attn_weight @ value
-
-
-      attn_output = attn_output.transpose(1, 2)
-      attn_output = attn_output.reshape(*input_shape, -1).contiguous()
-
-      hidden_states = self.lang.blk[i].attn_output(attn_output)                
-      hidden_states = residual = residual + hidden_states
-      hidden_states = self.lang.blk[i].ffn_norm(hidden_states)
-      gate = self.lang.blk[i].ffn_gate(hidden_states)
-      up = self.lang.blk[i].ffn_up(hidden_states)
-      activated = Tensor.silu(gate)
-      combined = activated * up
-      hidden_states = self.lang.blk[i].ffn_down(combined)
-      hidden_states = residual + hidden_states
-
+    for i in range(len(self.lang.blk)): hidden_states = self.lang.blk[i](hidden_states, start_pos=seq_len)  
     hidden_states = self.lang.output_norm(hidden_states)
     outputs = self.lang.lm_head(hidden_states[:, -1:, :])
     next_token_logits = outputs[:, -1, :]
@@ -385,9 +333,6 @@ class Qwen3VL():
       pos_embeds = (pos_embeds.view(grid_ts, grid_hs // merge_size, merge_size, grid_ws // merge_size, merge_size, -1).permute(0, 1, 3, 2, 4, 5).flatten(0, 4))
       hidden_states = hidden_states + pos_embeds
       
-      merge_size = 2
-
-
       hpos_ids = Tensor.arange(image_grid_thw[1]).unsqueeze(1).expand(-1, image_grid_thw[2])
       hpos_ids = hpos_ids.reshape(image_grid_thw[1] // merge_size, merge_size, image_grid_thw[2] // merge_size, merge_size).transpose(1, 2).flatten()
 
@@ -453,61 +398,25 @@ class Qwen3VL():
       image_embeds = self.vis.mm[2](image_embeds)
       
       image_mask = input_ids == 151655
-
       inputs_embeds = self.lang.token_embd(input_ids)
-
       image_mask = image_mask.unsqueeze(-1).expand(inputs_embeds.shape)
       image_embeds = image_embeds.view(-1)
-
       flat_mask = image_mask.view(-1)
       idx = (flat_mask.cumsum(0) - 1).clamp(0)
-      
       expanded = image_embeds[idx] * flat_mask
-
       flat_inputs = inputs_embeds.view(-1)
       flat_inputs = flat_inputs * (~flat_mask) + expanded
+      hidden_states = flat_inputs.view(inputs_embeds.shape)
 
-      inputs_embeds = flat_inputs.view(inputs_embeds.shape)
-
-      image_mask = image_mask[..., 0]
-      hidden_states = inputs_embeds
 
       position_ids = Tensor.arange(input_ids.shape[-1]).unsqueeze(0).unsqueeze(0).repeat(4, 1, 1)
-      pos_id = Tensor.arange(input_ids.shape[-1])[None, :]
-      inv_freq = self.lang.inv_freq[:, None]
-      freqs = inv_freq * pos_id
-      freqs = freqs.transpose(0, 1)
-
-      emb = Tensor.cat(freqs, freqs, dim=-1)
-      cos = emb.cos()
-      sin = emb.sin()
       
       for i in range(len(self.lang.blk)): # todo same block above
-          self.lang.blk[i]._init_state(Tensor.zeros(1, 1))
-          hidden_states2 = self.lang.blk[i](hidden_states, start_pos=0)
-          hidden_states = self.lang.blk[i].attn_norm(hidden_states)
-          input_shape = hidden_states.shape[:-1]
+        self.lang.blk[i]._init_state(Tensor.zeros(1, 1))
+        hidden_states = self.lang.blk[i](hidden_states, start_pos=0)
 
 
-          # todo remove once past_keys and values isn't needed
-          hidden_shape = (*input_shape, -1, self.lang.key_length)
-          query = self.lang.blk[i].attn_q(hidden_states).view(hidden_shape)
-          key = self.lang.blk[i].attn_k(hidden_states).view(hidden_shape)
-          query = self.lang.blk[i].attn_q_norm(query).transpose(1, 2)
-          key = self.lang.blk[i].attn_k_norm(key).transpose(1, 2)
-          value = self.lang.blk[i].attn_v(hidden_states).view(hidden_shape).transpose(1, 2)
-          query = (query * cos) + (rotate_half(query) * sin)
-          key = (key * cos) + (rotate_half(key) * sin)
-          query = query.cast(dtypes.bfloat16)
-          key = key.cast(dtypes.bfloat16)
-          key_padded = key[0].pad(((0,0), (0, 500-seq_len), (0,0)))
-          value_padded = value[0].pad(((0,0), (0, 500-seq_len), (0,0)))
-          past_keys[i] += key_padded
-          past_values[i] += value_padded
-          hidden_states = hidden_states2
-
-
-      hidden_states = self.lang.output_norm(hidden_states2)
+      hidden_states = self.lang.output_norm(hidden_states)
       outputs = self.lang.lm_head(hidden_states[:, -1:, :])
 
       position_ids = position_ids[0][0][-1] + 1
