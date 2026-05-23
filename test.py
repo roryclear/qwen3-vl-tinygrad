@@ -7,6 +7,7 @@ import sys
 import cv2
 import time
 from gguf import gguf_load
+from model import TransformerBlock, TransformerConfig
 
 
 class SimpleTokenizer:
@@ -480,7 +481,7 @@ class Qwen3VL():
       emb = Tensor.cat(freqs, freqs, dim=-1)
       cos = emb.cos()
       sin = emb.sin()
-
+      
       for i in range(len(self.lang.blk)): # todo same block above
           residual = hidden_states
           hidden_states = self.lang.blk[i].attn_norm(hidden_states)
@@ -565,7 +566,8 @@ class qwen3vl_lang:
     _, state_dict_language = gguf_load(fetch("https://huggingface.co/Qwen/Qwen3-VL-2B-Instruct-GGUF/resolve/main/Qwen3VL-2B-Instruct-F16.gguf"))
     self.token_embd = nn.Embedding(vocab_size=151936, embed_size=2048)
     self.blk = []
-    for _ in range(28): self.blk.append(qwen3_lang_block())
+    for _ in range(28):
+      self.blk.append(TransformerBlock(config=TransformerConfig(num_blocks=28, dim=2048, hidden_dim=6144, n_heads=16, n_kv_heads=8, norm_eps=9.999999974752427e-07, vocab_size=151936, head_dim=128, rope_theta=5000000.0, rope_dim=128, v_head_dim=128, max_context=4096, qk_norm=128, num_experts=0, num_experts_per_tok=0, norm_topk_prob=False, q_lora_rank=0, kv_lora_rank=0, shared_expert_dim=0, full_attention_interval=0, attn_output_gate=False, ssm=None, shared_expert_gate=False, leading_dense_blocks=0, dense_hidden_dim=0, routed_scaling_factor=1.0, qkv_bias=False, expert_bias=False)))
     self.output_norm = Qwen3VLTextRMSNorm(size=2048)
 
 
@@ -673,4 +675,5 @@ if __name__ == "__main__":
     output = output.replace("<|im_end|>","") # todo hack
     print("output =",output)
     #assert output == expected_output
+
 
