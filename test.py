@@ -204,8 +204,7 @@ from tinygrad import dtypes
 class Qwen3VL():
   def __init__(self):
     self.vis = qwen3vl_vis()
-    self.lang = qwen3vl_lang()
-
+    self.lang, _ = Transformer.from_gguf(fetch("https://huggingface.co/Qwen/Qwen3-VL-2B-Instruct-GGUF/resolve/main/Qwen3VL-2B-Instruct-F16.gguf"), 500) # max context
     self.prewarm = False
 
 
@@ -415,46 +414,6 @@ class Qwen3VL():
       scores = next_token_logits / temp
       token = sample(scores[0], temp=temp, k=top_k, p=top_p, af=None, ap=None)
       return position_ids, token
-
-class Qwen3VLTextRMSNorm():
-  def __init__(self, size):
-    self.variance_epsilon = 1e-06
-    self.weight = Tensor.zeros(size)
-
-  def __call__(self, hidden_states):
-    variance = hidden_states.pow(2).mean(-1, keepdim=True)
-    hidden_states = hidden_states * Tensor.rsqrt(variance + self.variance_epsilon)
-    return self.weight * hidden_states
-
-class qwen3vl_lang:
-  def __init__(self):
-    _, state_dict_language = gguf_load(fetch("https://huggingface.co/Qwen/Qwen3-VL-2B-Instruct-GGUF/resolve/main/Qwen3VL-2B-Instruct-F16.gguf"))
-    self.token_embd = nn.Embedding(vocab_size=151936, embed_size=2048)
-    self.blk = []
-    for _ in range(28):
-      self.blk.append(TransformerBlock(config=TransformerConfig(num_blocks=28, dim=2048, hidden_dim=6144, n_heads=16, n_kv_heads=8, norm_eps=9.999999974752427e-07, vocab_size=151936, head_dim=128, rope_theta=5000000.0, rope_dim=128, v_head_dim=128, max_context=4096, qk_norm=128, num_experts=0, num_experts_per_tok=0, norm_topk_prob=False, q_lora_rank=0, kv_lora_rank=0, shared_expert_dim=0, full_attention_interval=0, attn_output_gate=False, ssm=None, shared_expert_gate=False, leading_dense_blocks=0, dense_hidden_dim=0, routed_scaling_factor=1.0, qkv_bias=False, expert_bias=False)))
-    self.output_norm = Qwen3VLTextRMSNorm(size=2048)
-
-
-    self.scaling = 0.08838834764831845
-    self.key_length = 128
-    self.mrope_section = [24, 20, 20]
-    load_state_dict(self, state_dict_language)
-    self.inv_freq = 1.0 / (5000000 ** (Tensor.arange(0, 128, 2) / 128))
-
-class qwen3_lang_block():
-  def __init__(self):
-    self.attn_k = nn.Linear(2048, 1024, bias=False)
-    self.attn_q = nn.Linear(2048, 2048, bias=False)
-    self.attn_v = nn.Linear(2048, 1024, bias=False)
-    self.attn_output = nn.Linear(2048, 2048, bias=False)
-    self.ffn_gate = nn.Linear(2048, 6144, bias=False)
-    self.ffn_up = nn.Linear(2048, 6144, bias=False)
-    self.ffn_down = nn.Linear(6144, 2048, bias=False)
-    self.attn_k_norm = Qwen3VLTextRMSNorm(size=128)
-    self.attn_q_norm = Qwen3VLTextRMSNorm(size=128)
-    self.ffn_norm = Qwen3VLTextRMSNorm(size=2048)
-    self.attn_norm = Qwen3VLTextRMSNorm(size=2048)
 
 class qwen3vl_vis():
   def __init__(self):
