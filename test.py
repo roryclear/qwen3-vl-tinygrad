@@ -216,11 +216,11 @@ class Qwen3VL():
       seq_len,
       expected
   ):
-    #if not self.prewarm:
-    #  for _ in range(3):
-    #    self.prefill(pixel_values=pixel_values, input_ids=input_ids, image_grid_thw=image_grid_thw, past_keys=self.past_keys, past_values=self.past_values, seq_len=seq_len)
-    #    self.fwd(token=Tensor([[42]]).contiguous(), position_ids=Tensor(42).contiguous(), seq_len=Variable("pos",1,500).bind(seq_len), past_keys=self.past_keys, past_values=self.past_values)
-    #    self.prewarm = True
+    if not self.prewarm:
+      for _ in range(3):
+        self.prefill(pixel_values=pixel_values, input_ids=input_ids, image_grid_thw=image_grid_thw)
+        self.fwd(token=Tensor([[42]]).contiguous(), position_ids=Tensor(42).contiguous(), seq_len=Variable("pos",1,500).bind(seq_len))
+        self.prewarm = True
 
 
     toks_out = []
@@ -517,8 +517,8 @@ if __name__ == "__main__":
   tok = pickle.load(open("tok.pkl", "rb"))
   z = 0
   for image, expected_output, prompt in zip(images, expected_outputs, prompts):
-    z+=1
-    if z > 1: break
+    z += 1
+    if z > 3: break
     text_inputs = tok.encode(prompt)
 
     image = image.transpose(2, 0, 1)
