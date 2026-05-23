@@ -7,7 +7,7 @@ import sys
 import cv2
 import time
 from gguf import gguf_load
-from model import TransformerBlock, TransformerConfig
+from model import TransformerBlock, TransformerConfig, Transformer
 
 
 class SimpleTokenizer:
@@ -205,6 +205,7 @@ class Qwen3VL():
   def __init__(self):
     self.vis = qwen3vl_vis()
     self.lang = qwen3vl_lang()
+
     self.prewarm = False
 
 
@@ -251,7 +252,7 @@ class Qwen3VL():
     hidden_states = self.lang.token_embd(token)
     for i in range(len(self.lang.blk)): hidden_states = self.lang.blk[i](hidden_states, start_pos=seq_len)  
     hidden_states = self.lang.output_norm(hidden_states)
-    outputs = self.lang.lm_head(hidden_states[:, -1:, :])
+    outputs = hidden_states[:, -1:, :] @ self.lang.token_embd.weight.T
     next_token_logits = outputs[:, -1, :]
     scores = next_token_logits / temp
     token = sample(scores[0], temp=temp, k=top_k, p=top_p, af=None, ap=None)
@@ -387,6 +388,7 @@ class Qwen3VL():
       image_embeds = self.vis.mm[2](image_embeds)
       
       image_mask = input_ids == 151655
+
       inputs_embeds = self.lang.token_embd(input_ids)
       image_mask = image_mask.unsqueeze(-1).expand(inputs_embeds.shape)
       image_embeds = image_embeds.view(-1)
@@ -406,7 +408,7 @@ class Qwen3VL():
 
 
       hidden_states = self.lang.output_norm(hidden_states)
-      outputs = self.lang.lm_head(hidden_states[:, -1:, :])
+      outputs = hidden_states[:, -1:, :] @ self.lang.token_embd.weight.T
 
       position_ids = position_ids[0][0][-1] + 1
       next_token_logits = outputs[:, -1, :]
@@ -438,8 +440,6 @@ class qwen3vl_lang:
     self.key_length = 128
     self.mrope_section = [24, 20, 20]
     load_state_dict(self, state_dict_language)
-    self.lm_head = nn.Linear(2048, 151936, bias=False)
-    self.lm_head.weight = self.token_embd.weight
     self.inv_freq = 1.0 / (5000000 ** (Tensor.arange(0, 128, 2) / 128))
 
 class qwen3_lang_block():
