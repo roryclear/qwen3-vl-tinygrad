@@ -147,7 +147,7 @@ def sample(logits, temp: float, k: int, p: float, af: float, ap: float):
 
   return output_token
 
-def preprocess(image):
+def preprocess_img(image):
   patch_size = 16
   merge_size = 2
   rescale_factor = 0.00392156862745098
@@ -196,14 +196,13 @@ def preprocess(image):
 class Qwen3VL():
   def __init__(self):
     self.vis = qwen3vl_vis()
-    self.lang, kv = Transformer.from_gguf(fetch("https://huggingface.co/Qwen/Qwen3-VL-2B-Instruct-GGUF/resolve/main/Qwen3VL-2B-Instruct-F16.gguf"), 500) # max context
+    self.lang, kv = Transformer.from_gguf(fetch("https://huggingface.co/Qwen/Qwen3-VL-2B-Instruct-GGUF/resolve/main/Qwen3VL-2B-Instruct-F16.gguf"), 2000) # max context
     self.tok = SimpleTokenizer.from_gguf_kv(kv)
     self.prewarm = False
 
-
-  def forward(self, prompt, image):
+  def preprocess(self, image, prompt):
     image = image.transpose(2, 0, 1)
-    pixel_values, image_grid_thw = preprocess(image=image)
+    pixel_values, image_grid_thw = preprocess_img(image=image)
     pixel_values = Tensor(pixel_values)
     text_inputs = self.tok.encode(prompt)
     image_token_id = 151655
@@ -212,9 +211,13 @@ class Qwen3VL():
     for pos in reversed(image_token_positions): text_inputs[pos:pos+1] = [image_token_id] * int(num_image_tokens)
     seq_len=len(text_inputs)
     input_ids = Tensor([text_inputs])
+    return pixel_values, input_ids, seq_len, image_grid_thw
+
+  def forward(self, prompt, image):
+    pixel_values, input_ids, seq_len, image_grid_thw = self.preprocess(image=image, prompt=prompt)
     if not self.prewarm:
       for _ in range(3): self.prefill(pixel_values=pixel_values, input_ids=input_ids, image_grid_thw=image_grid_thw)
-      for _ in range(3):  self.fwd(token=Tensor([[42]]).contiguous(), seq_len=Variable("pos",1,500).bind(seq_len))
+      for _ in range(3):  self.fwd(token=Tensor([[42]]).contiguous(), seq_len=Variable("pos",1,2000).bind(seq_len))
       self.prewarm = True
 
     toks_out = []
@@ -224,7 +227,7 @@ class Qwen3VL():
     while True:
         if prefill_done:
           ts = time.time()
-          token = self.fwd(token=next_token_tensor.contiguous(), seq_len=Variable("pos",1,500).bind(seq_len))
+          token = self.fwd(token=next_token_tensor.contiguous(), seq_len=Variable("pos",1,2000).bind(seq_len))
           seq_len+=1
         else:
           prefill_done = True
@@ -440,7 +443,7 @@ if __name__ == "__main__":
       cv2.cvtColor(cv2.imread("gtr.jpg"), cv2.COLOR_BGR2RGB),
       cv2.cvtColor(cv2.imread("yaris.jpg"), cv2.COLOR_BGR2RGB),
       cv2.cvtColor(cv2.imread("micra.jpg"), cv2.COLOR_BGR2RGB),
-      cv2.cvtColor(cv2.imread("test_img.jpg"), cv2.COLOR_BGR2RGB)
+      cv2.cvtColor(cv2.imread("96_notif.jpg"), cv2.COLOR_BGR2RGB)
   ]
 
   expected_outputs = ["This is a Ferrari F40, a classic supercar known for its sleek design and powerful performance.",
@@ -458,7 +461,7 @@ if __name__ == "__main__":
   z = 0
   for image, expected_output, prompt in zip(images, expected_outputs, prompts):
     z += 1
-    if z > 3: break
+    if z > 3: continue
 
     output = qwen.forward(prompt=prompt, image=image)
     print("output =",output)
