@@ -201,13 +201,10 @@ class Qwen3VL():
     self.prewarm = False
 
 
-  def forward(
-      self,
-      prompt,
-      pixel_values,
-      image_grid_thw,
-      expected
-  ):
+  def forward(self, prompt, image, expected):
+    image = image.transpose(2, 0, 1)
+    pixel_values, image_grid_thw = preprocess(image=image)
+    pixel_values = Tensor(pixel_values)
     text_inputs = self.tok.encode(prompt)
     image_token_id = 151655
     image_token_positions = [i for i, tid in enumerate(text_inputs) if tid == image_token_id]
@@ -219,7 +216,6 @@ class Qwen3VL():
       for _ in range(3): self.prefill(pixel_values=pixel_values, input_ids=input_ids, image_grid_thw=image_grid_thw)
       for _ in range(3):  self.fwd(token=Tensor([[42]]).contiguous(), seq_len=Variable("pos",1,500).bind(seq_len))
       self.prewarm = True
-
 
     toks_out = []
     prefill_done = False
@@ -465,10 +461,7 @@ if __name__ == "__main__":
     z += 1
     if z > 3: break
 
-    image = image.transpose(2, 0, 1)
-    pixel_values, image_grid_thw = preprocess(image=image)
-    outputs = qwen.forward(prompt=prompt, pixel_values=Tensor(pixel_values), image_grid_thw=image_grid_thw, expected=qwen.tok.encode(expected_output))
-
+    outputs = qwen.forward(prompt=prompt, image=image, expected=qwen.tok.encode(expected_output))
     output = qwen.tok.decode(outputs)
     output = output.replace("<|im_end|>","") # todo hack
     print("output =",output)
