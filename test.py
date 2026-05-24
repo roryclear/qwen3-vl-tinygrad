@@ -198,7 +198,7 @@ class Qwen3VL():
     self.vis = qwen3vl_vis()
     self.lang, kv = Transformer.from_gguf(fetch("https://huggingface.co/Qwen/Qwen3-VL-2B-Instruct-GGUF/resolve/main/Qwen3VL-2B-Instruct-F16.gguf"), 2000) # max context
     self.tok = SimpleTokenizer.from_gguf_kv(kv)
-    self.prewarm = False
+    self.prewarmed = False
 
   def preprocess(self, image, prompt):
     image = image.transpose(2, 0, 1)
@@ -213,12 +213,16 @@ class Qwen3VL():
     input_ids = Tensor([text_inputs])
     return pixel_values, input_ids, seq_len, image_grid_thw
 
+  def prewarm(self, res, prompt):
+    pixel_values, input_ids, seq_len, image_grid_thw = self.preprocess(image=np.random.randint(0, 256, size=res, dtype=np.uint8), prompt=prompt)
+    for _ in range(3): self.prefill(pixel_values=pixel_values, input_ids=input_ids, image_grid_thw=image_grid_thw)
+    for _ in range(3):  self.fwd(token=Tensor([[42]]), seq_len=Variable("pos",1,2000).bind(seq_len))
+
   def forward(self, prompt, image):
     pixel_values, input_ids, seq_len, image_grid_thw = self.preprocess(image=image, prompt=prompt)
-    if not self.prewarm:
-      for _ in range(3): self.prefill(pixel_values=pixel_values, input_ids=input_ids, image_grid_thw=image_grid_thw)
-      for _ in range(3):  self.fwd(token=Tensor([[42]]), seq_len=Variable("pos",1,2000).bind(seq_len))
-      self.prewarm = True
+    if not self.prewarmed:
+      self.prewarm(image.shape, prompt)
+      self.prewarmed = True
 
     toks_out = []
     prefill_done = False
