@@ -201,7 +201,7 @@ class Qwen3VL():
     self.prewarm = False
 
 
-  def forward(self, prompt, image, expected):
+  def forward(self, prompt, image):
     image = image.transpose(2, 0, 1)
     pixel_values, image_grid_thw = preprocess(image=image)
     pixel_values = Tensor(pixel_values)
@@ -232,12 +232,11 @@ class Qwen3VL():
         next_token_tensor = Tensor([[next_token]])  # shape (1,1)
 
         toks_out.append(next_token)
+        print(self.tok.decode(toks_out))
         print(f"TOK/S = {1 / (time.time() - ts):.2f}")
-        print(self.tok.decode(toks_out), "\n", self.tok.decode(expected[:len(toks_out)]), "\n")
-        #assert self.tok.decode(toks_out).replace("<|im_end|>","") == self.tok.decode(expected[:len(toks_out)])
         if next_token == 151645 or seq_len == 406: break
 
-    return toks_out
+    return self.tok.decode(toks_out)
 
 
   @TinyJit
@@ -461,8 +460,7 @@ if __name__ == "__main__":
     z += 1
     if z > 3: break
 
-    outputs = qwen.forward(prompt=prompt, image=image, expected=qwen.tok.encode(expected_output))
-    output = qwen.tok.decode(outputs)
+    output = qwen.forward(prompt=prompt, image=image)
     output = output.replace("<|im_end|>","") # todo hack
     print("output =",output)
     #assert output == expected_output
