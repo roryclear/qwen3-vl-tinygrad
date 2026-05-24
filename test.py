@@ -1,14 +1,11 @@
-import unicodedata, re
+import unicodedata, re, math, typing, sys, cv2, time
 import numpy as np
-from tinygrad import Tensor, nn, TinyJit, Variable
-from tinygrad.helpers import partition
-import math
-import typing
-import sys
-import cv2
-import time
+from tinygrad import Tensor, nn, TinyJit, Variable, dtypes
+Tensor.manual_seed(42)
+from tinygrad.nn.state import safe_load, load_state_dict
+from tinygrad.helpers import partition, fetch
 from gguf import gguf_load
-from model import TransformerBlock, TransformerConfig, Transformer
+from model import Transformer
 
 
 class SimpleTokenizer:
@@ -196,12 +193,6 @@ def preprocess(image):
   image_grid_thw = [1, grid_h, grid_w]
   return pixel_values.astype(np.float32), image_grid_thw
 
-from tinygrad import Tensor
-Tensor.manual_seed(42)
-from tinygrad.helpers import fetch
-from tinygrad.nn.state import safe_load, load_state_dict
-from tinygrad import dtypes
-
 class Qwen3VL():
   def __init__(self):
     self.vis = qwen3vl_vis()
@@ -350,16 +341,12 @@ class Qwen3VL():
         hidden_states_input = self.vis.v.blk[i].ln1(hidden_states)
         seq_length = hidden_states_input.shape[0]
         qkv = self.vis.v.blk[i].attn_qkv(hidden_states_input)
-        
         qkv_reshaped = qkv.reshape(seq_length, 3, 16, -1)
-
         qkv_permuted = qkv_reshaped.permute(1, 0, 2, 3)
-
         query, key, value = qkv_permuted.chunk(3, dim=0)
         query = query.squeeze(0)
         key   = key.squeeze(0)
         value = value.squeeze(0)
-
         query, key = query.cast(dtypes.float32), key.cast(dtypes.float32)
         query = (query * cos) + (rotate_half(query) * sin)
         key = (key * cos) + (rotate_half(key) * sin)
