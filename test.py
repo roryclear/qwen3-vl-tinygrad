@@ -231,10 +231,10 @@ class Qwen3VL():
         next_token = int(token.numpy()[0])
         next_token_tensor = Tensor([[next_token]])  # shape (1,1)
 
+        if next_token == 151645 or seq_len == 406: break
         toks_out.append(next_token)
         print(self.tok.decode(toks_out))
         print(f"TOK/S = {1 / (time.time() - ts):.2f}")
-        if next_token == 151645 or seq_len == 406: break
 
     return self.tok.decode(toks_out)
 
@@ -461,7 +461,6 @@ if __name__ == "__main__":
     if z > 3: break
 
     output = qwen.forward(prompt=prompt, image=image)
-    output = output.replace("<|im_end|>","") # todo hack
     print("output =",output)
     #assert output == expected_output
 
