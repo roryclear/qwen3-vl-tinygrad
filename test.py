@@ -217,12 +217,11 @@ class Qwen3VL():
     pixel_values, input_ids, seq_len, image_grid_thw = self.preprocess(image=np.random.randint(0, 256, size=res, dtype=np.uint8), prompt=prompt)
     for _ in range(3): self.prefill(pixel_values=pixel_values, input_ids=input_ids, image_grid_thw=image_grid_thw)
     for _ in range(3):  self.fwd(token=Tensor([[42]]), seq_len=Variable("pos",1,2000).bind(seq_len))
+    self.prewarmed = True
 
   def forward(self, prompt, image):
     pixel_values, input_ids, seq_len, image_grid_thw = self.preprocess(image=image, prompt=prompt)
-    if not self.prewarmed:
-      self.prewarm(image.shape, prompt)
-      self.prewarmed = True
+    if not self.prewarmed: self.prewarm(image.shape, prompt)
 
     toks_out = []
     prefill_done = False
@@ -460,10 +459,11 @@ if __name__ == "__main__":
           "<|im_start|>user\n<|vision_start|><|image_pad|><|vision_end|>\nWhat has been detected on my CCTV camera? Write in one short sentence, only info about the object(s) detected.<|im_end|>\n<|im_start|>assistant\n"]
 
   z = 0
+  qwen.prewarm(images[0].shape, prompts[0])
   for image, expected_output, prompt in zip(images, expected_outputs, prompts):
     z += 1
     if z > 3: continue
-
+    
     output = qwen.forward(prompt=prompt, image=image)
     print("output =",output)
     #assert output == expected_output
