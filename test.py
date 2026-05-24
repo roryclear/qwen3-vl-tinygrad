@@ -263,7 +263,7 @@ class Qwen3VL():
 
       hidden_states = x.conv2d(
           weight=w2d,
-          bias=qwen.vis.v.patch_embd.bias,
+          bias=self.vis.v.patch_embd.bias,
           stride=(16, 16),
           padding=(0, 0),
           dilation=(1, 1),
