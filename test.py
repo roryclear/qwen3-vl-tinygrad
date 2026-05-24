@@ -217,7 +217,7 @@ class Qwen3VL():
     pixel_values, input_ids, seq_len, image_grid_thw = self.preprocess(image=image, prompt=prompt)
     if not self.prewarm:
       for _ in range(3): self.prefill(pixel_values=pixel_values, input_ids=input_ids, image_grid_thw=image_grid_thw)
-      for _ in range(3):  self.fwd(token=Tensor([[42]]).contiguous(), seq_len=Variable("pos",1,2000).bind(seq_len))
+      for _ in range(3):  self.fwd(token=Tensor([[42]]), seq_len=Variable("pos",1,2000).bind(seq_len))
       self.prewarm = True
 
     toks_out = []
@@ -227,7 +227,7 @@ class Qwen3VL():
     while True:
         if prefill_done:
           ts = time.time()
-          token = self.fwd(token=next_token_tensor.contiguous(), seq_len=Variable("pos",1,2000).bind(seq_len))
+          token = self.fwd(token=next_token_tensor, seq_len=Variable("pos",1,2000).bind(seq_len))
           seq_len+=1
         else:
           prefill_done = True
@@ -353,14 +353,11 @@ class Qwen3VL():
         key = key.transpose(0, 1).unsqueeze(0)
         value = value.transpose(0, 1).unsqueeze(0)
 
-        query = query.contiguous()
-        key = key.contiguous()
-        value = value.contiguous()
         attn_weight = query @ key.transpose(-2, -1) * 0.125
         attn_weight = Tensor.softmax(attn_weight)
         attn_output = attn_weight @ value
-        attn_output = attn_output.transpose(1, 2).contiguous()
-        attn_output = attn_output.reshape(seq_length, -1).contiguous()
+        attn_output = attn_output.transpose(1, 2)
+        attn_output = attn_output.reshape(seq_length, -1)
         attn_output = attn_output.cast(dtypes.bfloat16)
         attn_output = self.vis.v.blk[i].attn_out(attn_output)
         attn_output = attn_output.cast(dtypes.bfloat16) # todo
