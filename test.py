@@ -161,18 +161,21 @@ def smart_resize(height, width, factor, min_pixels, max_pixels):
     return h_bar, w_bar
 
 import torch
-from torchvision.transforms.v2 import functional as tvF
+import torch
+import torch.nn.functional as F
 from PIL import Image
+import numpy as np
 def preprocess_img(image):
     image = image.reshape(256, 256, 3)
     image = Image.fromarray(image)
-    images = [tvF.pil_to_tensor(image)]
-    patch_size=16
-    merge_size=2
-    rescale_factor=0.00392156862745098
-    temporal_patch_size=2
+    image = torch.from_numpy(np.array(image)).permute(2, 0, 1)
 
-    height, width = images[0].shape[-2:]
+    patch_size = 16
+    merge_size = 2
+    temporal_patch_size = 2
+
+    height, width = image.shape[-2:]
+
     resized_height, resized_width = smart_resize(
         height,
         width,
@@ -181,18 +184,28 @@ def preprocess_img(image):
         max_pixels=16777216,
     )
 
-    resized_images = tvF.resize(images[0].unsqueeze(0), (resized_height, resized_width), interpolation=3, antialias=True)
+    image = image.unsqueeze(0).float()
 
-    stacked_images = resized_images[0].unsqueeze(0)
+    image = F.interpolate(
+        image,
+        size=(resized_height, resized_width),
+        mode="bilinear",
+        align_corners=False,
+        antialias=True if hasattr(F, "interpolate") else False,
+    )
+    stacked_images = image
     resized_height, resized_width = stacked_images.shape[-2:]
 
-    rescale_factor = 0.00392156862745098
+    # Normalize
+    rescale_factor = 1 / 255
     image_mean = torch.tensor((0.5, 0.5, 0.5)) / rescale_factor
     image_std = torch.tensor((0.5, 0.5, 0.5)) / rescale_factor
-    patches = tvF.normalize(stacked_images.to(dtype=torch.float32), image_mean, image_std)
+
+    patches = (stacked_images - image_mean[None, :, None, None]) / image_std[None, :, None, None]
 
     batch_size, channel = patches.shape[:2]
     grid_h, grid_w = resized_height // patch_size, resized_width // patch_size
+
     patches = patches.reshape(
         batch_size,
         channel,
@@ -204,7 +217,6 @@ def preprocess_img(image):
         patch_size,
     )
     patches = patches.permute(0, 2, 5, 3, 6, 1, 4, 7)
-
     flatten_patches = (
         patches.unsqueeze(6)
         .expand(-1, -1, -1, -1, -1, -1, temporal_patch_size, -1, -1)
@@ -214,10 +226,8 @@ def preprocess_img(image):
             channel * temporal_patch_size * patch_size * patch_size,
         )
     )
-
     processed_images = [flatten_patches[0]]
     processed_grids_ordered = [[[1, grid_h, grid_w]][0]]
-
     pixel_values = torch.cat(processed_images, dim=0)
     image_grid_thw = torch.tensor(processed_grids_ordered, dtype=torch.int32)
     return pixel_values.detach().numpy(), image_grid_thw.detach().numpy()[0]
@@ -498,7 +508,4 @@ if __name__ == "__main__":
     output = qwen.forward(prompt=prompt, image=image)
     print("output =",output)
     assert output == expected_output
-
-
-
 
