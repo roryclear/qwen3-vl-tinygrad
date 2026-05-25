@@ -161,14 +161,9 @@ def smart_resize(height, width, factor, min_pixels, max_pixels):
     return h_bar, w_bar
 
 import torch
-import torch
-import torch.nn.functional as F
-from PIL import Image
 import numpy as np
 def preprocess_img(image):
-    image = image.reshape(256, 256, 3)
-    image = Image.fromarray(image)
-    image = torch.from_numpy(np.array(image)).permute(2, 0, 1)
+    image = Tensor(image).permute(2, 0, 1)
 
     patch_size = 16
     merge_size = 2
@@ -185,7 +180,6 @@ def preprocess_img(image):
     )
 
     image = image.unsqueeze(0).float()
-    image = Tensor(image.detach().numpy())
     image = image.interpolate(size=(resized_height, resized_width))
     image = torch.Tensor(image.numpy())
     stacked_images = image
