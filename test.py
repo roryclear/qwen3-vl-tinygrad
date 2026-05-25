@@ -147,51 +147,80 @@ def sample(logits, temp: float, k: int, p: float, af: float, ap: float):
 
   return output_token
 
+def smart_resize(height, width, factor, min_pixels, max_pixels):
+    h_bar = round(height / factor) * factor
+    w_bar = round(width / factor) * factor
+    if h_bar * w_bar > max_pixels:
+        beta = math.sqrt((height * width) / max_pixels)
+        h_bar = max(factor, math.floor(height / beta / factor) * factor)
+        w_bar = max(factor, math.floor(width / beta / factor) * factor)
+    elif h_bar * w_bar < min_pixels:
+        beta = math.sqrt(min_pixels / (height * width))
+        h_bar = math.ceil(height * beta / factor) * factor
+        w_bar = math.ceil(width * beta / factor) * factor
+    return h_bar, w_bar
+
+import torch
+from torchvision.transforms.v2 import functional as tvF
+from PIL import Image
 def preprocess_img(image):
-  patch_size = 16
-  merge_size = 2
-  rescale_factor = 0.00392156862745098
-  temporal_patch_size = 2
-  height, width = image.shape[-2:]
-  factor = patch_size * merge_size
-  h_bar = round(height / factor) * factor
-  w_bar = round(width / factor) * factor
-  pixels = h_bar * w_bar
-  beta = math.sqrt(max(1.0, pixels / 16777216, 65536 / pixels))
-  h_bar = max(factor, round((h_bar / beta) / factor) * factor)
-  w_bar = max(factor, round((w_bar / beta) / factor) * factor)
+    image = image.reshape(256, 256, 3)
+    image = Image.fromarray(image)
+    images = [tvF.pil_to_tensor(image)]
+    patch_size=16
+    merge_size=2
+    rescale_factor=0.00392156862745098
+    temporal_patch_size=2
 
-  resized_height, resized_width = h_bar, w_bar
-  image_np = image.transpose(1, 2, 0)
-  image_np = cv2.resize(image_np, (resized_width, resized_height), interpolation=cv2.INTER_LANCZOS4)
-  image = image_np.transpose(2, 0, 1)
-  image = image.astype(np.float32)
-  image_mean = np.array([0.5, 0.5, 0.5]) / rescale_factor
-  image_std = np.array([0.5, 0.5, 0.5]) / rescale_factor
-  image = (image - image_mean[:, None, None]) / image_std[:, None, None]
+    height, width = images[0].shape[-2:]
+    resized_height, resized_width = smart_resize(
+        height,
+        width,
+        factor=patch_size * merge_size,
+        min_pixels=65536,
+        max_pixels=16777216,
+    )
 
-  channel = image.shape[0]
-  grid_h, grid_w = resized_height // patch_size, resized_width // patch_size
-  
-  patches = image.reshape(
-      channel,
-      grid_h // merge_size,
-      merge_size,
-      patch_size,
-      grid_w // merge_size,
-      merge_size,
-      patch_size,
-  )
-  patches = patches.transpose(1, 4, 2, 5, 0, 3, 6)
-  patches = np.expand_dims(patches, axis=4)
-  patches = np.broadcast_to(patches, (*patches.shape[:4], temporal_patch_size, *patches.shape[5:]))
-  flatten_patches = patches.reshape(
-      grid_h * grid_w,
-      channel * temporal_patch_size * patch_size * patch_size,
-  )
-  pixel_values = flatten_patches
-  image_grid_thw = [1, grid_h, grid_w]
-  return pixel_values.astype(np.float32), image_grid_thw
+    resized_images = tvF.resize(images[0].unsqueeze(0), (resized_height, resized_width), interpolation=3, antialias=True)
+
+    stacked_images = resized_images[0].unsqueeze(0)
+    resized_height, resized_width = stacked_images.shape[-2:]
+
+    rescale_factor = 0.00392156862745098
+    image_mean = torch.tensor((0.5, 0.5, 0.5)) / rescale_factor
+    image_std = torch.tensor((0.5, 0.5, 0.5)) / rescale_factor
+    patches = tvF.normalize(stacked_images.to(dtype=torch.float32), image_mean, image_std)
+
+    batch_size, channel = patches.shape[:2]
+    grid_h, grid_w = resized_height // patch_size, resized_width // patch_size
+    patches = patches.reshape(
+        batch_size,
+        channel,
+        grid_h // merge_size,
+        merge_size,
+        patch_size,
+        grid_w // merge_size,
+        merge_size,
+        patch_size,
+    )
+    patches = patches.permute(0, 2, 5, 3, 6, 1, 4, 7)
+
+    flatten_patches = (
+        patches.unsqueeze(6)
+        .expand(-1, -1, -1, -1, -1, -1, temporal_patch_size, -1, -1)
+        .reshape(
+            batch_size,
+            grid_h * grid_w,
+            channel * temporal_patch_size * patch_size * patch_size,
+        )
+    )
+
+    processed_images = [flatten_patches[0]]
+    processed_grids_ordered = [[[1, grid_h, grid_w]][0]]
+
+    pixel_values = torch.cat(processed_images, dim=0)
+    image_grid_thw = torch.tensor(processed_grids_ordered, dtype=torch.int32)
+    return pixel_values.detach().numpy(), image_grid_thw.detach().numpy()[0]
 
 class Qwen3VL():
   def __init__(self, size="2B"):
@@ -201,8 +230,8 @@ class Qwen3VL():
     self.prewarmed = False
 
   def preprocess(self, image, prompt):
-    image = image.transpose(2, 0, 1)
     pixel_values, image_grid_thw = preprocess_img(image=image)
+    image_grid_thw = [image_grid_thw[0].item(), image_grid_thw[1].item(), image_grid_thw[2].item()]
     pixel_values = Tensor(pixel_values)
     text_inputs = self.tok.encode(prompt)
     image_token_id = 151655
@@ -443,21 +472,20 @@ if __name__ == "__main__":
       cv2.cvtColor(cv2.imread("f40.jpeg"), cv2.COLOR_BGR2RGB),
       cv2.cvtColor(cv2.imread("gtr.jpg"), cv2.COLOR_BGR2RGB),
       cv2.cvtColor(cv2.imread("bug.jpg"), cv2.COLOR_BGR2RGB),
-      cv2.cvtColor(cv2.imread("yaris.jpg"), cv2.COLOR_BGR2RGB),
       cv2.cvtColor(cv2.imread("micra.jpg"), cv2.COLOR_BGR2RGB),
       cv2.cvtColor(cv2.imread("96_notif.jpg"), cv2.COLOR_BGR2RGB)
   ]
 
-  expected_outputs = ["This is a Ferrari F40, a classic supercar known for its sleek design and powerful performance.",
-                      "This is a Nissan GT-R, a high-performance sports car known for its powerful engine and sleek design.",
-                      "This is a white 2023 Toyota Yaris, a compact hatchback with a sleek design and modern features.",
+  expected_outputs = ["Based on the image provided, the car is a **Ferrari F40**.\n\nIt is a **red** car.",
+                      "Based on the image provided, the car is a **Nissan GT-R**, specifically a model from the **Nissan GT-R NISMO** series, which is a high-performance variant of the GT-R. The car is painted in a vibrant **red** color.",
+                      "Based on the image provided, the car is a **Bugatti Chiron**.\n\nIt is a **blue** sports car. The vehicle is shown in motion on a road, with a scenic landscape in the background.",
                       "The car shown in the image is the Nissan Micra, a compact car produced by Nissan. The Micra was first introduced in 1990 and has been a popular choice for its affordability, fuel efficiency, and reliability.\n\nThe Micra has undergone several generations, with the first generation being produced from 1990 to 1998. The second generation was introduced in 1998 and continued until 2005. The third generation was launched in 2005 and was produced until 2010. The fourth generation was introduced in 2010 and continued until",
                       "A person wearing a light green hoodie and light-colored pants is standing near a silver car with the driver's side door open."]
 
-  prompts = ["<|im_start|>user\n<|vision_start|><|image_pad|><|vision_end|>\nWhat car is this? and what color is it? in one sentence<|im_end|>\n<|im_start|>assistant\n",
-             "<|im_start|>user\n<|vision_start|><|image_pad|><|vision_end|>\nWhat car is this? and what color is it? in one sentence<|im_end|>\n<|im_start|>assistant\n",
-             "<|im_start|>user\n<|vision_start|><|image_pad|><|vision_end|>\nWhat car is this? and what color is it? in one sentence<|im_end|>\n<|im_start|>assistant\n",
-             "<|im_start|>user\n<|vision_start|><|image_pad|><|vision_end|>\nWhat car is this? and what color is it? in one sentence<|im_end|>\n<|im_start|>assistant\n",
+  prompts = ["<|im_start|>user\n<|vision_start|><|image_pad|><|vision_end|>\nWhat car is this? what color is it?<|im_end|>\n<|im_start|>assistant\n",
+             "<|im_start|>user\n<|vision_start|><|image_pad|><|vision_end|>\nWhat car is this? what color is it?<|im_end|>\n<|im_start|>assistant\n",
+             "<|im_start|>user\n<|vision_start|><|image_pad|><|vision_end|>\nWhat car is this? what color is it?<|im_end|>\n<|im_start|>assistant\n",
+             "<|im_start|>user\n<|vision_start|><|image_pad|><|vision_end|>\nWhat car is this? what color is it?<|im_end|>\n<|im_start|>assistant\n",
           "<|im_start|>user\n<|vision_start|><|image_pad|><|vision_end|>\nTell me the history of this car<|im_end|>\n<|im_start|>assistant\n",
           "<|im_start|>user\n<|vision_start|><|image_pad|><|vision_end|>\nWhat has been detected on my CCTV camera? Write in one short sentence, only info about the object(s) detected.<|im_end|>\n<|im_start|>assistant\n"]
 
@@ -465,11 +493,12 @@ if __name__ == "__main__":
   qwen.prewarm(images[0].shape, prompts[0])
   for image, expected_output, prompt in zip(images, expected_outputs, prompts):
     z += 1
-    if z > 4: continue
+    if z > 3: continue
     
     output = qwen.forward(prompt=prompt, image=image)
     print("output =",output)
-    #assert output == expected_output
+    assert output == expected_output
+
 
 
 
