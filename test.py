@@ -194,9 +194,9 @@ def preprocess_img(image):
   return pixel_values.astype(np.float32), image_grid_thw
 
 class Qwen3VL():
-  def __init__(self):
-    self.vis = qwen3vl_vis()
-    self.lang, kv = Transformer.from_gguf(fetch("https://huggingface.co/Qwen/Qwen3-VL-2B-Instruct-GGUF/resolve/main/Qwen3VL-2B-Instruct-F16.gguf"), 2000) # max context
+  def __init__(self, size="2B"):
+    self.vis = qwen3vl_vis(size=size)
+    self.lang, kv = Transformer.from_gguf(fetch(f"https://huggingface.co/Qwen/Qwen3-VL-{size}-Instruct-GGUF/resolve/main/Qwen3VL-{size}-Instruct-F16.gguf"), 2000) # max context
     self.tok = SimpleTokenizer.from_gguf_kv(kv)
     self.prewarmed = False
 
@@ -402,10 +402,11 @@ class Qwen3VL():
       return token
 
 class qwen3vl_vis():
-  def __init__(self):
-    _, state_dict_visual = gguf_load(fetch("https://huggingface.co/Qwen/Qwen3-VL-2B-Instruct-GGUF/resolve/main/mmproj-Qwen3VL-2B-Instruct-F16.gguf"))
+  def __init__(self, size="2B"):
+    _, state_dict_visual = gguf_load(fetch(f"https://huggingface.co/Qwen/Qwen3-VL-{size}-Instruct-GGUF/resolve/main/mmproj-Qwen3VL-{size}-Instruct-F16.gguf"))
     self.v = qwen3_vis_v()
-    self.mm = [nn.Linear(4096, 4096, bias=True), None, nn.Linear(4096, 2048, bias=True)]
+    sizes = {"2B": 2048, "4B":2560}
+    self.mm = [nn.Linear(4096, 4096, bias=True), None, nn.Linear(4096, sizes[size], bias=True)]
     state_dict_visual["v.patch_embd.weight2"] = state_dict_visual["v.patch_embd.weight.1"] # todo
     load_state_dict(self, state_dict_visual)
     self.inv_freq = 1.0 / (10000.0 ** (Tensor.arange(0, 32, 2, dtype=dtypes.float) / 32))
@@ -435,12 +436,13 @@ class qwen3_vis_block():
     self.attn_qkv = nn.Linear(1024, 3072)
     
 if __name__ == "__main__":
-  qwen = Qwen3VL()
+  qwen = Qwen3VL(size="2B")
 
-  # first three are all 256x256
+  # first four are all 256x256
   images = [
       cv2.cvtColor(cv2.imread("f40.jpeg"), cv2.COLOR_BGR2RGB),
       cv2.cvtColor(cv2.imread("gtr.jpg"), cv2.COLOR_BGR2RGB),
+      cv2.cvtColor(cv2.imread("bug.jpg"), cv2.COLOR_BGR2RGB),
       cv2.cvtColor(cv2.imread("yaris.jpg"), cv2.COLOR_BGR2RGB),
       cv2.cvtColor(cv2.imread("micra.jpg"), cv2.COLOR_BGR2RGB),
       cv2.cvtColor(cv2.imread("96_notif.jpg"), cv2.COLOR_BGR2RGB)
@@ -452,9 +454,10 @@ if __name__ == "__main__":
                       "The car shown in the image is the Nissan Micra, a compact car produced by Nissan. The Micra was first introduced in 1990 and has been a popular choice for its affordability, fuel efficiency, and reliability.\n\nThe Micra has undergone several generations, with the first generation being produced from 1990 to 1998. The second generation was introduced in 1998 and continued until 2005. The third generation was launched in 2005 and was produced until 2010. The fourth generation was introduced in 2010 and continued until",
                       "A person wearing a light green hoodie and light-colored pants is standing near a silver car with the driver's side door open."]
 
-  prompts = ["<|im_start|>user\n<|vision_start|><|image_pad|><|vision_end|>\nWhat car is this? in one sentence<|im_end|>\n<|im_start|>assistant\n",
-             "<|im_start|>user\n<|vision_start|><|image_pad|><|vision_end|>\nWhat car is this? in one sentence<|im_end|>\n<|im_start|>assistant\n",
-             "<|im_start|>user\n<|vision_start|><|image_pad|><|vision_end|>\nWhat car is this? in one sentence<|im_end|>\n<|im_start|>assistant\n",
+  prompts = ["<|im_start|>user\n<|vision_start|><|image_pad|><|vision_end|>\nWhat car is this? and what color is it? in one sentence<|im_end|>\n<|im_start|>assistant\n",
+             "<|im_start|>user\n<|vision_start|><|image_pad|><|vision_end|>\nWhat car is this? and what color is it? in one sentence<|im_end|>\n<|im_start|>assistant\n",
+             "<|im_start|>user\n<|vision_start|><|image_pad|><|vision_end|>\nWhat car is this? and what color is it? in one sentence<|im_end|>\n<|im_start|>assistant\n",
+             "<|im_start|>user\n<|vision_start|><|image_pad|><|vision_end|>\nWhat car is this? and what color is it? in one sentence<|im_end|>\n<|im_start|>assistant\n",
           "<|im_start|>user\n<|vision_start|><|image_pad|><|vision_end|>\nTell me the history of this car<|im_end|>\n<|im_start|>assistant\n",
           "<|im_start|>user\n<|vision_start|><|image_pad|><|vision_end|>\nWhat has been detected on my CCTV camera? Write in one short sentence, only info about the object(s) detected.<|im_end|>\n<|im_start|>assistant\n"]
 
@@ -462,7 +465,7 @@ if __name__ == "__main__":
   qwen.prewarm(images[0].shape, prompts[0])
   for image, expected_output, prompt in zip(images, expected_outputs, prompts):
     z += 1
-    if z > 3: continue
+    if z > 4: continue
     
     output = qwen.forward(prompt=prompt, image=image)
     print("output =",output)
