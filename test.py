@@ -223,7 +223,7 @@ class Qwen3VL():
 
   def prewarm(self, res, prompt):
     pixel_values, input_ids, seq_len, image_grid_thw = self.preprocess(image=np.random.randint(0, 256, size=res, dtype=np.uint8), prompt=prompt)
-    for _ in range(3): preprocess_img(image=Tensor(np.random.randint(0, 256, size=res, dtype=np.uint8)))
+    for _ in range(3): preprocess_img(image=Tensor.rand(res).cast(dtypes.uint8))
     for _ in range(3): self.prefill(pixel_values=pixel_values, input_ids=input_ids, image_grid_thw=image_grid_thw)
     for _ in range(3):  self.fwd(token=Tensor([[42]]), seq_len=Variable("pos",1,2000).bind(seq_len))
     self.prewarmed = True
@@ -456,10 +456,10 @@ if __name__ == "__main__":
       cv2.cvtColor(cv2.imread("96_notif.jpg"), cv2.COLOR_BGR2RGB)
   ]
 
-  expected_outputs = ["Based on the image provided, the car is a **Ferrari F40**.\n\nIt is a **red** car.",
-                      "Based on the image provided, the car is a **Nissan GT-R**, specifically a model from the **Nissan GT-R NISMO** series, which is a high-performance variant of the GT-R. The car is painted in a vibrant **red** color.",
-                      "Based on the image provided, the car is a **Bugatti Chiron**.\n\nIt is a **blue** sports car. The vehicle is shown in motion on a road, with a scenic landscape in the background.",
-                      "The car shown in the image is the Nissan Micra, a compact car produced by Nissan. The Micra was first introduced in 1990 and has been a popular choice for its affordability, fuel efficiency, and reliability.\n\nThe Micra has undergone several generations, with the first generation being produced from 1990 to 1998. The second generation was introduced in 1998 and continued until 2005. The third generation was launched in 2005 and was produced until 2010. The fourth generation was introduced in 2010 and continued until",
+  expected_outputs = ["Based on the image provided, the car is a **Ferrari F40**.\n\nIt is a **red** sports car. The vehicle is a classic example of a Ferrari, known for its iconic design and performance.",
+                      "Based on the image provided, the car is a **Nissan GT-R**.\n\nIt is a **red** or **ruby red** color. The car is a high-performance sports car, and the image appears to be a studio photograph, possibly for a promotional or advertising purpose.",
+                      "Based on the image provided, the car is a **Bugatti Chiron**.\n\nIt is a **blue** sports car. The vibrant blue color is a prominent feature of the vehicle, which is captured in motion on a scenic road.",
+                      "This is a blue Nissan Micra, a compact car. It's a small, economical vehicle that was popular in the 1990s and early 2000s.",
                       "A person wearing a light green hoodie and light-colored pants is standing near a silver car with the driver's side door open."]
 
   prompts = ["<|im_start|>user\n<|vision_start|><|image_pad|><|vision_end|>\nWhat car is this? what color is it?<|im_end|>\n<|im_start|>assistant\n",
