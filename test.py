@@ -160,8 +160,9 @@ def smart_resize(height, width, factor, min_pixels, max_pixels):
         w_bar = math.ceil(width * beta / factor) * factor
     return h_bar, w_bar
 
+@TinyJit
 def preprocess_img(image):
-  image = Tensor(image).permute(2, 0, 1)
+  image = image.permute(2, 0, 1)
   patch_size = 16
   merge_size = 2
   temporal_patch_size = 2
@@ -199,7 +200,7 @@ def preprocess_img(image):
           channel * temporal_patch_size * patch_size * patch_size,
       )
   )[0]
-  return pixel_values, [1, grid_h, grid_w]
+  return pixel_values, Tensor([1, grid_h, grid_w])
 
 class Qwen3VL():
   def __init__(self, size="2B"):
@@ -209,7 +210,8 @@ class Qwen3VL():
     self.prewarmed = False
 
   def preprocess(self, image, prompt):
-    pixel_values, image_grid_thw = preprocess_img(image=image)
+    pixel_values, image_grid_thw = preprocess_img(image=Tensor(image))
+    image_grid_thw = image_grid_thw.numpy().tolist()
     text_inputs = self.tok.encode(prompt)
     image_token_id = 151655
     image_token_positions = [i for i, tid in enumerate(text_inputs) if tid == image_token_id]
@@ -221,6 +223,7 @@ class Qwen3VL():
 
   def prewarm(self, res, prompt):
     pixel_values, input_ids, seq_len, image_grid_thw = self.preprocess(image=np.random.randint(0, 256, size=res, dtype=np.uint8), prompt=prompt)
+    for _ in range(3): preprocess_img(image=Tensor(np.random.randint(0, 256, size=res, dtype=np.uint8)))
     for _ in range(3): self.prefill(pixel_values=pixel_values, input_ids=input_ids, image_grid_thw=image_grid_thw)
     for _ in range(3):  self.fwd(token=Tensor([[42]]), seq_len=Variable("pos",1,2000).bind(seq_len))
     self.prewarmed = True
