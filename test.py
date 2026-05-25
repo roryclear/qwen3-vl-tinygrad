@@ -185,14 +185,9 @@ def preprocess_img(image):
     )
 
     image = image.unsqueeze(0).float()
-
-    image = F.interpolate(
-        image,
-        size=(resized_height, resized_width),
-        mode="bilinear",
-        align_corners=False,
-        antialias=True if hasattr(F, "interpolate") else False,
-    )
+    image = Tensor(image.detach().numpy())
+    image = image.interpolate(size=(resized_height, resized_width))
+    image = torch.Tensor(image.numpy())
     stacked_images = image
     resized_height, resized_width = stacked_images.shape[-2:]
 
