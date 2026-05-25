@@ -160,66 +160,46 @@ def smart_resize(height, width, factor, min_pixels, max_pixels):
         w_bar = math.ceil(width * beta / factor) * factor
     return h_bar, w_bar
 
-import torch
-import numpy as np
 def preprocess_img(image):
-    image = Tensor(image).permute(2, 0, 1)
-
-    patch_size = 16
-    merge_size = 2
-    temporal_patch_size = 2
-
-    height, width = image.shape[-2:]
-
-    resized_height, resized_width = smart_resize(
-        height,
-        width,
-        factor=patch_size * merge_size,
-        min_pixels=65536,
-        max_pixels=16777216,
-    )
-
-    image = image.unsqueeze(0).float()
-    image = image.interpolate(size=(resized_height, resized_width))
-    stacked_images = image
-    resized_height, resized_width = stacked_images.shape[-2:]
-
-    # Normalize
-    rescale_factor = 1 / 255
-    image_mean = Tensor([0.5, 0.5, 0.5]) / rescale_factor
-    image_std = Tensor([0.5, 0.5, 0.5]) / rescale_factor
-
-    patches = (stacked_images - image_mean[None, :, None, None]) / image_std[None, :, None, None]
-
-    batch_size, channel = patches.shape[:2]
-    grid_h, grid_w = resized_height // patch_size, resized_width // patch_size
-
-    patches = patches.reshape(
-        batch_size,
-        channel,
-        grid_h // merge_size,
-        merge_size,
-        patch_size,
-        grid_w // merge_size,
-        merge_size,
-        patch_size,
-    )
-    patches = patches.permute(0, 2, 5, 3, 6, 1, 4, 7)
-    flatten_patches = (
-        patches.unsqueeze(6)
-        .expand(-1, -1, -1, -1, -1, -1, temporal_patch_size, -1, -1)
-        .reshape(
-            batch_size,
-            grid_h * grid_w,
-            channel * temporal_patch_size * patch_size * patch_size,
-        )
-    )
-    flatten_patches = torch.Tensor(flatten_patches.numpy())
-    processed_images = [flatten_patches[0]]
-    processed_grids_ordered = [[[1, grid_h, grid_w]][0]]
-    pixel_values = torch.cat(processed_images, dim=0)
-    image_grid_thw = torch.tensor(processed_grids_ordered, dtype=torch.int32)
-    return pixel_values.detach().numpy(), image_grid_thw.detach().numpy()[0]
+  image = Tensor(image).permute(2, 0, 1)
+  patch_size = 16
+  merge_size = 2
+  temporal_patch_size = 2
+  height, width = image.shape[-2:]
+  resized_height, resized_width = smart_resize(
+      height,
+      width,
+      factor=patch_size * merge_size,
+      min_pixels=65536,
+      max_pixels=16777216,
+  )
+  image = image.unsqueeze(0).float()
+  image = image.interpolate(size=(resized_height, resized_width))
+  resized_height, resized_width = image.shape[-2:]
+  patches = (image - 127.5) / 127.5
+  batch_size, channel = patches.shape[:2]
+  grid_h, grid_w = resized_height // patch_size, resized_width // patch_size
+  patches = patches.reshape(
+      batch_size,
+      channel,
+      grid_h // merge_size,
+      merge_size,
+      patch_size,
+      grid_w // merge_size,
+      merge_size,
+      patch_size,
+  )
+  patches = patches.permute(0, 2, 5, 3, 6, 1, 4, 7)
+  pixel_values = (
+      patches.unsqueeze(6)
+      .expand(-1, -1, -1, -1, -1, -1, temporal_patch_size, -1, -1)
+      .reshape(
+          batch_size,
+          grid_h * grid_w,
+          channel * temporal_patch_size * patch_size * patch_size,
+      )
+  )[0]
+  return pixel_values, [1, grid_h, grid_w]
 
 class Qwen3VL():
   def __init__(self, size="2B"):
@@ -230,8 +210,6 @@ class Qwen3VL():
 
   def preprocess(self, image, prompt):
     pixel_values, image_grid_thw = preprocess_img(image=image)
-    image_grid_thw = [image_grid_thw[0].item(), image_grid_thw[1].item(), image_grid_thw[2].item()]
-    pixel_values = Tensor(pixel_values)
     text_inputs = self.tok.encode(prompt)
     image_token_id = 151655
     image_token_positions = [i for i, tid in enumerate(text_inputs) if tid == image_token_id]
