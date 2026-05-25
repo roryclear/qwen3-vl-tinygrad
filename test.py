@@ -181,14 +181,13 @@ def preprocess_img(image):
 
     image = image.unsqueeze(0).float()
     image = image.interpolate(size=(resized_height, resized_width))
-    image = torch.Tensor(image.numpy())
     stacked_images = image
     resized_height, resized_width = stacked_images.shape[-2:]
 
     # Normalize
     rescale_factor = 1 / 255
-    image_mean = torch.tensor((0.5, 0.5, 0.5)) / rescale_factor
-    image_std = torch.tensor((0.5, 0.5, 0.5)) / rescale_factor
+    image_mean = Tensor([0.5, 0.5, 0.5]) / rescale_factor
+    image_std = Tensor([0.5, 0.5, 0.5]) / rescale_factor
 
     patches = (stacked_images - image_mean[None, :, None, None]) / image_std[None, :, None, None]
 
@@ -215,6 +214,7 @@ def preprocess_img(image):
             channel * temporal_patch_size * patch_size * patch_size,
         )
     )
+    flatten_patches = torch.Tensor(flatten_patches.numpy())
     processed_images = [flatten_patches[0]]
     processed_grids_ordered = [[[1, grid_h, grid_w]][0]]
     pixel_values = torch.cat(processed_images, dim=0)
