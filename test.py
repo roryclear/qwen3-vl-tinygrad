@@ -225,97 +225,7 @@ class Qwen3VL():
 
   @TinyJit
   def prefill(self, pixel_values, input_ids, image_grid_thw):
-    hidden_states = pixel_values.view(-1, 3, 2, 16, 16)
-    hidden_states = hidden_states.cast(dtype=dtypes.bfloat16)
-
-    B, C, D, H, W = hidden_states.shape
-    x = hidden_states.reshape(B, C * D, H, W)
-    w = Tensor.stack(self.vis.v.patch_embd.weight, self.vis.v.patch_embd.weight1, dim=2)
-    out_C, in_C, kD, kH, kW = w.shape
-    w2d = w.reshape(out_C, in_C * kD, kH, kW)
-
-    hidden_states = x.conv2d(
-        weight=w2d,
-        bias=self.vis.v.patch_embd.bias,
-        stride=(16, 16),
-        padding=(0, 0),
-        dilation=(1, 1),
-        groups=1
-    )
-
-    hidden_states = hidden_states.view(-1, 1024)
-        
-    grid_ts = image_grid_thw[0]
-    grid_hs = image_grid_thw[1]
-    grid_ws = image_grid_thw[2]
-
-    h_idxs = Tensor.linspace(0, self.vis.v.num_grid_per_side - 1, grid_hs)
-    w_idxs = Tensor.linspace(0, self.vis.v.num_grid_per_side - 1, grid_ws)
-
-    h_idxs_floor = h_idxs.cast(dtypes.int32)
-    w_idxs_floor = w_idxs.cast(dtypes.int32)
-    h_idxs_ceil = (h_idxs_floor.int() + 1).clip(self.vis.v.num_grid_per_side - 1)
-    w_idxs_ceil = (w_idxs_floor.int() + 1).clip(self.vis.v.num_grid_per_side - 1)
-    dh = h_idxs - h_idxs_floor
-    dw = w_idxs - w_idxs_floor
-
-    base_h = h_idxs_floor * self.vis.v.num_grid_per_side
-    base_h_ceil = h_idxs_ceil * self.vis.v.num_grid_per_side
-
-
-    idx_tensor = Tensor.stack(
-        (base_h[None].T + w_idxs_floor[None]).flatten(),
-        (base_h[None].T + w_idxs_ceil[None]).flatten(),
-        (base_h_ceil[None].T + w_idxs_floor[None]).flatten(),
-        (base_h_ceil[None].T + w_idxs_ceil[None]).flatten(),
-    ).cast(dtypes.int32)
-
-    weight_tensor = Tensor.stack(
-        ((1 - dh)[None].T * (1 - dw)[None]).flatten(),
-        ((1 - dh)[None].T * dw[None]).flatten(),
-        (dh[None].T * (1 - dw)[None]).flatten(),
-        (dh[None].T * dw[None]).flatten(),
-    ).cast(dtypes.bfloat16)
-
-    pos_embeds = self.vis.v.position_embd(idx_tensor)
-    pos_embeds *= weight_tensor[:, :, None]
-    patch_pos_embeds = pos_embeds[0] + pos_embeds[1] + pos_embeds[2] + pos_embeds[3]
-
-    patch_pos_embeds = patch_pos_embeds[:grid_hs * grid_ws]
-
-    merge_size = 2
-    pos_embeds = patch_pos_embeds.repeat(grid_ts, 1)
-    pos_embeds = (pos_embeds.view(grid_ts, grid_hs // merge_size, merge_size, grid_ws // merge_size, merge_size, -1).permute(0, 1, 3, 2, 4, 5).flatten(0, 4))
-    hidden_states = hidden_states + pos_embeds
-    
-    hpos_ids = Tensor.arange(image_grid_thw[1]).unsqueeze(1).expand(-1, image_grid_thw[2])
-    hpos_ids = hpos_ids.reshape(image_grid_thw[1] // merge_size, merge_size, image_grid_thw[2] // merge_size, merge_size).transpose(1, 2).flatten()
-
-    wpos_ids = Tensor.arange(image_grid_thw[2]).unsqueeze(0).expand(image_grid_thw[1], -1)
-    wpos_ids = wpos_ids.reshape(image_grid_thw[1] // merge_size, merge_size, image_grid_thw[2] // merge_size, merge_size).transpose(1, 2).flatten()
-
-    pos_ids = Tensor.stack(hpos_ids, wpos_ids, dim=-1).repeat(image_grid_thw[0], 1)
-
-    rotary_pos_emb = (pos_ids.unsqueeze(-1) * self.vis.inv_freq).flatten(1)
-
-    sqlen, _ = hidden_states.size()
-    hidden_states = hidden_states.reshape(sqlen, -1)
-    rotary_pos_emb = rotary_pos_emb.reshape(sqlen, -1)
-    emb = Tensor.cat(rotary_pos_emb, rotary_pos_emb, dim=-1)
-    cos, sin = emb.cos(), emb.sin()
-    cos, sin = cos.unsqueeze(-2), sin.unsqueeze(-2)
-    
-    deepstack_feature_lists = []
-    for i in range(len(self.vis.v.blk)):
-      hidden_states = self.vis.v.blk[i](hidden_states, cos, sin)
-      if i in self.vis.v.deepstack_idx: deepstack_feature_lists.append(self.vis.v.deepstack[i](hidden_states))
-
-    image_embeds = self.vis.v.post_ln(hidden_states)
-    image_embeds = image_embeds.view(-1, 4096)
-    image_embeds = self.vis.mm[0](image_embeds)
-    image_embeds = Tensor.gelu(image_embeds)
-    image_embeds = self.vis.mm[2](image_embeds)
-    
+    image_embeds, hidden_states, deepstack_feature_lists = self.vis(pixel_values, image_grid_thw)
     image_mask = input_ids == 151655
 
     inputs_embeds = self.lang.token_embd(input_ids)
@@ -356,6 +266,99 @@ class qwen3vl_vis():
     state_dict["v.patch_embd.weight1"] = state_dict["v.patch_embd.weight.1"]
     load_state_dict(self, state_dict)
     self.inv_freq = 1.0 / (10000.0 ** (Tensor.arange(0, 32, 2, dtype=dtypes.float) / 32))
+
+  def __call__(self, pixel_values, image_grid_thw):
+    hidden_states = pixel_values.view(-1, 3, 2, 16, 16)
+    hidden_states = hidden_states.cast(dtype=dtypes.bfloat16)
+
+    B, C, D, H, W = hidden_states.shape
+    x = hidden_states.reshape(B, C * D, H, W)
+    w = Tensor.stack(self.v.patch_embd.weight, self.v.patch_embd.weight1, dim=2)
+    out_C, in_C, kD, kH, kW = w.shape
+    w2d = w.reshape(out_C, in_C * kD, kH, kW)
+
+    hidden_states = x.conv2d(
+        weight=w2d,
+        bias=self.v.patch_embd.bias,
+        stride=(16, 16),
+        padding=(0, 0),
+        dilation=(1, 1),
+        groups=1
+    )
+
+    hidden_states = hidden_states.view(-1, 1024)
+        
+    grid_ts = image_grid_thw[0]
+    grid_hs = image_grid_thw[1]
+    grid_ws = image_grid_thw[2]
+
+    h_idxs = Tensor.linspace(0, self.v.num_grid_per_side - 1, grid_hs)
+    w_idxs = Tensor.linspace(0, self.v.num_grid_per_side - 1, grid_ws)
+
+    h_idxs_floor = h_idxs.cast(dtypes.int32)
+    w_idxs_floor = w_idxs.cast(dtypes.int32)
+    h_idxs_ceil = (h_idxs_floor.int() + 1).clip(self.v.num_grid_per_side - 1)
+    w_idxs_ceil = (w_idxs_floor.int() + 1).clip(self.v.num_grid_per_side - 1)
+    dh = h_idxs - h_idxs_floor
+    dw = w_idxs - w_idxs_floor
+
+    base_h = h_idxs_floor * self.v.num_grid_per_side
+    base_h_ceil = h_idxs_ceil * self.v.num_grid_per_side
+
+
+    idx_tensor = Tensor.stack(
+        (base_h[None].T + w_idxs_floor[None]).flatten(),
+        (base_h[None].T + w_idxs_ceil[None]).flatten(),
+        (base_h_ceil[None].T + w_idxs_floor[None]).flatten(),
+        (base_h_ceil[None].T + w_idxs_ceil[None]).flatten(),
+    ).cast(dtypes.int32)
+
+    weight_tensor = Tensor.stack(
+        ((1 - dh)[None].T * (1 - dw)[None]).flatten(),
+        ((1 - dh)[None].T * dw[None]).flatten(),
+        (dh[None].T * (1 - dw)[None]).flatten(),
+        (dh[None].T * dw[None]).flatten(),
+    ).cast(dtypes.bfloat16)
+
+    pos_embeds = self.v.position_embd(idx_tensor)
+    pos_embeds *= weight_tensor[:, :, None]
+    patch_pos_embeds = pos_embeds[0] + pos_embeds[1] + pos_embeds[2] + pos_embeds[3]
+
+    patch_pos_embeds = patch_pos_embeds[:grid_hs * grid_ws]
+
+    merge_size = 2
+    pos_embeds = patch_pos_embeds.repeat(grid_ts, 1)
+    pos_embeds = (pos_embeds.view(grid_ts, grid_hs // merge_size, merge_size, grid_ws // merge_size, merge_size, -1).permute(0, 1, 3, 2, 4, 5).flatten(0, 4))
+    hidden_states = hidden_states + pos_embeds
+    
+    hpos_ids = Tensor.arange(image_grid_thw[1]).unsqueeze(1).expand(-1, image_grid_thw[2])
+    hpos_ids = hpos_ids.reshape(image_grid_thw[1] // merge_size, merge_size, image_grid_thw[2] // merge_size, merge_size).transpose(1, 2).flatten()
+
+    wpos_ids = Tensor.arange(image_grid_thw[2]).unsqueeze(0).expand(image_grid_thw[1], -1)
+    wpos_ids = wpos_ids.reshape(image_grid_thw[1] // merge_size, merge_size, image_grid_thw[2] // merge_size, merge_size).transpose(1, 2).flatten()
+
+    pos_ids = Tensor.stack(hpos_ids, wpos_ids, dim=-1).repeat(image_grid_thw[0], 1)
+
+    rotary_pos_emb = (pos_ids.unsqueeze(-1) * self.inv_freq).flatten(1)
+
+    sqlen, _ = hidden_states.size()
+    hidden_states = hidden_states.reshape(sqlen, -1)
+    rotary_pos_emb = rotary_pos_emb.reshape(sqlen, -1)
+    emb = Tensor.cat(rotary_pos_emb, rotary_pos_emb, dim=-1)
+    cos, sin = emb.cos(), emb.sin()
+    cos, sin = cos.unsqueeze(-2), sin.unsqueeze(-2)
+    
+    deepstack_feature_lists = []
+    for i in range(len(self.v.blk)):
+      hidden_states = self.v.blk[i](hidden_states, cos, sin)
+      if i in self.v.deepstack_idx: deepstack_feature_lists.append(self.v.deepstack[i](hidden_states))
+
+    image_embeds = self.v.post_ln(hidden_states)
+    image_embeds = image_embeds.view(-1, 4096)
+    image_embeds = self.mm[0](image_embeds)
+    image_embeds = Tensor.gelu(image_embeds)
+    image_embeds = self.mm[2](image_embeds)
+    return image_embeds, hidden_states, deepstack_feature_lists
 
   @TinyJit
   def preprocess_img(self, image):
