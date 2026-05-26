@@ -412,9 +412,8 @@ class Qwen3VL():
         hidden_states = self.lang.blk[i](hidden_states, start_pos=0)
         # https://github.com/huggingface/transformers/blob/08692e3c31654e4825b4c078a3c70b86efa70a46/src/transformers/models/qwen3_vl/modeling_qwen3_vl.py#L692
         if i in [5, 11, 17]:
-          hs2_torch = _deepstack_process(hidden_states=to_torch(hidden_states).squeeze(0), visual_pos_masks=to_torch(image_mask).to(dtype=torch.bool).any(dim=-1).squeeze(0), visual_embeds=to_torch(deepstack_feature_lists[[5, 11 ,17].index(i)]))
-          hidden_states = to_tiny(hs2_torch).unsqueeze(0)
-
+          hs2_torch = deepstack_process(hidden_states=hidden_states, visual_pos_masks=image_mask.squeeze(0), visual_embeds=(deepstack_feature_lists[[5, 11 ,17].index(i)]))
+          hidden_states = (hs2_torch).unsqueeze(0)
 
       hidden_states = self.lang.output_norm(hidden_states)
       outputs = hidden_states[:, -1:, :] @ self.lang.token_embd.weight.T
@@ -460,14 +459,14 @@ class qwen3_vis_v():
     self.position_embd = nn.Embedding(2304, 1024)
     self.post_ln = nn.LayerNorm(1024, eps=1e-6, elementwise_affine=True)
 
-def to_torch(x): return torch.Tensor(x.numpy())
-def to_tiny(x): return Tensor(x.detach().numpy())
-
-import torch
-def _deepstack_process(hidden_states, visual_pos_masks, visual_embeds):
-    local_this = hidden_states[visual_pos_masks, :] + visual_embeds
-    hidden_states[visual_pos_masks, :] = local_this
-    return hidden_states
+# todo can this be a where?
+def deepstack_process(hidden_states, visual_pos_masks, visual_embeds):
+  mask_float = visual_pos_masks.any(axis=1)
+  positions = mask_float.cumsum(axis=0) - 1
+  positions = positions.clamp(0)
+  expanded = visual_embeds[positions]
+  expanded = expanded * mask_float.unsqueeze(-1)
+  return hidden_states[0] + expanded
 
 class qwen3_vis_block():
   def __init__(self):
@@ -512,3 +511,4 @@ if __name__ == "__main__":
     output = qwen.forward(prompt=prompt, image=image)
     print("output =",output)
     assert output == expected_output
+
