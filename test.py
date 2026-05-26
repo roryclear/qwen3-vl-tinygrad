@@ -428,7 +428,7 @@ class blank: pass
 class qwen3vl_vis():
   def __init__(self, size="2B"):
     kv, state_dict = gguf_load(fetch(f"https://huggingface.co/Qwen/Qwen3-VL-{size}-Instruct-GGUF/resolve/main/mmproj-Qwen3VL-{size}-Instruct-F16.gguf"))
-    self.v = qwen3_vis_v(size=size, kv=kv)
+    self.v = qwen3_vis_v(size=size, kv=kv, weights=state_dict)
     self.mm = [nn.Linear(4096, 4096, bias=True), None, nn.Linear(4096, kv["clip.vision.projection_dim"], bias=True)]
     state_dict["v.patch_embd.weight1"] = state_dict["v.patch_embd.weight.1"] # todo
     load_state_dict(self, state_dict)
@@ -441,7 +441,7 @@ class qwen3_patch_embd():
     self.bias = Tensor.zeros(kv["clip.vision.embedding_length"])
     
 class qwen3_vis_v():
-  def __init__(self, size="2B", kv=None):
+  def __init__(self, size="2B", kv=None, weights=None):
     self.blk = []
     for _ in range(24): self.blk.append(qwen3_vis_block(kv, size=size))
     self.patch_embd = qwen3_patch_embd(kv=kv)
@@ -452,13 +452,12 @@ class qwen3_vis_v():
     for i in range(len(self.deepstack_layers)):
       self.deepstack.append(blank())
       if i not in self.deepstack_idx: continue
-      self.deepstack[i].fc1 = nn.Linear(4096, 4096)
-      self.deepstack[i].fc2 = nn.Linear(4096, 2048 if size == "2B" else 2560)
-      self.deepstack[i].norm = nn.LayerNorm(4096, eps=1e-6, elementwise_affine=True)
-      self.deepstack[i].hidden_size = 4096
-
-    self.position_embd = nn.Embedding(2304, 1024)
-    self.post_ln = nn.LayerNorm(1024, eps=1e-6, elementwise_affine=True)
+      self.deepstack[i].fc1 = nn.Linear(*weights[f"v.deepstack.{i}.fc1.weight"].shape[::-1])
+      self.deepstack[i].fc2 = nn.Linear(*weights[f"v.deepstack.{i}.fc2.weight"].shape[::-1])
+      self.deepstack[i].norm = nn.LayerNorm(weights[f"v.deepstack.{i}.norm.weight"].shape[0], eps=1e-6, elementwise_affine=True)
+      self.deepstack[i].hidden_size = 4096 # todo
+    self.position_embd = nn.Embedding(*weights["v.position_embd.weight"].shape)
+    self.post_ln = nn.LayerNorm(weights["v.post_ln.weight"].shape[0], eps=1e-6, elementwise_affine=True)
 
 # todo can this be a where?
 def deepstack_process(hidden_states, visual_pos_masks, visual_embeds):
