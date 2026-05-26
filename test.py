@@ -272,7 +272,7 @@ class Qwen3VL():
 
       B, C, D, H, W = hidden_states.shape
       x = hidden_states.reshape(B, C * D, H, W)
-      w = Tensor.stack(self.vis.v.patch_embd.weight, self.vis.v.patch_embd.weight2, dim=2)
+      w = Tensor.stack(self.vis.v.patch_embd.weight, self.vis.v.patch_embd.weight1, dim=2)
       out_C, in_C, kD, kH, kW = w.shape
       w2d = w.reshape(out_C, in_C * kD, kH, kW)
 
@@ -416,14 +416,14 @@ class qwen3vl_vis():
     self.v = qwen3_vis_v()
     sizes = {"2B": 2048, "4B":2560}
     self.mm = [nn.Linear(4096, 4096, bias=True), None, nn.Linear(4096, sizes[size], bias=True)]
-    state_dict_visual["v.patch_embd.weight2"] = state_dict_visual["v.patch_embd.weight.1"] # todo
+    state_dict_visual["v.patch_embd.weight1"] = state_dict_visual["v.patch_embd.weight.1"] # todo
     load_state_dict(self, state_dict_visual)
     self.inv_freq = 1.0 / (10000.0 ** (Tensor.arange(0, 32, 2, dtype=dtypes.float) / 32))
 
 class qwen3_patch_embd():
   def __init__(self):
     self.weight = Tensor.zeros(1024, 3, 16, 16)
-    self.weight2 = Tensor.zeros(1024, 3, 16, 16)
+    self.weight1 = Tensor.zeros(1024, 3, 16, 16)
     self.bias = Tensor.zeros(1024)
     
 class qwen3_vis_v():
@@ -478,4 +478,3 @@ if __name__ == "__main__":
     output = qwen.forward(prompt=prompt, image=image)
     print("output =",output)
     assert output == expected_output
-
