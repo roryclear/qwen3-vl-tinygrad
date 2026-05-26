@@ -455,7 +455,7 @@ class qwen3_vis_v():
       self.deepstack[i].fc1 = nn.Linear(*weights[f"v.deepstack.{i}.fc1.weight"].shape[::-1])
       self.deepstack[i].fc2 = nn.Linear(*weights[f"v.deepstack.{i}.fc2.weight"].shape[::-1])
       self.deepstack[i].norm = nn.LayerNorm(weights[f"v.deepstack.{i}.norm.weight"].shape[0], eps=1e-6, elementwise_affine=True)
-      self.deepstack[i].hidden_size = 4096 # todo
+      self.deepstack[i].hidden_size = weights[f"v.deepstack.{i}.norm.weight"].shape[0]
     self.position_embd = nn.Embedding(*weights["v.position_embd.weight"].shape)
     self.post_ln = nn.LayerNorm(weights["v.post_ln.weight"].shape[0], eps=1e-6, elementwise_affine=True)
 
