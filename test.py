@@ -464,10 +464,7 @@ def to_torch(x): return torch.Tensor(x.numpy())
 def to_tiny(x): return Tensor(x.detach().numpy())
 
 import torch
-def _deepstack_process(hidden_states: torch.Tensor, visual_pos_masks: torch.Tensor, visual_embeds: torch.Tensor):
-    visual_pos_masks = visual_pos_masks.to(hidden_states.device)
-    visual_embeds = visual_embeds.to(hidden_states.device, hidden_states.dtype)
-    hidden_states = hidden_states.clone()
+def _deepstack_process(hidden_states, visual_pos_masks, visual_embeds):
     local_this = hidden_states[visual_pos_masks, :] + visual_embeds
     hidden_states[visual_pos_masks, :] = local_this
     return hidden_states
