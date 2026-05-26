@@ -381,8 +381,6 @@ class Qwen3VL():
       token = sample(scores[0], temp=temp, k=top_k, p=top_p, af=None, ap=None)
       return token
 
-class blank: pass
-
 class qwen3vl_vis():
   def __init__(self, size="2B"):
     kv, state_dict = gguf_load(fetch(f"https://huggingface.co/Qwen/Qwen3-VL-{size}-Instruct-GGUF/resolve/main/mmproj-Qwen3VL-{size}-Instruct-F16.gguf"))
@@ -450,14 +448,19 @@ class qwen3_vis_v():
     self.deepstack_idx = [i for i, val in enumerate(self.deepstack_layers) if val]
     self.deepstack = []
     for i in range(len(self.deepstack_layers)):
-      self.deepstack.append(blank())
-      if i not in self.deepstack_idx: continue
-      self.deepstack[i].fc1 = nn.Linear(*weights[f"v.deepstack.{i}.fc1.weight"].shape[::-1])
-      self.deepstack[i].fc2 = nn.Linear(*weights[f"v.deepstack.{i}.fc2.weight"].shape[::-1])
-      self.deepstack[i].norm = nn.LayerNorm(weights[f"v.deepstack.{i}.norm.weight"].shape[0], eps=1e-6, elementwise_affine=True)
-      self.deepstack[i].hidden_size = weights[f"v.deepstack.{i}.norm.weight"].shape[0]
+      if i in self.deepstack_idx:
+        self.deepstack.append(DeepstackLayer(i, weights))
+      else:
+        self.deepstack.append(None)
     self.position_embd = nn.Embedding(*weights["v.position_embd.weight"].shape)
     self.post_ln = nn.LayerNorm(weights["v.post_ln.weight"].shape[0], eps=1e-6, elementwise_affine=True)
+
+class DeepstackLayer:
+  def __init__(self, index, weights):
+    self.fc1 = nn.Linear(*weights[f"v.deepstack.{index}.fc1.weight"].shape[::-1])
+    self.fc2 = nn.Linear(*weights[f"v.deepstack.{index}.fc2.weight"].shape[::-1])
+    self.norm = nn.LayerNorm(weights[f"v.deepstack.{index}.norm.weight"].shape[0], eps=1e-6, elementwise_affine=True)
+    self.hidden_size = weights[f"v.deepstack.{index}.norm.weight"].shape[0]
 
 # todo can this be a where?
 def deepstack_process(hidden_states, visual_pos_masks, visual_embeds):
