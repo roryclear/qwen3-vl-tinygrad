@@ -339,11 +339,7 @@ class Qwen3VL():
         norm = self.vis.v.blk[i].ffn_down(x)
         hidden_states = hidden_states + norm
 
-        #https://github.com/huggingface/transformers/blob/027d1a97025295a1346c2eb5c361259e69eedfe7/src/transformers/models/qwen3_vl/modeling_qwen3_vl.py#L112
-        if i in self.vis.v.deepstack_idx: # todo unhardcode
-          deepstack_feature = (hidden_states.view(-1, self.vis.v.deepstack[i].hidden_size)).view(-1, self.vis.v.deepstack[i].hidden_size)
-          deepstack_feature = self.vis.v.deepstack[i].fc2(Tensor.gelu(self.vis.v.deepstack[i].fc1(deepstack_feature)))
-          deepstack_feature_lists.append(deepstack_feature)
+        if i in self.vis.v.deepstack_idx: deepstack_feature_lists.append(self.vis.v.deepstack[i](hidden_states))
 
       image_embeds = self.vis.v.post_ln(hidden_states)
       image_embeds = image_embeds.view(-1, 4096)
@@ -461,6 +457,11 @@ class DeepstackLayer:
     self.fc2 = nn.Linear(*weights[f"v.deepstack.{index}.fc2.weight"].shape[::-1])
     self.norm = nn.LayerNorm(weights[f"v.deepstack.{index}.norm.weight"].shape[0], eps=1e-6, elementwise_affine=True)
     self.hidden_size = weights[f"v.deepstack.{index}.norm.weight"].shape[0]
+
+  #https://github.com/huggingface/transformers/blob/027d1a97025295a1346c2eb5c361259e69eedfe7/src/transformers/models/qwen3_vl/modeling_qwen3_vl.py#L112
+  def __call__(self, hidden_states):
+      deepstack_feature = (hidden_states.view(-1, self.hidden_size)).view(-1, self.hidden_size)
+      return self.fc2(Tensor.gelu(self.fc1(deepstack_feature)))
 
 # todo can this be a where?
 def deepstack_process(hidden_states, visual_pos_masks, visual_embeds):
