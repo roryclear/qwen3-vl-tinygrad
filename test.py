@@ -435,18 +435,16 @@ class qwen3vl_vis():
     self.inv_freq = 1.0 / (10000.0 ** (Tensor.arange(0, 32, 2, dtype=dtypes.float) / 32))
 
 class qwen3_patch_embd():
-  def __init__(self):
-    self.weight = Tensor.zeros(1024, 3, 16, 16)
-    self.weight1 = Tensor.zeros(1024, 3, 16, 16)
-    self.bias = Tensor.zeros(1024)
+  def __init__(self, kv=None):
+    self.weight = Tensor.zeros(kv["clip.vision.embedding_length"], 3, 16, 16)
+    self.weight1 = Tensor.zeros(kv["clip.vision.embedding_length"], 3, 16, 16)
+    self.bias = Tensor.zeros(kv["clip.vision.embedding_length"])
     
 class qwen3_vis_v():
   def __init__(self, size="2B", kv=None):
-   #print(kv)
-    #exit()
     self.blk = []
-    for _ in range(24): self.blk.append(qwen3_vis_block(kv))
-    self.patch_embd = qwen3_patch_embd()
+    for _ in range(24): self.blk.append(qwen3_vis_block(kv, size=size))
+    self.patch_embd = qwen3_patch_embd(kv=kv)
     self.num_grid_per_side = 48
 
     self.deepstack = []
@@ -471,13 +469,13 @@ def deepstack_process(hidden_states, visual_pos_masks, visual_embeds):
   return hidden_states[0] + expanded
 
 class qwen3_vis_block():
-  def __init__(self, kv=None):
+  def __init__(self, kv=None, size="2B"):
     self.ffn_up = nn.Linear(kv["clip.vision.embedding_length"], kv["clip.vision.feed_forward_length"])
     self.ffn_down = nn.Linear(kv["clip.vision.feed_forward_length"], kv["clip.vision.embedding_length"])
     self.ln1 = nn.LayerNorm(kv["clip.vision.embedding_length"], eps=1e-6, elementwise_affine=True)
     self.ln2 = nn.LayerNorm(kv["clip.vision.embedding_length"], eps=1e-6, elementwise_affine=True)
     self.attn_out = nn.Linear(kv["clip.vision.embedding_length"], kv["clip.vision.embedding_length"])
-    self.attn_qkv = nn.Linear(kv["clip.vision.embedding_length"], 3072)
+    self.attn_qkv = nn.Linear(kv["clip.vision.embedding_length"], 3456 if size == "8B" else 3072)
     
 if __name__ == "__main__":
   qwen = Qwen3VL(size="2B")
