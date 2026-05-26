@@ -307,38 +307,7 @@ class Qwen3VL():
       
       deepstack_feature_lists = []
       for i in range(len(self.vis.v.blk)):
-        hidden_states_input = self.vis.v.blk[i].ln1(hidden_states)
-        seq_length = hidden_states_input.shape[0]
-        qkv = self.vis.v.blk[i].attn_qkv(hidden_states_input)
-        qkv_reshaped = qkv.reshape(seq_length, 3, 16, -1)
-        qkv_permuted = qkv_reshaped.permute(1, 0, 2, 3)
-        query, key, value = qkv_permuted.chunk(3, dim=0)
-        query = query.squeeze(0)
-        key   = key.squeeze(0)
-        value = value.squeeze(0)
-        query, key = query.cast(dtypes.float32), key.cast(dtypes.float32)
-        query = (query * cos) + (rotate_half(query) * sin)
-        key = (key * cos) + (rotate_half(key) * sin)
-
-        query = query.transpose(0, 1).unsqueeze(0)
-        key = key.transpose(0, 1).unsqueeze(0)
-        value = value.transpose(0, 1).unsqueeze(0)
-
-        attn_weight = query @ key.transpose(-2, -1) * 0.125
-        attn_weight = Tensor.softmax(attn_weight)
-        attn_output = attn_weight @ value
-        attn_output = attn_output.transpose(1, 2)
-        attn_output = attn_output.reshape(seq_length, -1)
-        attn_output = attn_output.cast(dtypes.bfloat16)
-        attn_output = self.vis.v.blk[i].attn_out(attn_output)
-        attn_output = attn_output.cast(dtypes.bfloat16) # todo
-        hidden_states += attn_output
-        norm = self.vis.v.blk[i].ln2(hidden_states)
-        x = self.vis.v.blk[i].ffn_up(norm)
-        x = Tensor.gelu(x)
-        norm = self.vis.v.blk[i].ffn_down(x)
-        hidden_states = hidden_states + norm
-
+        hidden_states = self.vis.v.blk[i](hidden_states, cos, sin)
         if i in self.vis.v.deepstack_idx: deepstack_feature_lists.append(self.vis.v.deepstack[i](hidden_states))
 
       image_embeds = self.vis.v.post_ln(hidden_states)
@@ -480,7 +449,40 @@ class qwen3_vis_block():
     self.ln2 = nn.LayerNorm(kv["clip.vision.embedding_length"], eps=1e-6, elementwise_affine=True)
     self.attn_out = nn.Linear(kv["clip.vision.embedding_length"], kv["clip.vision.embedding_length"])
     self.attn_qkv = nn.Linear(*weights["v.blk.0.attn_qkv.weight"].shape[::-1])
-    
+  
+  def __call__(self, hidden_states, cos, sin):
+    hidden_states_input = self.ln1(hidden_states)
+    seq_length = hidden_states_input.shape[0]
+    qkv = self.attn_qkv(hidden_states_input)
+    qkv_reshaped = qkv.reshape(seq_length, 3, 16, -1)
+    qkv_permuted = qkv_reshaped.permute(1, 0, 2, 3)
+    query, key, value = qkv_permuted.chunk(3, dim=0)
+    query = query.squeeze(0)
+    key   = key.squeeze(0)
+    value = value.squeeze(0)
+    query, key = query.cast(dtypes.float32), key.cast(dtypes.float32)
+    query = (query * cos) + (rotate_half(query) * sin)
+    key = (key * cos) + (rotate_half(key) * sin)
+
+    query = query.transpose(0, 1).unsqueeze(0)
+    key = key.transpose(0, 1).unsqueeze(0)
+    value = value.transpose(0, 1).unsqueeze(0)
+
+    attn_weight = query @ key.transpose(-2, -1) * 0.125
+    attn_weight = Tensor.softmax(attn_weight)
+    attn_output = attn_weight @ value
+    attn_output = attn_output.transpose(1, 2)
+    attn_output = attn_output.reshape(seq_length, -1)
+    attn_output = attn_output.cast(dtypes.bfloat16)
+    attn_output = self.attn_out(attn_output)
+    attn_output = attn_output.cast(dtypes.bfloat16) # todo
+    hidden_states += attn_output
+    norm = self.ln2(hidden_states)
+    x = self.ffn_up(norm)
+    x = Tensor.gelu(x)
+    norm = self.ffn_down(x)
+    return hidden_states + norm
+
 if __name__ == "__main__":
   qwen = Qwen3VL(size="2B")
 
