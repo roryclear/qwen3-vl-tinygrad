@@ -386,7 +386,6 @@ class Qwen3VL():
           deepstack_feature = self.vis.v.deepstack[i].fc2(Tensor.gelu(self.vis.v.deepstack[i].fc1(deepstack_feature)))
           deepstack_feature_lists.append(deepstack_feature)
 
-
       image_embeds = self.vis.v.post_ln(hidden_states)
       image_embeds = image_embeds.view(-1, 4096)
       image_embeds = self.vis.mm[0](image_embeds)
@@ -428,7 +427,7 @@ class blank: pass
 class qwen3vl_vis():
   def __init__(self, size="2B"):
     kv, state_dict = gguf_load(fetch(f"https://huggingface.co/Qwen/Qwen3-VL-{size}-Instruct-GGUF/resolve/main/mmproj-Qwen3VL-{size}-Instruct-F16.gguf"))
-    self.v = qwen3_vis_v()
+    self.v = qwen3_vis_v(size=size)
     self.mm = [nn.Linear(4096, 4096, bias=True), None, nn.Linear(4096, kv["clip.vision.projection_dim"], bias=True)]
     state_dict["v.patch_embd.weight1"] = state_dict["v.patch_embd.weight.1"] # todo
     load_state_dict(self, state_dict)
@@ -441,7 +440,7 @@ class qwen3_patch_embd():
     self.bias = Tensor.zeros(1024)
     
 class qwen3_vis_v():
-  def __init__(self):
+  def __init__(self, size="2B"):
     self.blk = []
     for _ in range(24): self.blk.append(qwen3_vis_block())
     self.patch_embd = qwen3_patch_embd()
@@ -452,7 +451,7 @@ class qwen3_vis_v():
       self.deepstack.append(blank())
       if i not in [5, 11, 17]: continue
       self.deepstack[i].fc1 = nn.Linear(4096, 4096)
-      self.deepstack[i].fc2 = nn.Linear(4096, 2048)
+      self.deepstack[i].fc2 = nn.Linear(4096, 2048 if size == "2B" else 2560)
       self.deepstack[i].norm = nn.LayerNorm(4096, eps=1e-6, elementwise_affine=True)
       self.deepstack[i].hidden_size = 4096
 
