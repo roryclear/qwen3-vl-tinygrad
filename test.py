@@ -429,7 +429,7 @@ class qwen3vl_vis():
   def __init__(self, size="2B"):
     kv, state_dict = gguf_load(fetch(f"https://huggingface.co/Qwen/Qwen3-VL-{size}-Instruct-GGUF/resolve/main/mmproj-Qwen3VL-{size}-Instruct-F16.gguf"))
     self.v = qwen3_vis_v(size=size, kv=kv, weights=state_dict)
-    self.mm = [nn.Linear(4096, 4096, bias=True), None, nn.Linear(4096, kv["clip.vision.projection_dim"], bias=True)]
+    self.mm = [nn.Linear(*state_dict["mm.0.weight"].shape[::-1], bias=True), None, nn.Linear(*state_dict["mm.2.weight"].shape[::-1], bias=True)]
     state_dict["v.patch_embd.weight1"] = state_dict["v.patch_embd.weight.1"] # todo
     load_state_dict(self, state_dict)
     self.inv_freq = 1.0 / (10000.0 ** (Tensor.arange(0, 32, 2, dtype=dtypes.float) / 32))
