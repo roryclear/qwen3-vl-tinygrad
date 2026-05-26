@@ -347,6 +347,7 @@ class Qwen3VL():
       cos, sin = emb.cos(), emb.sin()
       cos, sin = cos.unsqueeze(-2), sin.unsqueeze(-2)
       
+      deepstack_feature_lists = []
       for i in range(len(self.vis.v.blk)):
         hidden_states_input = self.vis.v.blk[i].ln1(hidden_states)
         seq_length = hidden_states_input.shape[0]
@@ -379,7 +380,13 @@ class Qwen3VL():
         x = Tensor.gelu(x)
         norm = self.vis.v.blk[i].ffn_down(x)
         hidden_states = hidden_states + norm
-      
+
+        #https://github.com/huggingface/transformers/blob/027d1a97025295a1346c2eb5c361259e69eedfe7/src/transformers/models/qwen3_vl/modeling_qwen3_vl.py#L112
+        if i in [5, 11, 17]: # todo unhardcode
+          deepstack_feature = (hidden_states.view(-1, self.vis.v.deepstack[i].hidden_size)).view(-1, self.vis.v.deepstack[i].hidden_size)
+          deepstack_feature = self.vis.v.deepstack[i].fc2(Tensor.gelu(self.vis.v.deepstack[i].fc1(deepstack_feature)))
+          deepstack_feature_lists.append(deepstack_feature)
+
       image_embeds = self.vis.v.post_ln(hidden_states)
       image_embeds = image_embeds.view(-1, 4096)
       image_embeds = self.vis.mm[0](image_embeds)
@@ -398,9 +405,15 @@ class Qwen3VL():
       flat_inputs = flat_inputs * (~flat_mask) + expanded
       hidden_states = flat_inputs.view(inputs_embeds.shape)
       
-      for i in range(len(self.lang.blk)): # todo same block above
+      # https://github.com/huggingface/transformers/blob/08692e3c31654e4825b4c078a3c70b86efa70a46/src/transformers/models/qwen3_vl/modular_qwen3_vl.py#L626
+      # https://github.com/huggingface/transformers/blob/08692e3c31654e4825b4c078a3c70b86efa70a46/src/transformers/models/qwen3_vl/modular_qwen3_vl.py#L543
+      for i in range(len(self.lang.blk)):
         self.lang.blk[i]._init_state(Tensor.zeros(1, 1))
         hidden_states = self.lang.blk[i](hidden_states, start_pos=0)
+        # https://github.com/huggingface/transformers/blob/08692e3c31654e4825b4c078a3c70b86efa70a46/src/transformers/models/qwen3_vl/modeling_qwen3_vl.py#L692
+        if i in [5, 11, 17]:
+          hs2_torch = deepstack_process(hidden_states=hidden_states, visual_pos_masks=image_mask.squeeze(0), visual_embeds=(deepstack_feature_lists[[5, 11 ,17].index(i)]))
+          hidden_states = (hs2_torch).unsqueeze(0)
 
       hidden_states = self.lang.output_norm(hidden_states)
       outputs = hidden_states[:, -1:, :] @ self.lang.token_embd.weight.T
@@ -410,10 +423,12 @@ class Qwen3VL():
       token = sample(scores[0], temp=temp, k=top_k, p=top_p, af=None, ap=None)
       return token
 
+class blank: pass
+
 class qwen3vl_vis():
   def __init__(self, size="2B"):
     kv, state_dict = gguf_load(fetch(f"https://huggingface.co/Qwen/Qwen3-VL-{size}-Instruct-GGUF/resolve/main/mmproj-Qwen3VL-{size}-Instruct-F16.gguf"))
-    self.v = qwen3_vis_v()
+    self.v = qwen3_vis_v(size=size, kv=kv)
     self.mm = [nn.Linear(4096, 4096, bias=True), None, nn.Linear(4096, kv["clip.vision.projection_dim"], bias=True)]
     state_dict["v.patch_embd.weight1"] = state_dict["v.patch_embd.weight.1"] # todo
     load_state_dict(self, state_dict)
@@ -426,22 +441,43 @@ class qwen3_patch_embd():
     self.bias = Tensor.zeros(1024)
     
 class qwen3_vis_v():
-  def __init__(self):
+  def __init__(self, size="2B", kv=None):
+   #print(kv)
+    #exit()
     self.blk = []
-    for _ in range(24): self.blk.append(qwen3_vis_block())
+    for _ in range(24): self.blk.append(qwen3_vis_block(kv))
     self.patch_embd = qwen3_patch_embd()
     self.num_grid_per_side = 48
+
+    self.deepstack = []
+    for i in range(18):
+      self.deepstack.append(blank())
+      if i not in [5, 11, 17]: continue
+      self.deepstack[i].fc1 = nn.Linear(4096, 4096)
+      self.deepstack[i].fc2 = nn.Linear(4096, 2048 if size == "2B" else 2560)
+      self.deepstack[i].norm = nn.LayerNorm(4096, eps=1e-6, elementwise_affine=True)
+      self.deepstack[i].hidden_size = 4096
+
     self.position_embd = nn.Embedding(2304, 1024)
     self.post_ln = nn.LayerNorm(1024, eps=1e-6, elementwise_affine=True)
 
+# todo can this be a where?
+def deepstack_process(hidden_states, visual_pos_masks, visual_embeds):
+  mask_float = visual_pos_masks.any(axis=1)
+  positions = mask_float.cumsum(axis=0) - 1
+  positions = positions.clamp(0)
+  expanded = visual_embeds[positions]
+  expanded = expanded * mask_float.unsqueeze(-1)
+  return hidden_states[0] + expanded
+
 class qwen3_vis_block():
-  def __init__(self):
-    self.ffn_up = nn.Linear(1024, 4096)
-    self.ffn_down = nn.Linear(4096, 1024)
-    self.ln1 = nn.LayerNorm(1024, eps=1e-6, elementwise_affine=True)
-    self.ln2 = nn.LayerNorm(1024, eps=1e-6, elementwise_affine=True)
-    self.attn_out = nn.Linear(1024, 1024)
-    self.attn_qkv = nn.Linear(1024, 3072)
+  def __init__(self, kv=None):
+    self.ffn_up = nn.Linear(kv["clip.vision.embedding_length"], kv["clip.vision.feed_forward_length"])
+    self.ffn_down = nn.Linear(kv["clip.vision.feed_forward_length"], kv["clip.vision.embedding_length"])
+    self.ln1 = nn.LayerNorm(kv["clip.vision.embedding_length"], eps=1e-6, elementwise_affine=True)
+    self.ln2 = nn.LayerNorm(kv["clip.vision.embedding_length"], eps=1e-6, elementwise_affine=True)
+    self.attn_out = nn.Linear(kv["clip.vision.embedding_length"], kv["clip.vision.embedding_length"])
+    self.attn_qkv = nn.Linear(kv["clip.vision.embedding_length"], 3072)
     
 if __name__ == "__main__":
   qwen = Qwen3VL(size="2B")
@@ -455,9 +491,9 @@ if __name__ == "__main__":
       cv2.cvtColor(cv2.imread("96_notif.jpg"), cv2.COLOR_BGR2RGB)
   ]
 
-  expected_outputs = ["Based on the image provided, the car is a **Ferrari F40**.\n\nIt is a **red** sports car. The vehicle is a classic example of a Ferrari, known for its iconic design and performance.",
-                      "Based on the image provided, the car is a **Nissan GT-R**.\n\nIt is a **red** or **ruby red** color. The car is a high-performance sports car, and the image appears to be a studio photograph, possibly for a promotional or advertising purpose.",
-                      "Based on the image provided, the car is a **Bugatti Chiron**.\n\nIt is a **blue** sports car. The vibrant blue color is a prominent feature of the vehicle, which is captured in motion on a scenic road.",
+  expected_outputs = ["Based on the image provided, the car is a **Ferrari F40**.\n\nIt is a **red** sports car. The vehicle is shown in a classic red color, and it is parked on a cobblestone street in front of a brick house. The car is a high-performance model, known for its iconic design and engineering.",
+                      "Based on the image provided, the car is a **Nissan GT-R**.\n\nThe car is a **red** Nissan GT-R. It is a high-performance sports car, and the image appears to be a studio shot, likely for a promotional or advertising purpose.",
+                      "Based on the image provided, the car is a **Bugatti Chiron**.\n\nIt is a **blue** car, specifically a vibrant, metallic blue. The vehicle is a high-performance supercar, known for its distinctive design and powerful engine.",
                       "This is a blue Nissan Micra, a compact car. It's a small, economical vehicle that was popular in the 1990s and early 2000s.",
                       "A person wearing a light green hoodie and light-colored pants is standing near a silver car with the driver's side door open."]
 
@@ -477,3 +513,4 @@ if __name__ == "__main__":
     output = qwen.forward(prompt=prompt, image=image)
     print("output =",output)
     assert output == expected_output
+
