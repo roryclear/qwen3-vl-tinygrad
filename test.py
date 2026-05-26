@@ -489,9 +489,9 @@ if __name__ == "__main__":
       cv2.cvtColor(cv2.imread("96_notif.jpg"), cv2.COLOR_BGR2RGB)
   ]
 
-  expected_outputs = ["Based on the image provided, the car is a **Ferrari F40**.\n\nIt is a **red** sports car. The vehicle is shown parked on a cobblestone surface, and its vibrant red color is a prominent feature.",
-                      "Based on the image provided, the car is a **Nissan GT-R**.\n\nIt is a **red** sports car. The vehicle is a high-performance model, and the red color is a prominent feature of its design.",
-                      "Based on the image provided, the car is a **Bugatti Chiron**.\n\nIt is a **blue** sports car. The vehicle is shown in a dynamic, high-speed scene, with the car positioned on a road that appears to be on a hill, with green fields and hills in the background under a partly cloudy sky.",
+  expected_outputs = ["Based on the image provided, the car is a **Ferrari F40**.\n\nIt is a **red** sports car. The vehicle is shown in a classic red color, and it is parked on a cobblestone street in front of a brick house. The car is a high-performance model, known for its iconic design and engineering.",
+                      "Based on the image provided, the car is a **Nissan GT-R**.\n\nThe car is a **red** Nissan GT-R. It is a high-performance sports car, and the image appears to be a studio shot, likely for a promotional or advertising purpose.",
+                      "Based on the image provided, the car is a **Bugatti Chiron**.\n\nIt is a **blue** car, specifically a vibrant, metallic blue. The vehicle is a high-performance supercar, known for its distinctive design and powerful engine.",
                       "This is a blue Nissan Micra, a compact car. It's a small, economical vehicle that was popular in the 1990s and early 2000s.",
                       "A person wearing a light green hoodie and light-colored pants is standing near a silver car with the driver's side door open."]
 
@@ -510,5 +510,5 @@ if __name__ == "__main__":
     
     output = qwen.forward(prompt=prompt, image=image)
     print("output =",output)
-    #assert output == expected_output
+    assert output == expected_output
 
