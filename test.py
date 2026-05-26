@@ -382,7 +382,7 @@ class Qwen3VL():
         hidden_states = hidden_states + norm
 
         #https://github.com/huggingface/transformers/blob/027d1a97025295a1346c2eb5c361259e69eedfe7/src/transformers/models/qwen3_vl/modeling_qwen3_vl.py#L112
-        if i in [5, 11, 17]: # todo unhardcode
+        if i in self.vis.v.deepstack_idx: # todo unhardcode
           deepstack_feature = (hidden_states.view(-1, self.vis.v.deepstack[i].hidden_size)).view(-1, self.vis.v.deepstack[i].hidden_size)
           deepstack_feature = self.vis.v.deepstack[i].fc2(Tensor.gelu(self.vis.v.deepstack[i].fc1(deepstack_feature)))
           deepstack_feature_lists.append(deepstack_feature)
@@ -411,8 +411,8 @@ class Qwen3VL():
         self.lang.blk[i]._init_state(Tensor.zeros(1, 1))
         hidden_states = self.lang.blk[i](hidden_states, start_pos=0)
         # https://github.com/huggingface/transformers/blob/08692e3c31654e4825b4c078a3c70b86efa70a46/src/transformers/models/qwen3_vl/modeling_qwen3_vl.py#L692
-        if i in [5, 11, 17]:
-          hs2_torch = deepstack_process(hidden_states=hidden_states, visual_pos_masks=image_mask.squeeze(0), visual_embeds=(deepstack_feature_lists[[5, 11 ,17].index(i)]))
+        if i in self.vis.v.deepstack_idx:
+          hs2_torch = deepstack_process(hidden_states=hidden_states, visual_pos_masks=image_mask.squeeze(0), visual_embeds=(deepstack_feature_lists[self.vis.v.deepstack_idx.index(i)]))
           hidden_states = (hs2_torch).unsqueeze(0)
 
       hidden_states = self.lang.output_norm(hidden_states)
@@ -446,11 +446,12 @@ class qwen3_vis_v():
     for _ in range(24): self.blk.append(qwen3_vis_block(kv, size=size))
     self.patch_embd = qwen3_patch_embd(kv=kv)
     self.num_grid_per_side = 48
-
+    self.deepstack_layers = kv["clip.vision.is_deepstack_layers"]
+    self.deepstack_idx = [i for i, val in enumerate(self.deepstack_layers) if val]
     self.deepstack = []
-    for i in range(18):
+    for i in range(len(self.deepstack_layers)):
       self.deepstack.append(blank())
-      if i not in [5, 11, 17]: continue
+      if i not in self.deepstack_idx: continue
       self.deepstack[i].fc1 = nn.Linear(4096, 4096)
       self.deepstack[i].fc2 = nn.Linear(4096, 2048 if size == "2B" else 2560)
       self.deepstack[i].norm = nn.LayerNorm(4096, eps=1e-6, elementwise_affine=True)
