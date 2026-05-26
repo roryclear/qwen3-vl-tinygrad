@@ -347,6 +347,7 @@ class Qwen3VL():
       cos, sin = emb.cos(), emb.sin()
       cos, sin = cos.unsqueeze(-2), sin.unsqueeze(-2)
       
+      deepstack_feature_lists = []
       for i in range(len(self.vis.v.blk)):
         hidden_states_input = self.vis.v.blk[i].ln1(hidden_states)
         seq_length = hidden_states_input.shape[0]
@@ -379,7 +380,13 @@ class Qwen3VL():
         x = Tensor.gelu(x)
         norm = self.vis.v.blk[i].ffn_down(x)
         hidden_states = hidden_states + norm
-      
+
+        if i in [5, 11, 17]: # todo unhardcode
+          deepstack_feature = self.vis.v.deepstack[i].norm(hidden_states.view(-1, self.vis.v.deepstack[i].hidden_size)).view(-1, self.vis.v.deepstack[i].hidden_size)
+          deepstack_feature = self.vis.v.deepstack[i].fc2(Tensor.gelu(self.vis.v.deepstack[i].fc1(deepstack_feature)))
+          deepstack_feature_lists.append(deepstack_feature)
+
+
       image_embeds = self.vis.v.post_ln(hidden_states)
       image_embeds = image_embeds.view(-1, 4096)
       image_embeds = self.vis.mm[0](image_embeds)
@@ -398,9 +405,14 @@ class Qwen3VL():
       flat_inputs = flat_inputs * (~flat_mask) + expanded
       hidden_states = flat_inputs.view(inputs_embeds.shape)
       
-      for i in range(len(self.lang.blk)): # todo same block above
+      # https://github.com/huggingface/transformers/blob/08692e3c31654e4825b4c078a3c70b86efa70a46/src/transformers/models/qwen3_vl/modular_qwen3_vl.py#L626
+      # https://github.com/huggingface/transformers/blob/08692e3c31654e4825b4c078a3c70b86efa70a46/src/transformers/models/qwen3_vl/modular_qwen3_vl.py#L543
+      for i in range(len(self.lang.blk)):
         self.lang.blk[i]._init_state(Tensor.zeros(1, 1))
         hidden_states = self.lang.blk[i](hidden_states, start_pos=0)
+        if i < len(deepstack_feature_lists):
+          deepstack_features = deepstack_feature_lists[i]
+
 
       hidden_states = self.lang.output_norm(hidden_states)
       outputs = hidden_states[:, -1:, :] @ self.lang.token_embd.weight.T
@@ -409,6 +421,8 @@ class Qwen3VL():
       scores = next_token_logits / temp
       token = sample(scores[0], temp=temp, k=top_k, p=top_p, af=None, ap=None)
       return token
+
+class blank: pass
 
 class qwen3vl_vis():
   def __init__(self, size="2B"):
@@ -431,6 +445,16 @@ class qwen3_vis_v():
     for _ in range(24): self.blk.append(qwen3_vis_block())
     self.patch_embd = qwen3_patch_embd()
     self.num_grid_per_side = 48
+
+    self.deepstack = []
+    for i in range(18):
+      self.deepstack.append(blank())
+      if i not in [5, 11, 17]: continue
+      self.deepstack[i].fc1 = nn.Linear(4096, 4096)
+      self.deepstack[i].fc2 = nn.Linear(4096, 2048)
+      self.deepstack[i].norm = nn.LayerNorm(4096, eps=1e-6, elementwise_affine=True)
+      self.deepstack[i].hidden_size = 4096
+
     self.position_embd = nn.Embedding(2304, 1024)
     self.post_ln = nn.LayerNorm(1024, eps=1e-6, elementwise_affine=True)
 
