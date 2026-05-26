@@ -443,7 +443,8 @@ class qwen3_patch_embd():
 class qwen3_vis_v():
   def __init__(self, size="2B", kv=None, weights=None):
     self.blk = []
-    for _ in range(24): self.blk.append(qwen3_vis_block(kv, size=size))
+    print(kv)
+    for _ in range(kv["clip.vision.block_count"]): self.blk.append(qwen3_vis_block(kv, size=size))
     self.patch_embd = qwen3_patch_embd(kv=kv)
     self.num_grid_per_side = 48
     self.deepstack_layers = kv["clip.vision.is_deepstack_layers"]
