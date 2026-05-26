@@ -428,7 +428,7 @@ class blank: pass
 class qwen3vl_vis():
   def __init__(self, size="2B"):
     kv, state_dict = gguf_load(fetch(f"https://huggingface.co/Qwen/Qwen3-VL-{size}-Instruct-GGUF/resolve/main/mmproj-Qwen3VL-{size}-Instruct-F16.gguf"))
-    self.v = qwen3_vis_v(size=size)
+    self.v = qwen3_vis_v(size=size, kv=kv)
     self.mm = [nn.Linear(4096, 4096, bias=True), None, nn.Linear(4096, kv["clip.vision.projection_dim"], bias=True)]
     state_dict["v.patch_embd.weight1"] = state_dict["v.patch_embd.weight.1"] # todo
     load_state_dict(self, state_dict)
@@ -441,9 +441,11 @@ class qwen3_patch_embd():
     self.bias = Tensor.zeros(1024)
     
 class qwen3_vis_v():
-  def __init__(self, size="2B"):
+  def __init__(self, size="2B", kv=None):
+   #print(kv)
+    #exit()
     self.blk = []
-    for _ in range(24): self.blk.append(qwen3_vis_block())
+    for _ in range(24): self.blk.append(qwen3_vis_block(kv))
     self.patch_embd = qwen3_patch_embd()
     self.num_grid_per_side = 48
 
@@ -469,13 +471,13 @@ def deepstack_process(hidden_states, visual_pos_masks, visual_embeds):
   return hidden_states[0] + expanded
 
 class qwen3_vis_block():
-  def __init__(self):
-    self.ffn_up = nn.Linear(1024, 4096)
-    self.ffn_down = nn.Linear(4096, 1024)
-    self.ln1 = nn.LayerNorm(1024, eps=1e-6, elementwise_affine=True)
-    self.ln2 = nn.LayerNorm(1024, eps=1e-6, elementwise_affine=True)
-    self.attn_out = nn.Linear(1024, 1024)
-    self.attn_qkv = nn.Linear(1024, 3072)
+  def __init__(self, kv=None):
+    self.ffn_up = nn.Linear(kv["clip.vision.embedding_length"], kv["clip.vision.feed_forward_length"])
+    self.ffn_down = nn.Linear(kv["clip.vision.feed_forward_length"], kv["clip.vision.embedding_length"])
+    self.ln1 = nn.LayerNorm(kv["clip.vision.embedding_length"], eps=1e-6, elementwise_affine=True)
+    self.ln2 = nn.LayerNorm(kv["clip.vision.embedding_length"], eps=1e-6, elementwise_affine=True)
+    self.attn_out = nn.Linear(kv["clip.vision.embedding_length"], kv["clip.vision.embedding_length"])
+    self.attn_qkv = nn.Linear(kv["clip.vision.embedding_length"], 3072)
     
 if __name__ == "__main__":
   qwen = Qwen3VL(size="2B")
