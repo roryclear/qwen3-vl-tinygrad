@@ -381,8 +381,9 @@ class Qwen3VL():
         norm = self.vis.v.blk[i].ffn_down(x)
         hidden_states = hidden_states + norm
 
+        #https://github.com/huggingface/transformers/blob/027d1a97025295a1346c2eb5c361259e69eedfe7/src/transformers/models/qwen3_vl/modeling_qwen3_vl.py#L112
         if i in [5, 11, 17]: # todo unhardcode
-          deepstack_feature = self.vis.v.deepstack[i].norm(hidden_states.view(-1, self.vis.v.deepstack[i].hidden_size)).view(-1, self.vis.v.deepstack[i].hidden_size)
+          deepstack_feature = (hidden_states.view(-1, self.vis.v.deepstack[i].hidden_size)).view(-1, self.vis.v.deepstack[i].hidden_size)
           deepstack_feature = self.vis.v.deepstack[i].fc2(Tensor.gelu(self.vis.v.deepstack[i].fc1(deepstack_feature)))
           deepstack_feature_lists.append(deepstack_feature)
 
@@ -411,7 +412,7 @@ class Qwen3VL():
         hidden_states = self.lang.blk[i](hidden_states, start_pos=0)
         # https://github.com/huggingface/transformers/blob/08692e3c31654e4825b4c078a3c70b86efa70a46/src/transformers/models/qwen3_vl/modeling_qwen3_vl.py#L692
         if i in [5, 11, 17]:
-          hs2_torch = _deepstack_process(hidden_states=to_torch(hidden_states).squeeze(0), visual_pos_masks=to_torch(image_mask).to(dtype=torch.bool).any(dim=-1).squeeze(0), visual_embeds=to_torch(deepstack_feature_lists[[5, 7 ,11].index]))
+          hs2_torch = _deepstack_process(hidden_states=to_torch(hidden_states).squeeze(0), visual_pos_masks=to_torch(image_mask).to(dtype=torch.bool).any(dim=-1).squeeze(0), visual_embeds=to_torch(deepstack_feature_lists[[5, 11 ,17].index(i)]))
           hidden_states = to_tiny(hs2_torch).unsqueeze(0)
 
 
@@ -492,9 +493,9 @@ if __name__ == "__main__":
       cv2.cvtColor(cv2.imread("96_notif.jpg"), cv2.COLOR_BGR2RGB)
   ]
 
-  expected_outputs = ["Based on the image provided, the car is a **Ferrari F40**.\n\nIt is a **red** sports car. The image appears to be a reflection, possibly from a mirror or a glass surface, showing the car in a driveway with a cobblestone surface and some trees in the background.",
-                      "This is a red Nissan GT-R, a high-performance sports car. It's known for its powerful engine and sleek design.",
-                      "Based on the image provided, the car is a **Bugatti Chiron**.\n\nIt is a **blue** sports car. The vehicle is shown in a dynamic, low-angle shot, emphasizing its sleek design and powerful presence on a road.",
+  expected_outputs = ["Based on the image provided, the car is a **Ferrari F40**.\n\nIt is a **red** sports car. The vehicle is shown parked on a cobblestone surface, and its vibrant red color is a prominent feature.",
+                      "Based on the image provided, the car is a **Nissan GT-R**.\n\nIt is a **red** sports car. The vehicle is a high-performance model, and the red color is a prominent feature of its design.",
+                      "Based on the image provided, the car is a **Bugatti Chiron**.\n\nIt is a **blue** sports car. The vehicle is shown in a dynamic, high-speed scene, with the car positioned on a road that appears to be on a hill, with green fields and hills in the background under a partly cloudy sky.",
                       "This is a blue Nissan Micra, a compact car. It's a small, economical vehicle that was popular in the 1990s and early 2000s.",
                       "A person wearing a light green hoodie and light-colored pants is standing near a silver car with the driver's side door open."]
 
