@@ -265,7 +265,7 @@ class Qwen3VL():
     token = sample(scores[0], temp=temp, k=top_k, p=top_p, af=None, ap=None)
     return token
 
-  @TinyJit
+  #@TinyJit
   def prefill(self, pixel_values, input_ids, image_grid_thw):
       hidden_states = pixel_values.view(-1, 3, 2, 16, 16)
       hidden_states = hidden_states.cast(dtype=dtypes.bfloat16)
@@ -411,7 +411,8 @@ class Qwen3VL():
         self.lang.blk[i]._init_state(Tensor.zeros(1, 1))
         hidden_states = self.lang.blk[i](hidden_states, start_pos=0)
         if i < len(deepstack_feature_lists):
-          deepstack_features = deepstack_feature_lists[i]
+          hs2_torch = _deepstack_process(hidden_states=to_torch(hidden_states).squeeze(0), visual_pos_masks=to_torch(image_mask).to(dtype=torch.bool).any(dim=-1).squeeze(0), visual_embeds=to_torch(deepstack_feature_lists[i]))
+          hidden_states = to_tiny(hs2_torch).unsqueeze(0)
 
 
       hidden_states = self.lang.output_norm(hidden_states)
@@ -458,6 +459,18 @@ class qwen3_vis_v():
     self.position_embd = nn.Embedding(2304, 1024)
     self.post_ln = nn.LayerNorm(1024, eps=1e-6, elementwise_affine=True)
 
+def to_torch(x): return torch.Tensor(x.numpy())
+def to_tiny(x): return Tensor(x.detach().numpy())
+
+import torch
+def _deepstack_process(hidden_states: torch.Tensor, visual_pos_masks: torch.Tensor, visual_embeds: torch.Tensor):
+    visual_pos_masks = visual_pos_masks.to(hidden_states.device)
+    visual_embeds = visual_embeds.to(hidden_states.device, hidden_states.dtype)
+    hidden_states = hidden_states.clone()
+    local_this = hidden_states[visual_pos_masks, :] + visual_embeds
+    hidden_states[visual_pos_masks, :] = local_this
+    return hidden_states
+
 class qwen3_vis_block():
   def __init__(self):
     self.ffn_up = nn.Linear(1024, 4096)
@@ -479,9 +492,9 @@ if __name__ == "__main__":
       cv2.cvtColor(cv2.imread("96_notif.jpg"), cv2.COLOR_BGR2RGB)
   ]
 
-  expected_outputs = ["Based on the image provided, the car is a **Ferrari F40**.\n\nIt is a **red** sports car. The vehicle is a classic example of a Ferrari, known for its iconic design and performance.",
-                      "Based on the image provided, the car is a **Nissan GT-R**.\n\nIt is a **red** or **ruby red** color. The car is a high-performance sports car, and the image appears to be a studio photograph, possibly for a promotional or advertising purpose.",
-                      "Based on the image provided, the car is a **Bugatti Chiron**.\n\nIt is a **blue** sports car. The vibrant blue color is a prominent feature of the vehicle, which is captured in motion on a scenic road.",
+  expected_outputs = ["Based on the image provided, the car is a **Ferrari F40**.\n\nIt is a **red** sports car. The image appears to be a reflection, possibly from a mirror or a glass surface, showing the car in a driveway with a cobblestone surface and some trees in the background.",
+                      "This is a red Nissan GT-R, a high-performance sports car. It's known for its powerful engine and sleek design.",
+                      "Based on the image provided, the car is a **Bugatti Chiron**.\n\nIt is a **blue** sports car. The vehicle is shown in a dynamic, low-angle shot, emphasizing its sleek design and powerful presence on a road.",
                       "This is a blue Nissan Micra, a compact car. It's a small, economical vehicle that was popular in the 1990s and early 2000s.",
                       "A person wearing a light green hoodie and light-colored pants is standing near a silver car with the driver's side door open."]
 
