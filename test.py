@@ -409,8 +409,9 @@ class Qwen3VL():
       for i in range(len(self.lang.blk)):
         self.lang.blk[i]._init_state(Tensor.zeros(1, 1))
         hidden_states = self.lang.blk[i](hidden_states, start_pos=0)
-        if i < len(deepstack_feature_lists):
-          hs2_torch = _deepstack_process(hidden_states=to_torch(hidden_states).squeeze(0), visual_pos_masks=to_torch(image_mask).to(dtype=torch.bool).any(dim=-1).squeeze(0), visual_embeds=to_torch(deepstack_feature_lists[i]))
+        # https://github.com/huggingface/transformers/blob/08692e3c31654e4825b4c078a3c70b86efa70a46/src/transformers/models/qwen3_vl/modeling_qwen3_vl.py#L692
+        if i in [5, 11, 17]:
+          hs2_torch = _deepstack_process(hidden_states=to_torch(hidden_states).squeeze(0), visual_pos_masks=to_torch(image_mask).to(dtype=torch.bool).any(dim=-1).squeeze(0), visual_embeds=to_torch(deepstack_feature_lists[[5, 7 ,11].index]))
           hidden_states = to_tiny(hs2_torch).unsqueeze(0)
 
 
