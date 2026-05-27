@@ -241,8 +241,6 @@ class Qwen3VLVis():
 
   def __call__(self, pixel_values, image_grid_thw):
     hidden_states = pixel_values.view(-1, 3, 2, 16, 16)
-    hidden_states = hidden_states.cast(dtype=dtypes.bfloat16)
-
     B, C, D, H, W = hidden_states.shape
     x = hidden_states.reshape(B, C * D, H, W)
     w = Tensor.stack(self.v.patch_embd.weight, self.v.patch_embd.weight1, dim=2)
@@ -370,7 +368,7 @@ class Qwen3VLVis():
             channel * temporal_patch_size * self.patch_size * self.patch_size,
         )
     )[0]
-    return pixel_values, Tensor([1, grid_h, grid_w])
+    return pixel_values.cast(dtypes.bfloat16), Tensor([1, grid_h, grid_w])
 
 # https://github.com/huggingface/transformers/blob/90e3c4fa7200a9c8bb9756bf7bf43381d10850c0/src/transformers/models/qwen2_vl/image_processing_qwen2_vl.py#L62
 def smart_resize(height, width, factor, min_pixels, max_pixels):
@@ -440,7 +438,6 @@ class Qwen3VisBlock():
     query = query.squeeze(0)
     key   = key.squeeze(0)
     value = value.squeeze(0)
-    query, key = query.cast(dtypes.float32), key.cast(dtypes.float32)
     query = (query * cos) + (rotate_half(query) * sin)
     key = (key * cos) + (rotate_half(key) * sin)
 
@@ -453,9 +450,7 @@ class Qwen3VisBlock():
     attn_output = attn_weight @ value
     attn_output = attn_output.transpose(1, 2)
     attn_output = attn_output.reshape(seq_length, -1)
-    attn_output = attn_output.cast(dtypes.bfloat16)
     attn_output = self.attn_out(attn_output)
-    attn_output = attn_output.cast(dtypes.bfloat16) # todo
     hidden_states += attn_output
     norm = self.ln2(hidden_states)
     x = self.ffn_up(norm)
