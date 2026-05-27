@@ -183,7 +183,7 @@ class Qwen3VL():
     pixel_values, input_ids, seq_len, image_grid_thw = self.preprocess(image=np.random.randint(0, 256, size=res, dtype=np.uint8), prompt=prompt)
     for _ in range(3): self.vis.preprocess_img(image=Tensor.rand(res).cast(dtypes.uint8))
     for _ in range(3): self.prefill(pixel_values=pixel_values, input_ids=input_ids, image_grid_thw=image_grid_thw)
-    for _ in range(3):  self.fwd(token=Tensor([[42]]), seq_len=Variable("pos",1,2000).bind(seq_len))
+    for _ in range(3):  self.lang.rollout_jit(tokens=Tensor([[42]]).clone(), start_pos=Variable("pos",1,2000).bind(seq_len), temperature=Tensor(0.7).clone())
     self.prewarmed = True
 
   def forward(self, prompt, image):
@@ -197,7 +197,7 @@ class Qwen3VL():
     while True:
         if prefill_done:
           ts = time.time()
-          token = self.fwd(token=next_token_tensor, seq_len=Variable("pos",1,2000).bind(seq_len))
+          token = self.lang.rollout_jit(tokens=next_token_tensor.clone(), start_pos=Variable("pos",1,2000).bind(seq_len), temperature=Tensor(0.7).clone())[0]
           seq_len+=1
         else:
           prefill_done = True
@@ -211,17 +211,7 @@ class Qwen3VL():
 
     return self.tok.decode(toks_out)
 
-
-  @TinyJit
-  def fwd(self, token, seq_len):
-    hidden_states = self.lang.token_embd(token)
-    for i in range(len(self.lang.blk)): hidden_states = self.lang.blk[i](hidden_states, start_pos=seq_len)  
-    hidden_states = self.lang.output_norm(hidden_states)
-    outputs = hidden_states[:, -1:, :] @ self.lang.token_embd.weight.T
-    next_token_logits = outputs[:, -1, :]
-    scores = next_token_logits / temp
-    token = sample(scores[0], temp=temp, k=top_k, p=top_p, af=None, ap=None)
-    return token
+  def fwd(self, token, seq_len): return self.lang.rollout_jit(token.clone(), seq_len, temperature=Tensor(0.7).clone())[0]
 
   @TinyJit
   def prefill(self, pixel_values, input_ids, image_grid_thw):
@@ -498,9 +488,9 @@ if __name__ == "__main__":
       cv2.cvtColor(cv2.imread("96_notif.jpg"), cv2.COLOR_BGR2RGB)
   ]
 
-  expected_outputs = ["Based on the image provided, the car is a **Ferrari F40**.\n\nIt is a **red** sports car. The vehicle is shown in a classic red color, and it is parked on a cobblestone street in front of a brick house. The car is a high-performance model, known for its iconic design and engineering.",
-                      "Based on the image provided, the car is a **Nissan GT-R**.\n\nThe car is a **red** Nissan GT-R. It is a high-performance sports car, and the image appears to be a studio shot, likely for a promotional or advertising purpose.",
-                      "Based on the image provided, the car is a **Bugatti Chiron**.\n\nIt is a **blue** car, specifically a vibrant, metallic blue. The vehicle is a high-performance supercar, known for its distinctive design and powerful engine.",
+  expected_outputs = ["Based on the image provided, the car is a **Ferrari F40**.\n\nIt is **red**.\n\nThe image shows a close-up of the front right side of the car, which is a classic Ferrari F40, a highly sought-after and iconic sports car. The vehicle is parked on a cobblestone surface in front of a brick house, with some green foliage in the background.",
+                      "Based on the image provided, the car is a **Nissan GT-R**.\n\nIt is painted a vibrant **red**. The vehicle appears to be a modified version, possibly a high-performance model, given its aggressive styling, such as the large front splitter and the rear wing. The car is positioned at an angle, showcasing its sleek and aerodynamic design.",
+                      "Based on the image provided, the car is a **Bugatti Chiron**.\n\nThe car is a **blue** color. It is a high-performance hypercar, and the image shows it on a road, likely in a scenic location. The iconic Bugatti logo is visible on the front grille.",
                       "This is a blue Nissan Micra, a compact car. It's a small, economical vehicle that was popular in the 1990s and early 2000s.",
                       "A person wearing a light green hoodie and light-colored pants is standing near a silver car with the driver's side door open."]
 
@@ -520,4 +510,5 @@ if __name__ == "__main__":
     output = qwen.forward(prompt=prompt, image=image)
     print("output =",output)
     assert output == expected_output
+
 
