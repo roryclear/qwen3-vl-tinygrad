@@ -146,20 +146,6 @@ def sample(logits, temp: float, k: int, p: float, af: float, ap: float):
 
   return output_token
 
-# https://github.com/huggingface/transformers/blob/90e3c4fa7200a9c8bb9756bf7bf43381d10850c0/src/transformers/models/qwen2_vl/image_processing_qwen2_vl.py#L62
-def smart_resize(height, width, factor, min_pixels, max_pixels):
-    h_bar = round(height / factor) * factor
-    w_bar = round(width / factor) * factor
-    if h_bar * w_bar > max_pixels:
-        beta = math.sqrt((height * width) / max_pixels)
-        h_bar = max(factor, math.floor(height / beta / factor) * factor)
-        w_bar = max(factor, math.floor(width / beta / factor) * factor)
-    elif h_bar * w_bar < min_pixels:
-        beta = math.sqrt(min_pixels / (height * width))
-        h_bar = math.ceil(height * beta / factor) * factor
-        w_bar = math.ceil(width * beta / factor) * factor
-    return h_bar, w_bar
-
 class Qwen3VL():
   def __init__(self, size="2B"):
     self.vis = Qwen3VLVis(size=size)
@@ -233,8 +219,7 @@ class Qwen3VL():
       hidden_states = self.lang.blk[i](hidden_states, start_pos=0)
       # https://github.com/huggingface/transformers/blob/08692e3c31654e4825b4c078a3c70b86efa70a46/src/transformers/models/qwen3_vl/modeling_qwen3_vl.py#L692
       if i in self.vis.v.deepstack_idx:
-        hs2_torch = deepstack_process(hidden_states=hidden_states, visual_pos_masks=image_mask.squeeze(0), visual_embeds=(deepstack_feature_lists[self.vis.v.deepstack_idx.index(i)]))
-        hidden_states = (hs2_torch).unsqueeze(0)
+        hidden_states = deepstack_process(hidden_states=hidden_states, visual_pos_masks=image_mask.squeeze(0), visual_embeds=(deepstack_feature_lists[self.vis.v.deepstack_idx.index(i)])).unsqueeze(0)
 
     hidden_states = self.lang.output_norm(hidden_states)
     outputs = hidden_states[:, -1:, :] @ self.lang.token_embd.weight.T
@@ -243,6 +228,14 @@ class Qwen3VL():
     scores = next_token_logits / temp
     token = sample(scores[0], temp=temp, k=top_k, p=top_p, af=None, ap=None)
     return token
+
+def deepstack_process(hidden_states, visual_pos_masks, visual_embeds):
+  mask_float = visual_pos_masks.any(axis=1)
+  positions = mask_float.cumsum(axis=0) - 1
+  positions = positions.clamp(0)
+  expanded = visual_embeds[positions]
+  expanded = expanded * mask_float.unsqueeze(-1)
+  return hidden_states[0] + expanded
 
 class Qwen3VLVis():
   def __init__(self, size="2B"):
@@ -388,6 +381,20 @@ class Qwen3VLVis():
     )[0]
     return pixel_values, Tensor([1, grid_h, grid_w])
 
+# https://github.com/huggingface/transformers/blob/90e3c4fa7200a9c8bb9756bf7bf43381d10850c0/src/transformers/models/qwen2_vl/image_processing_qwen2_vl.py#L62
+def smart_resize(height, width, factor, min_pixels, max_pixels):
+    h_bar = round(height / factor) * factor
+    w_bar = round(width / factor) * factor
+    if h_bar * w_bar > max_pixels:
+        beta = math.sqrt((height * width) / max_pixels)
+        h_bar = max(factor, math.floor(height / beta / factor) * factor)
+        w_bar = max(factor, math.floor(width / beta / factor) * factor)
+    elif h_bar * w_bar < min_pixels:
+        beta = math.sqrt(min_pixels / (height * width))
+        h_bar = math.ceil(height * beta / factor) * factor
+        w_bar = math.ceil(width * beta / factor) * factor
+    return h_bar, w_bar
+
 class Qwen3PatchEmbed():
   def __init__(self, kv=None):
     self.weight = Tensor.zeros(kv["clip.vision.embedding_length"], 3, 16, 16)
@@ -422,15 +429,6 @@ class DeepstackLayer:
   def __call__(self, hidden_states):
       deepstack_feature = (hidden_states.view(-1, self.hidden_size)).view(-1, self.hidden_size)
       return self.fc2(Tensor.gelu(self.fc1(deepstack_feature)))
-
-# todo can this be a where?
-def deepstack_process(hidden_states, visual_pos_masks, visual_embeds):
-  mask_float = visual_pos_masks.any(axis=1)
-  positions = mask_float.cumsum(axis=0) - 1
-  positions = positions.clamp(0)
-  expanded = visual_embeds[positions]
-  expanded = expanded * mask_float.unsqueeze(-1)
-  return hidden_states[0] + expanded
 
 class Qwen3VisBlock():
   def __init__(self, kv=None, weights=None):

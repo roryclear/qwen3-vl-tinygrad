@@ -5,11 +5,11 @@ if __name__ == "__main__":
 
   # first four are all 256x256
   images = [
-      cv2.cvtColor(cv2.imread("f40.jpeg"), cv2.COLOR_BGR2RGB),
-      cv2.cvtColor(cv2.imread("gtr.jpg"), cv2.COLOR_BGR2RGB),
-      cv2.cvtColor(cv2.imread("bug.jpg"), cv2.COLOR_BGR2RGB),
-      cv2.cvtColor(cv2.imread("micra.jpg"), cv2.COLOR_BGR2RGB),
-      cv2.cvtColor(cv2.imread("96_notif.jpg"), cv2.COLOR_BGR2RGB)
+      cv2.cvtColor(cv2.imread("images/f40.jpeg"), cv2.COLOR_BGR2RGB),
+      cv2.cvtColor(cv2.imread("images/gtr.jpg"), cv2.COLOR_BGR2RGB),
+      cv2.cvtColor(cv2.imread("images/bug.jpg"), cv2.COLOR_BGR2RGB),
+      cv2.cvtColor(cv2.imread("images/micra.jpg"), cv2.COLOR_BGR2RGB),
+      cv2.cvtColor(cv2.imread("images/96_notif.jpg"), cv2.COLOR_BGR2RGB)
   ]
 
   expected_outputs = ["Based on the image provided, the car is a **Ferrari F40**.\n\nIt is **red**.\n\nThe image shows a close-up of the front right side of the car, which is a classic Ferrari F40, a highly sought-after and iconic sports car. The vehicle is parked on a cobblestone surface in front of a brick house, with some green foliage in the background.",
