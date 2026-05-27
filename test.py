@@ -1,4 +1,5 @@
 from qwen3vl import Qwen3VL
+from tinygrad import Tensor, Variable
 import cv2
 if __name__ == "__main__":
   qwen = Qwen3VL(size="2B")
@@ -33,6 +34,14 @@ if __name__ == "__main__":
     
     output = qwen.forward(prompt=prompt, image=image)
     print("output =",output)
+    toks_out = []
+    prompt2 = f"<|im_start|>user\nis it fast?<|im_end|>\n<|im_start|>assistant\n"
+    prompt2 = qwen.tok.encode(prompt2)
+    start_pos = len(prompt2)
+    tok = qwen.lang.prefill_jit(tokens=Tensor(prompt2).unsqueeze(0), start_pos=Variable("pos",1,2000).bind(start_pos), temperature=Tensor(0.7).clone())
+    print("tok =",tok.numpy(), qwen.tok.decode(tok.numpy()[0]))
+    for i in range(10):
+      tok = qwen.lang.rollout_jit(tokens=tok.clone(), start_pos=Variable("pos",1,2000).bind(start_pos), temperature=Tensor(0.7).clone())
+      start_pos+=1
+      print("tok =",tok.numpy()[0][0], qwen.tok.decode(tok.numpy()[0]))
     assert output == expected_output
-
-
