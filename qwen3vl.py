@@ -169,6 +169,7 @@ class Qwen3VL():
     pixel_values, input_ids, seq_len, image_grid_thw = self.preprocess(image=np.random.randint(0, 256, size=res, dtype=np.uint8), prompt=prompt)
     for _ in range(3): self.vis.preprocess_img(image=Tensor.rand(res).cast(dtypes.uint8))
     for _ in range(3): self.prefill(pixel_values=pixel_values, input_ids=input_ids, image_grid_thw=image_grid_thw)
+    for _ in range(3):  self.lang.prefill_jit(tokens=Tensor([[42]]).clone(), start_pos=Variable("pos",1,2000).bind(seq_len), temperature=Tensor(0.7).clone())
     for _ in range(3):  self.lang.rollout_jit(tokens=Tensor([[42]]).clone(), start_pos=Variable("pos",1,2000).bind(seq_len), temperature=Tensor(0.7).clone())
     self.prewarmed = True
 
@@ -471,3 +472,9 @@ class Qwen3VisBlock():
     x = Tensor.gelu(x)
     norm = self.ffn_down(x)
     return hidden_states + norm
+  
+if __name__ == "__main__":
+  image = cv2.cvtColor(cv2.imread("images/micra.jpg"), cv2.COLOR_BGR2RGB)
+  qwen = Qwen3VL(size="2B")
+  prompt = input(">")
+  prompt = f"<|im_start|>user\n<|vision_start|><|image_pad|><|vision_end|>\n{prompt}<|im_end|>\n<|im_start|>assistant\n"
