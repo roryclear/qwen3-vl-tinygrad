@@ -172,28 +172,21 @@ class Qwen3VL():
     for _ in range(3):  self.lang.rollout_jit(tokens=Tensor([[42]]).clone(), start_pos=Variable("pos",1,2000).bind(seq_len), temperature=Tensor(0.7).clone())
 
   def forward(self, prompt, image):
-    pixel_values, input_ids, seq_len, image_grid_thw = self.preprocess(image=image, prompt=prompt)
-
-    toks_out = []
-    prefill_done = False
-    ts = time.time()
-    token = self.prefill(pixel_values=pixel_values, input_ids=input_ids, image_grid_thw=image_grid_thw)
-    while True:
-        if prefill_done:
-          ts = time.time()
+      pixel_values, input_ids, seq_len, image_grid_thw = self.preprocess(image=image, prompt=prompt)
+      toks_out = []
+      token = self.prefill(pixel_values=pixel_values, input_ids=input_ids, image_grid_thw=image_grid_thw)
+      while True:
+        ts = time.time()
+        if toks_out:
           token = self.lang.rollout_jit(tokens=next_token_tensor.clone(), start_pos=Variable("pos",1,2000).bind(seq_len), temperature=Tensor(0.7).clone())[0]
-          seq_len+=1
-        else:
-          prefill_done = True
+          seq_len += 1
         next_token = int(token.numpy()[0])
-        next_token_tensor = Tensor([[next_token]])  # shape (1,1)
-
+        next_token_tensor = Tensor([[next_token]])
         if next_token == 151645 or seq_len == 406: break
         toks_out.append(next_token)
         print(self.tok.decode(toks_out))
         print(f"TOK/S = {1 / (time.time() - ts):.2f}")
-
-    return self.tok.decode(toks_out)
+      return self.tok.decode(toks_out)
 
   @TinyJit
   def prefill(self, pixel_values, input_ids, image_grid_thw):
@@ -476,3 +469,4 @@ if __name__ == "__main__":
   prompt = input(">")
   prompt = f"<|im_start|>user\n<|vision_start|><|image_pad|><|vision_end|>\n{prompt}<|im_end|>\n<|im_start|>assistant\n"
   qwen.forward(prompt=prompt, image=image)
+
