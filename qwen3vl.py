@@ -151,6 +151,7 @@ class Qwen3VL():
     self.vis = Qwen3VLVis(size=size)
     self.lang, kv = Transformer.from_gguf(fetch(f"https://huggingface.co/Qwen/Qwen3-VL-{size}-Instruct-GGUF/resolve/main/Qwen3VL-{size}-Instruct-F16.gguf"), 2000) # max context
     self.tok = SimpleTokenizer.from_gguf_kv(kv)
+    self.start_pos = 0
 
   def preprocess(self, image, prompt):
     pixel_values, image_grid_thw = self.vis.preprocess_img(image=Tensor(image))
@@ -170,18 +171,25 @@ class Qwen3VL():
     for _ in range(3): self.prefill(pixel_values=pixel_values, input_ids=input_ids, image_grid_thw=image_grid_thw)
     for _ in range(3):  self.lang(tokens=Tensor([[42]]).clone(), start_pos=Variable("pos",1,2000).bind(seq_len), temperature=Tensor(0.7).clone())
 
-  def forward(self, prompt, image):
-      pixel_values, input_ids, seq_len, image_grid_thw = self.preprocess(image=image, prompt=prompt)
+  def forward(self, prompt, image=None):
+      if image is not None:
+        pixel_values, input_ids, seq_len, image_grid_thw = self.preprocess(image=image, prompt=prompt)
+        self.start_pos = seq_len
+        token = self.prefill(pixel_values=pixel_values, input_ids=input_ids, image_grid_thw=image_grid_thw)
+      else:
+        prompt = self.tok.encode(prompt)
+        tokens = Tensor(prompt)
+        token = self.lang(tokens=tokens.unsqueeze(0), start_pos=Variable("pos",1,2000).bind(self.start_pos), temperature=Tensor(0.7).clone())[0]
+        self.start_pos += tokens.shape[0]
       toks_out = []
-      token = self.prefill(pixel_values=pixel_values, input_ids=input_ids, image_grid_thw=image_grid_thw)
       while True:
         ts = time.time()
         if toks_out:
-          token = self.lang(tokens=next_token_tensor.clone(), start_pos=Variable("pos",1,2000).bind(seq_len), temperature=Tensor(0.7).clone())[0]
-          seq_len += 1
+          token = self.lang(tokens=next_token_tensor.clone(), start_pos=Variable("pos",1,2000).bind(self.start_pos), temperature=Tensor(0.7).clone())[0]
+          self.start_pos += 1
         next_token = int(token.numpy()[0])
         next_token_tensor = Tensor([[next_token]])
-        if next_token == 151645 or seq_len == 406: break
+        if next_token == 151645: break
         toks_out.append(next_token)
         print(self.tok.decode(toks_out))
         print(f"TOK/S = {1 / (time.time() - ts):.2f}")

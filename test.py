@@ -1,5 +1,6 @@
 from qwen3vl import Qwen3VL
 import cv2
+from tinygrad import Tensor, Variable
 if __name__ == "__main__":
   qwen = Qwen3VL(size="2B")
 
@@ -34,5 +35,12 @@ if __name__ == "__main__":
     output = qwen.forward(prompt=prompt, image=image)
     print("output =",output)
     assert output == expected_output
+
+    prompt2 = f"<|im_start|>user\nwhat is its top speed? just give me the figure in kph only<|im_end|>\n<|im_start|>assistant\n"
+    output = qwen.forward(prompt=prompt2)
+    print(output)
+    
+    exit()
+
 
 
