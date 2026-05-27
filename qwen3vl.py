@@ -170,9 +170,7 @@ class Qwen3VL():
     pixel_values, input_ids, seq_len, image_grid_thw = self.preprocess(image=np.random.randint(0, 256, size=res, dtype=np.uint8), prompt=prompt)
     for _ in range(3): self.vis.preprocess_img(image=Tensor.rand(res).cast(dtypes.uint8))
     for _ in range(3): self.prefill(pixel_values=pixel_values, input_ids=input_ids, image_grid_thw=image_grid_thw)
-    for _ in range(3):  self.lang(tokens=Tensor([[42]]).clone(), start_pos=Variable("pos",1,self.max_context).bind(seq_len), temperature=Tensor(0.7).clone())
-  
-  def fwd_jit(self, tokens, start_pos, temperature): return self.lang.prefill_jit(tokens, start_pos, temperature)
+    for _ in range(3): self.lang(tokens=Tensor([[42]]).clone(), start_pos=Variable("pos",1,self.max_context).bind(seq_len), temperature=Tensor(0.7).clone())
 
   def forward(self, prompt, image=None):
       if image is not None:
@@ -184,7 +182,7 @@ class Qwen3VL():
         prompt_len = len(prompt)
         prompt = prompt + [0] * (self.max_context - prompt_len)
         tokens = Tensor(prompt).unsqueeze(0)
-        token = self.fwd_jit(tokens=tokens[:, :Variable("len",1,self.max_context).bind(prompt_len)], start_pos=Variable("pos",1,self.max_context).bind(self.start_pos), temperature=Tensor(0.7).clone())[0]
+        token = self.lang.prefill_jit(tokens=tokens[:, :Variable("len",1,self.max_context).bind(prompt_len)], start_pos=Variable("pos",1,self.max_context).bind(self.start_pos), temperature=Tensor(0.7).clone())[0]
         self.start_pos += prompt_len
       toks_out = []
       while True:
