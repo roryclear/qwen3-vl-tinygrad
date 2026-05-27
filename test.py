@@ -30,9 +30,12 @@ if __name__ == "__main__":
   qwen.prewarm(images[0].shape, prompts[0])
   for image, expected_output, prompt in zip(images, expected_outputs, prompts):
     z += 1
-    if z > 2: continue
+    if z > 1: continue
     
     output = qwen.forward(prompt=prompt, image=image)
+    print("output =",output)
+    prompt = f"<|im_start|>user\nwhat is its top speed? just give me the figure in kph only<|im_end|>\n<|im_start|>assistant\n"
+    output = qwen.forward(prompt=prompt)
     print("output =",output)
     '''
     toks_out = []

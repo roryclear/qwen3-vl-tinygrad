@@ -172,10 +172,16 @@ class Qwen3VL():
     #for _ in range(3):  self.lang.prefill_jit(tokens=Tensor([[42]]).clone(), start_pos=Variable("pos",1,2000).bind(seq_len), temperature=Tensor(0.7).clone())
     for _ in range(3):  self.lang.rollout_jit(tokens=Tensor([[42]]).clone(), start_pos=Variable("pos",1,2000).bind(seq_len), temperature=Tensor(0.7).clone())
 
-  def forward(self, prompt, image):
-    pixel_values, input_ids, seq_len, image_grid_thw = self.preprocess(image=image, prompt=prompt)
-    token = self.prefill(pixel_values=pixel_values, input_ids=input_ids, image_grid_thw=image_grid_thw)
-    self.pos += seq_len
+  def forward(self, prompt, image=None):
+    if image is not None:
+      pixel_values, input_ids, seq_len, image_grid_thw = self.preprocess(image=image, prompt=prompt)
+      token = self.prefill(pixel_values=pixel_values, input_ids=input_ids, image_grid_thw=image_grid_thw)
+      self.pos += seq_len
+    else:
+      prompt = self.tok.encode(prompt)
+      seq_len = len(prompt)
+      token = self.lang.prefill_jit(tokens=Tensor([prompt]).clone(), start_pos=Variable("pos",1,2000).bind(self.pos), temperature=Tensor(0.7).clone())
+      self.pos += len(prompt)
 
     toks_out = []
     prefill_done = False
@@ -188,7 +194,9 @@ class Qwen3VL():
           seq_len+=1
         else:
           prefill_done = True
-        next_token = int(token.numpy()[0])
+        print("rory token =",token, token.numpy())
+        # todo
+        next_token = int(token.numpy()[0]) if len(token.shape) == 1 else int(token.numpy()[0][0])
         next_token_tensor = Tensor([[next_token]])  # shape (1,1)
 
         if next_token == 151645 or seq_len == 406: break
