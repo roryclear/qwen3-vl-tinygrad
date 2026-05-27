@@ -151,6 +151,7 @@ class Qwen3VL():
     self.vis = Qwen3VLVis(size=size)
     self.lang, kv = Transformer.from_gguf(fetch(f"https://huggingface.co/Qwen/Qwen3-VL-{size}-Instruct-GGUF/resolve/main/Qwen3VL-{size}-Instruct-F16.gguf"), 2000) # max context
     self.tok = SimpleTokenizer.from_gguf_kv(kv)
+    self.pos = 0
 
   def preprocess(self, image, prompt):
     pixel_values, image_grid_thw = self.vis.preprocess_img(image=Tensor(image))
@@ -173,15 +174,17 @@ class Qwen3VL():
 
   def forward(self, prompt, image):
     pixel_values, input_ids, seq_len, image_grid_thw = self.preprocess(image=image, prompt=prompt)
+    token = self.prefill(pixel_values=pixel_values, input_ids=input_ids, image_grid_thw=image_grid_thw)
+    self.pos += seq_len
 
     toks_out = []
     prefill_done = False
     ts = time.time()
-    token = self.prefill(pixel_values=pixel_values, input_ids=input_ids, image_grid_thw=image_grid_thw)
     while True:
         if prefill_done:
           ts = time.time()
-          token = self.lang.rollout_jit(tokens=next_token_tensor.clone(), start_pos=Variable("pos",1,2000).bind(seq_len), temperature=Tensor(0.7).clone())[0]
+          token = self.lang.rollout_jit(tokens=next_token_tensor.clone(), start_pos=Variable("pos",1,2000).bind(self.pos), temperature=Tensor(0.7).clone())[0]
+          self.pos+=1
           seq_len+=1
         else:
           prefill_done = True
