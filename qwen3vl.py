@@ -211,8 +211,6 @@ class Qwen3VL():
 
     return self.tok.decode(toks_out)
 
-  def fwd(self, token, seq_len): return self.lang.rollout_jit(token.clone(), seq_len, temperature=Tensor(0.7).clone())[0]
-
   @TinyJit
   def prefill(self, pixel_values, input_ids, image_grid_thw):
     image_embeds, hidden_states, deepstack_feature_lists = self.vis(pixel_values, image_grid_thw)
