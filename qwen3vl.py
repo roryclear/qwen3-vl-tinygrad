@@ -173,30 +173,30 @@ class Qwen3VL():
     for _ in range(3): self.lang(tokens=Tensor([[42]]).clone(), start_pos=Variable("pos",1,self.max_context).bind(seq_len), temperature=Tensor(0.7).clone())
 
   def forward(self, prompt, image=None):
-      if image is not None:
-        pixel_values, input_ids, seq_len, image_grid_thw = self.preprocess(image=image, prompt=prompt)
-        self.start_pos = seq_len
-        token = self.prefill(pixel_values=pixel_values, input_ids=input_ids, image_grid_thw=image_grid_thw)
-      else:
-        prompt = self.tok.encode(prompt)
-        prompt_len = len(prompt)
-        prompt = prompt + [0] * (self.max_context - prompt_len)
-        tokens = Tensor(prompt).unsqueeze(0)
-        token = self.lang.prefill_jit(tokens=tokens[:, :Variable("len",1,self.max_context).bind(prompt_len)], start_pos=Variable("pos",1,self.max_context).bind(self.start_pos), temperature=Tensor(0.7).clone())[0]
-        self.start_pos += prompt_len
-      toks_out = []
-      while True:
-        ts = time.time()
-        if toks_out:
-          token = self.lang(tokens=next_token_tensor.clone(), start_pos=Variable("pos",1,self.max_context).bind(self.start_pos), temperature=Tensor(0.7).clone())[0]
-          self.start_pos += 1
-        next_token = int(token.numpy()[0])
-        next_token_tensor = Tensor([[next_token]])
-        if next_token == 151645: break
-        toks_out.append(next_token)
-        print(self.tok.decode(toks_out))
-        print(f"TOK/S = {1 / (time.time() - ts):.2f}")
-      return self.tok.decode(toks_out)
+    if image is not None:
+      pixel_values, input_ids, seq_len, image_grid_thw = self.preprocess(image=image, prompt=prompt)
+      self.start_pos = seq_len
+      token = self.prefill(pixel_values=pixel_values, input_ids=input_ids, image_grid_thw=image_grid_thw)
+    else:
+      prompt = self.tok.encode(prompt)
+      prompt_len = len(prompt)
+      prompt = prompt + [0] * (self.max_context - prompt_len)
+      tokens = Tensor(prompt).unsqueeze(0)
+      token = self.lang.prefill_jit(tokens=tokens[:, :Variable("len",1,self.max_context).bind(prompt_len)], start_pos=Variable("pos",1,self.max_context).bind(self.start_pos), temperature=Tensor(0.7).clone())[0]
+      self.start_pos += prompt_len
+    toks_out = []
+    while True:
+      ts = time.time()
+      if toks_out:
+        token = self.lang(tokens=next_token_tensor.clone(), start_pos=Variable("pos",1,self.max_context).bind(self.start_pos), temperature=Tensor(0.7).clone())[0]
+        self.start_pos += 1
+      next_token = int(token.numpy()[0])
+      next_token_tensor = Tensor([[next_token]])
+      if next_token == 151645: break
+      toks_out.append(next_token)
+      print(self.tok.decode(toks_out))
+      print(f"TOK/S = {1 / (time.time() - ts):.2f}")
+    return self.tok.decode(toks_out)
 
   @TinyJit
   def prefill(self, pixel_values, input_ids, image_grid_thw):
