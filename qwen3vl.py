@@ -162,7 +162,7 @@ def smart_resize(height, width, factor, min_pixels, max_pixels):
 
 class Qwen3VL():
   def __init__(self, size="2B"):
-    self.vis = qwen3vl_vis(size=size)
+    self.vis = Qwen3VLVis(size=size)
     self.lang, kv = Transformer.from_gguf(fetch(f"https://huggingface.co/Qwen/Qwen3-VL-{size}-Instruct-GGUF/resolve/main/Qwen3VL-{size}-Instruct-F16.gguf"), 2000) # max context
     self.tok = SimpleTokenizer.from_gguf_kv(kv)
     self.prewarmed = False
@@ -244,12 +244,12 @@ class Qwen3VL():
     token = sample(scores[0], temp=temp, k=top_k, p=top_p, af=None, ap=None)
     return token
 
-class qwen3vl_vis():
+class Qwen3VLVis():
   def __init__(self, size="2B"):
     kv, state_dict = gguf_load(fetch(f"https://huggingface.co/Qwen/Qwen3-VL-{size}-Instruct-GGUF/resolve/main/mmproj-Qwen3VL-{size}-Instruct-F16.gguf"))
     self.merge_size = kv["clip.vision.spatial_merge_size"]
     self.patch_size = kv["clip.vision.patch_size"]
-    self.v = qwen3_vis_v(size=size, kv=kv, weights=state_dict)
+    self.v = Qwen3VisBlocks(kv=kv, weights=state_dict)
     self.mm = [nn.Linear(*state_dict["mm.0.weight"].shape[::-1], bias=True), None, nn.Linear(*state_dict["mm.2.weight"].shape[::-1], bias=True)]
     state_dict["v.patch_embd.weight1"] = state_dict["v.patch_embd.weight.1"]
     load_state_dict(self, state_dict)
@@ -388,17 +388,17 @@ class qwen3vl_vis():
     )[0]
     return pixel_values, Tensor([1, grid_h, grid_w])
 
-class qwen3_patch_embd():
+class Qwen3PatchEmbed():
   def __init__(self, kv=None):
     self.weight = Tensor.zeros(kv["clip.vision.embedding_length"], 3, 16, 16)
     self.weight1 = Tensor.zeros(kv["clip.vision.embedding_length"], 3, 16, 16)
     self.bias = Tensor.zeros(kv["clip.vision.embedding_length"])
     
-class qwen3_vis_v():
-  def __init__(self, size="2B", kv=None, weights=None):
+class Qwen3VisBlocks():
+  def __init__(self, kv=None, weights=None):
     self.blk = []
-    for _ in range(kv["clip.vision.block_count"]): self.blk.append(qwen3_vis_block(kv, weights=weights))
-    self.patch_embd = qwen3_patch_embd(kv=kv)
+    for _ in range(kv["clip.vision.block_count"]): self.blk.append(Qwen3VisBlock(kv, weights=weights))
+    self.patch_embd = Qwen3PatchEmbed(kv=kv)
     self.num_grid_per_side = 48
     self.deepstack_layers = kv["clip.vision.is_deepstack_layers"]
     self.deepstack_idx = [i for i, val in enumerate(self.deepstack_layers) if val]
@@ -432,7 +432,7 @@ def deepstack_process(hidden_states, visual_pos_masks, visual_embeds):
   expanded = expanded * mask_float.unsqueeze(-1)
   return hidden_states[0] + expanded
 
-class qwen3_vis_block():
+class Qwen3VisBlock():
   def __init__(self, kv=None, weights=None):
     self.ffn_up = nn.Linear(kv["clip.vision.embedding_length"], kv["clip.vision.feed_forward_length"])
     self.ffn_down = nn.Linear(kv["clip.vision.feed_forward_length"], kv["clip.vision.embedding_length"])
