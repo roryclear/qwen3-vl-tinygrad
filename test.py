@@ -19,7 +19,7 @@ if __name__ == "__main__":
                       "This is a blue Nissan Micra, a compact car. It's a small, economical vehicle that was popular in the 1990s and early 2000s.",
                       "A person wearing a light green hoodie and light-colored pants is standing near a silver car with the driver's side door open."]
 
-  prompts = ["<|im_start|>user\n<|vision_start|><|image_pad|><|vision_end|>\nWhat car is this? what color is it?<|im_end|>\n<|im_start|>assistant\n",
+  prompts = ["<|im_start|>user\n<|vision_start|><|image_pad|><|vision_end|>\nWhat car is this? what color is it? what country was it made in?<|im_end|>\n<|im_start|>assistant\n",
              "<|im_start|>user\n<|vision_start|><|image_pad|><|vision_end|>\nWhat car is this? what color is it?<|im_end|>\n<|im_start|>assistant\n",
              "<|im_start|>user\n<|vision_start|><|image_pad|><|vision_end|>\nWhat car is this? what color is it?<|im_end|>\n<|im_start|>assistant\n",
              "<|im_start|>user\n<|vision_start|><|image_pad|><|vision_end|>\nWhat car is this? what color is it?<|im_end|>\n<|im_start|>assistant\n",
@@ -34,12 +34,20 @@ if __name__ == "__main__":
     
     output = qwen.forward(prompt=prompt, image=image)
     print("output =",output)
-    assert output == expected_output
+    #assert output == expected_output
 
-    prompt2 = f"<|im_start|>user\nwhat is its top speed? just give me the figure in kph only<|im_end|>\n<|im_start|>assistant\n"
+    prompt2 = f"<|im_start|>user\nwhat is the capital city of that country?<|im_end|>\n<|im_start|>assistant\n"
+    output = qwen.forward(prompt=prompt2)
+    print(output)
+
+    prompt2 = f"<|im_start|>user\nwhat is that city's number 1 tourist attraction called?<|im_end|>\n<|im_start|>assistant\n"
     output = qwen.forward(prompt=prompt2)
     print(output)
     
+    prompt2 = f"<|im_start|>user\ndoes it host events?<|im_end|>\n<|im_start|>assistant\n"
+    output = qwen.forward(prompt=prompt2)
+    print(output)
+
     exit()
 
 

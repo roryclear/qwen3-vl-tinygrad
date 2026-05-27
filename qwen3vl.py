@@ -148,8 +148,9 @@ def sample(logits, temp: float, k: int, p: float, af: float, ap: float):
 
 class Qwen3VL():
   def __init__(self, size="2B"):
+    self.max_context = 2000
     self.vis = Qwen3VLVis(size=size)
-    self.lang, kv = Transformer.from_gguf(fetch(f"https://huggingface.co/Qwen/Qwen3-VL-{size}-Instruct-GGUF/resolve/main/Qwen3VL-{size}-Instruct-F16.gguf"), 2000) # max context
+    self.lang, kv = Transformer.from_gguf(fetch(f"https://huggingface.co/Qwen/Qwen3-VL-{size}-Instruct-GGUF/resolve/main/Qwen3VL-{size}-Instruct-F16.gguf"), self.max_context) # max context
     self.tok = SimpleTokenizer.from_gguf_kv(kv)
     self.start_pos = 0
 
@@ -169,7 +170,7 @@ class Qwen3VL():
     pixel_values, input_ids, seq_len, image_grid_thw = self.preprocess(image=np.random.randint(0, 256, size=res, dtype=np.uint8), prompt=prompt)
     for _ in range(3): self.vis.preprocess_img(image=Tensor.rand(res).cast(dtypes.uint8))
     for _ in range(3): self.prefill(pixel_values=pixel_values, input_ids=input_ids, image_grid_thw=image_grid_thw)
-    for _ in range(3):  self.lang(tokens=Tensor([[42]]).clone(), start_pos=Variable("pos",1,2000).bind(seq_len), temperature=Tensor(0.7).clone())
+    for _ in range(3):  self.lang(tokens=Tensor([[42]]).clone(), start_pos=Variable("pos",1,self.max_context).bind(seq_len), temperature=Tensor(0.7).clone())
 
   def forward(self, prompt, image=None):
       if image is not None:
@@ -179,13 +180,13 @@ class Qwen3VL():
       else:
         prompt = self.tok.encode(prompt)
         tokens = Tensor(prompt)
-        token = self.lang(tokens=tokens.unsqueeze(0), start_pos=Variable("pos",1,2000).bind(self.start_pos), temperature=Tensor(0.7).clone())[0]
+        token = self.lang(tokens=tokens.unsqueeze(0), start_pos=Variable("pos",1,self.max_context).bind(self.start_pos), temperature=Tensor(0.7).clone())[0]
         self.start_pos += tokens.shape[0]
       toks_out = []
       while True:
         ts = time.time()
         if toks_out:
-          token = self.lang(tokens=next_token_tensor.clone(), start_pos=Variable("pos",1,2000).bind(self.start_pos), temperature=Tensor(0.7).clone())[0]
+          token = self.lang(tokens=next_token_tensor.clone(), start_pos=Variable("pos",1,self.max_context).bind(self.start_pos), temperature=Tensor(0.7).clone())[0]
           self.start_pos += 1
         next_token = int(token.numpy()[0])
         next_token_tensor = Tensor([[next_token]])
