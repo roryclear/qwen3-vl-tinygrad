@@ -194,7 +194,6 @@ class Qwen3VL():
           seq_len+=1
         else:
           prefill_done = True
-        print("rory token =",token, token.numpy())
         # todo
         next_token = int(token.numpy()[0]) if len(token.shape) == 1 else int(token.numpy()[0][0])
         next_token_tensor = Tensor([[next_token]])  # shape (1,1)
