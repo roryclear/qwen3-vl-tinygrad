@@ -168,8 +168,7 @@ class Qwen3VL():
     pixel_values, input_ids, seq_len, image_grid_thw = self.preprocess(image=np.random.randint(0, 256, size=res, dtype=np.uint8), prompt=prompt)
     for _ in range(3): self.vis.preprocess_img(image=Tensor.rand(res).cast(dtypes.uint8))
     for _ in range(3): self.prefill(pixel_values=pixel_values, input_ids=input_ids, image_grid_thw=image_grid_thw)
-    for _ in range(3):  self.lang.prefill_jit(tokens=Tensor([[42]]).clone(), start_pos=Variable("pos",1,2000).bind(seq_len), temperature=Tensor(0.7).clone())
-    for _ in range(3):  self.lang.rollout_jit(tokens=Tensor([[42]]).clone(), start_pos=Variable("pos",1,2000).bind(seq_len), temperature=Tensor(0.7).clone())
+    for _ in range(3):  self.lang(tokens=Tensor([[42]]).clone(), start_pos=Variable("pos",1,2000).bind(seq_len), temperature=Tensor(0.7).clone())
 
   def forward(self, prompt, image):
       pixel_values, input_ids, seq_len, image_grid_thw = self.preprocess(image=image, prompt=prompt)
@@ -178,7 +177,7 @@ class Qwen3VL():
       while True:
         ts = time.time()
         if toks_out:
-          token = self.lang.rollout_jit(tokens=next_token_tensor.clone(), start_pos=Variable("pos",1,2000).bind(seq_len), temperature=Tensor(0.7).clone())[0]
+          token = self.lang(tokens=next_token_tensor.clone(), start_pos=Variable("pos",1,2000).bind(seq_len), temperature=Tensor(0.7).clone())[0]
           seq_len += 1
         next_token = int(token.numpy()[0])
         next_token_tensor = Tensor([[next_token]])

@@ -12,9 +12,9 @@ if __name__ == "__main__":
       cv2.cvtColor(cv2.imread("images/96_notif.jpg"), cv2.COLOR_BGR2RGB)
   ]
 
-  expected_outputs = ["Based on the image provided, the car is a **Ferrari F40**.\n\nIt is a **red** color. The vehicle is a classic supercar, and the image is a photograph of it parked on a cobblestone surface in front of a brick house.",
-                      "Based on the image provided, the car is a **Nissan GT-R**, specifically the **GTR R35** model from the 2014-2019 production run. This is a high-performance sports car known for its powerful engine and distinctive design.\n\nThe car is **red**.",
-                      "Based on the image provided, the car is a **Bugatti Chiron**.\n\nIt is a **blue** sports car. This particular model is known for its vibrant blue paint, which is a signature of the Bugatti brand's high-performance vehicles.",
+  expected_outputs = ["Based on the image provided, the car is a **Ferrari F40**.\n\nIt is **red**.\n\nThe image shows a close-up of the front right side of the car, which is a classic Ferrari F40, a highly sought-after and iconic sports car. The vehicle is parked on a cobblestone surface in front of a brick house, with some green foliage in the background.",
+                      "Based on the image provided, the car is a **Nissan GT-R**.\n\nIt is painted a vibrant **red**. The vehicle appears to be a modified version, possibly a high-performance model, given its aggressive styling, such as the large front splitter and the rear wing. The car is positioned at an angle, showcasing its sleek and aerodynamic design.",
+                      "Based on the image provided, the car is a **Bugatti Chiron**.\n\nThe car is a **blue** color. It is a high-performance hypercar, and the image shows it on a road, likely in a scenic location. The iconic Bugatti logo is visible on the front grille.",
                       "This is a blue Nissan Micra, a compact car. It's a small, economical vehicle that was popular in the 1990s and early 2000s.",
                       "A person wearing a light green hoodie and light-colored pants is standing near a silver car with the driver's side door open."]
 
