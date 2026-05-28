@@ -1,0 +1,2 @@
+git+https://github.com/tinygrad/tinygrad.git@2d48fe8b7bd9acfa00e91a7f89b28b3ded370c27
+opencv-python-headless==4.10.0.84
