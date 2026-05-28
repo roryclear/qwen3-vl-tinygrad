@@ -32,18 +32,18 @@ if __name__ == "__main__":
     z += 1
     if z > 3: continue
     
-    output = qwen.forward(prompt=prompt, image=image)
+    output = qwen.generate(prompt=prompt, image=image)
     print("output =",output)
     assert output == expected_output
 
-  output = qwen.forward(prompt=prompts[0], image=images[0])
+  output = qwen.generate(prompt=prompts[0], image=images[0])
   print(output)
 
-  output = qwen.forward(prompt=f"<|im_start|>user\nwhere was it made?<|im_end|>\n<|im_start|>assistant\n")
+  output = qwen.generate(prompt=f"<|im_start|>user\nwhere was it made?<|im_end|>\n<|im_start|>assistant\n")
   assert output == "The Ferrari F40 was made in **Italy**.\n\nSpecifically, it was manufactured at the **Ferrari factory in Maranello**, located in the Lombardy region of Italy. The F40 was produced from 1987 to 1991, with production ending in 1991. It was designed by the Ferrari team led by Italian engineer and designer Ettore Sotti."
-  output = qwen.forward(prompt=f"<|im_start|>user\nwhat is the capital city of there?<|im_end|>\n<|im_start|>assistant\n")
+  output = qwen.generate(prompt=f"<|im_start|>user\nwhat is the capital city of there?<|im_end|>\n<|im_start|>assistant\n")
   assert output == "The capital city of Italy is **Rome**."
-  output = qwen.forward(prompt=f"<|im_start|>user\nwhat is the best tourist attraction there? just give the number 1.<|im_end|>\n<|im_start|>assistant\n")
+  output = qwen.generate(prompt=f"<|im_start|>user\nwhat is the best tourist attraction there? just give the number 1.<|im_end|>\n<|im_start|>assistant\n")
   assert output == "1. The Colosseum"
 
 

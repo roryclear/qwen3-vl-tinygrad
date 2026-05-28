@@ -7,6 +7,10 @@ from tinygrad.helpers import partition, fetch
 from gguf import gguf_load
 from model import Transformer
 
+TEMP = 0.7
+TOP_K = 20
+TOP_P = 0.8
+
 class SimpleTokenizer:
   def __init__(self, normal_tokens:dict[str, int], special_tokens:dict[str, int], preset:str="llama3",
                bos_id:int|None=None, eos_id:int=0, eot_id:int|None=None):
@@ -86,10 +90,6 @@ class SimpleTokenizer:
   def prefix(self) -> list[int]:
     return ([] if self.bos_id is None else [self.bos_id]) + (self.encode("<sop>") if self.preset == 'glm4' else [])
   def is_end(self, token_id:int) -> bool: return token_id in (self.eos_id, self.eot_id)
-
-temp = 0.7
-top_k = 20
-top_p = 0.8
 
 def rotate_half(x):
     x1 = x[..., : x.shape[-1] // 2]
@@ -175,7 +175,7 @@ class Qwen3VL():
       self.lang.prefill_jit(tokens=Tensor([[42]*self.max_context]).clone()[:, :Variable("len",1,self.max_context).bind(42)], \
       start_pos=Variable("pos",1,self.max_context).bind(42), temperature=Tensor(0.7).clone())
 
-  def forward(self, prompt, image=None):
+  def generate(self, prompt, image=None):
     if image is not None:
       pixel_values, input_ids, seq_len, image_grid_thw = self.preprocess(image=image, prompt=prompt)
       self.start_pos = seq_len
@@ -229,8 +229,8 @@ class Qwen3VL():
     outputs = hidden_states[:, -1:, :] @ self.lang.token_embd.weight.T
 
     next_token_logits = outputs[:, -1, :]
-    scores = next_token_logits / temp
-    token = sample(scores[0], temp=temp, k=top_k, p=top_p, af=None, ap=None)
+    scores = next_token_logits / TEMP
+    token = sample(scores[0], temp=TEMP, k=TOP_K, p=TOP_P, af=None, ap=None)
     return token
 
 def deepstack_process(hidden_states, visual_pos_masks, visual_embeds):
@@ -476,5 +476,5 @@ if __name__ == "__main__":
   qwen = Qwen3VL(size="2B")
   prompt = input(">")
   prompt = f"<|im_start|>user\n<|vision_start|><|image_pad|><|vision_end|>\n{prompt}<|im_end|>\n<|im_start|>assistant\n"
-  qwen.forward(prompt=prompt, image=image)
+  qwen.generate(prompt=prompt, image=image)
 
