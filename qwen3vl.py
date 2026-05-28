@@ -188,6 +188,8 @@ class Qwen3VL():
       token = self.lang.prefill_jit(tokens=tokens[:, :Variable("len",1,self.max_context).bind(prompt_len)], start_pos=Variable("pos",1,self.max_context).bind(self.start_pos), temperature=Tensor(0.7).clone())[0]
       self.start_pos += prompt_len
     toks_out = []
+    decoded = ""
+
     while True:
       ts = time.time()
       if toks_out:
@@ -197,8 +199,12 @@ class Qwen3VL():
       next_token_tensor = Tensor([[next_token]])
       if next_token == 151645: break
       toks_out.append(next_token)
-      print(self.tok.decode(toks_out))
-      print(f"TOK/S = {1 / (time.time() - ts):.2f}")
+      new_text = self.tok.decode([next_token])
+      decoded += new_text
+      tok_s = f" ({1/(time.time()-ts):.1f} tok/s)"
+      print(new_text + tok_s, end="", flush=True)
+      print("\b" * len(tok_s), end="", flush=True)
+    print("\n")
     return self.tok.decode(toks_out)
 
   @TinyJit
@@ -477,4 +483,6 @@ if __name__ == "__main__":
   prompt = input(">")
   prompt = f"<|im_start|>user\n<|vision_start|><|image_pad|><|vision_end|>\n{prompt}<|im_end|>\n<|im_start|>assistant\n"
   qwen.generate(prompt=prompt, image=image)
-
+  while True:
+    prompt = input(">")
+    qwen.generate(prompt=f"<|im_start|>user\n<|vision_start|><|image_pad|><|vision_end|>\n{prompt}<|im_end|>\n<|im_start|>assistant\n")

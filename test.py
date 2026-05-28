@@ -33,7 +33,6 @@ if __name__ == "__main__":
     if z > 3: continue
     
     output = qwen.generate(prompt=prompt, image=image)
-    print("output =",output)
     assert output == expected_output
 
   output = qwen.generate(prompt=prompts[0], image=images[0])
