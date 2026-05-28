@@ -478,12 +478,13 @@ class Qwen3VisBlock():
     return hidden_states + norm
   
 if __name__ == "__main__":
-  import argparse
+  import argparse, urllib.request
   parser = argparse.ArgumentParser()
   parser.add_argument("--size", default="2B", help="Model size (default: 2B)")
   parser.add_argument("--image", default="images/micra.jpg",help="Path to input image")
   args = parser.parse_args()
-  image = cv2.cvtColor(cv2.imread(args.image), cv2.COLOR_BGR2RGB)
+  data = urllib.request.urlopen(args.image).read() if args.image.startswith("http") else args.image
+  image = cv2.cvtColor(cv2.imdecode(np.frombuffer(data, np.uint8), cv2.IMREAD_COLOR) if isinstance(data, bytes) else cv2.imread(data), cv2.COLOR_BGR2RGB)
   qwen = Qwen3VL(size=args.size)
   prompt = input(">")
   prompt = f"<|im_start|>user\n<|vision_start|><|image_pad|><|vision_end|>\n{prompt}<|im_end|>\n<|im_start|>assistant\n"
