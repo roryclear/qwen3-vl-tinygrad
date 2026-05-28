@@ -1,150 +1,23 @@
-import unicodedata, re, math, typing, sys, cv2, time
+import math, cv2, time
 import numpy as np
 from tinygrad import Tensor, nn, TinyJit, Variable, dtypes
 Tensor.manual_seed(42)
-from tinygrad.nn.state import safe_load, load_state_dict
-from tinygrad.helpers import partition, fetch
-from gguf import gguf_load
-from model import Transformer
+from tinygrad.nn.state import load_state_dict
+from tinygrad.helpers import fetch
+from tinygrad.llm.gguf import gguf_load
+from tinygrad.llm.model import Transformer
+from tinygrad.llm.cli import SimpleTokenizer
+from extra.models.llama import sample
 
 TEMP = 0.7
 TOP_K = 20
 TOP_P = 0.8
-
-class SimpleTokenizer:
-  def __init__(self, normal_tokens:dict[str, int], special_tokens:dict[str, int], preset:str="llama3",
-               bos_id:int|None=None, eos_id:int=0, eot_id:int|None=None):
-    preset = {"qwen35":"qwen2","qwen35moe":"qwen2"}.get(preset, preset)
-    if preset not in ("llama3","llama-v3","llama-bpe","qwen2","olmo","kimi-k2","tekken","glm4"):
-      raise ValueError(f"Invalid tokenizer preset '{preset}'")
-    # https://github.com/openai/gpt-2/blob/9b63575ef42771a015060c964af2c3da4cf7c8ab/src/encoder.py#L9
-    bs = [*range(33, 127), *range(161, 173), *range(174, 256)]  # bytes that map to themselves
-    self._byte_decoder = {chr(b): b for b in bs} | {chr(256+i): b for i,b in enumerate(b for b in range(256) if b not in bs)}
-
-    # https://github.com/ggml-org/llama.cpp/blob/94933c8c2eeaa9a7983e3f6c08af76bd86724094/src/llama-vocab.cpp#L286
-    # 0x323b0 is one past the max codepoint in unicode categories L/N/Z (0x323af is max L)
-    def ucat_range(pre: str): return "".join(re.escape(chr(cp)) for cp in range(0x323b0) if unicodedata.category(chr(cp)).startswith(pre))
-    r_ws, r_p_N, r_p_L = r"\t\n\x0b\x0c\r\x85" + ucat_range("Z"), ucat_range("N"), ucat_range("L")
-    self._split_to_word = re.compile("(?i:'s|'t|'re|'ve|'m|'ll|'d)|" + \
-      f"[^\\r\\n{r_p_N}{r_p_L}]?[{r_p_L}]+|[{r_p_N}]{{1,3}}| ?[^{r_ws}{r_p_N}{r_p_L}]+[\\r\\n]*|[{r_ws}]*[\\r\\n]+|[{r_ws}]+(?![^{r_ws}])|[{r_ws}]+")
-    self._split_to_sentence = re.compile("|".join(re.escape(tok) for tok in special_tokens.keys()) if special_tokens else r"(?!)")
-
-    self._normal_tokens = {bytes(self._byte_decoder[c] for c in tok): tid for tok, tid in normal_tokens.items()}
-    self._special_tokens = special_tokens
-    self._tok2bytes = {tid: tok for tok, tid in self._normal_tokens.items()} | {tid: tok.encode() for tok, tid in self._special_tokens.items()}
-    self.preset = preset
-    self.bos_id, self.eos_id, self.eot_id = bos_id, eos_id, eot_id
-
-  @staticmethod
-  def from_gguf_kv(kv:dict):
-    # https://github.com/ggml-org/llama.cpp/blob/94933c8c2eeaa9a7983e3f6c08af76bd86724094/src/llama-vocab.cpp#L1818-L1820
-    vocab: typing.Iterable[tuple[str, int]] = ((tok, idx) for idx, tok in enumerate(kv["tokenizer.ggml.tokens"]))
-    normal_tokens, special_tokens = partition(vocab, lambda e: kv["tokenizer.ggml.token_type"][e[1]] == 1)
-    return SimpleTokenizer(dict(normal_tokens), dict(special_tokens), kv["tokenizer.ggml.pre"],
-      bos_id=kv.get('tokenizer.ggml.bos_token_id') if kv.get('tokenizer.ggml.add_bos_token', True) else None,
-      eos_id=kv.get('tokenizer.ggml.eos_token_id', 0), eot_id=kv.get('tokenizer.ggml.eot_token_id'))
-
-  def _encode_word(self, word:bytes) -> list[int]:
-    if (early_token:=self._normal_tokens.get(word)) is not None: return [early_token]
-    parts = [bytes([b]) for b in word]
-    # greedily merge any parts that we can
-    while True:
-      i = min([(sys.maxsize, -1)] + [(self._normal_tokens.get(parts[j]+parts[j+1], sys.maxsize), j) for j in range(len(parts)-1)])[1]
-      if i == -1: break
-      parts[i:i+2] = [parts[i] + parts[i+1]]
-    try: return [self._normal_tokens[p] for p in parts]
-    except KeyError: raise RuntimeError("token not found")
-  def _encode_sentence(self, chunk:str) -> list[int]:
-    return [tok for word in self._split_to_word.findall(chunk) for tok in self._encode_word(word.encode())]
-  def encode(self, text:str) -> list[int]:
-    tokens: list[int] = []
-    pos = 0
-    for match in self._split_to_sentence.finditer(text):
-      tokens.extend(self._encode_sentence(text[pos:match.start(0)]) + [self._special_tokens[text[match.start(0):match.end(0)]]])
-      pos = match.end(0)
-    ret = tokens + self._encode_sentence(text[pos:])
-    return ret
-
-  def decode(self, ids:list[int]) -> str: return b''.join(self._tok2bytes[tid] for tid in ids).decode(errors='replace')
-  def stream_decoder(self) -> typing.Callable[..., str]:
-    dec = codecs.getincrementaldecoder('utf-8')('replace')
-    def _decode(tid:int|None=None) -> str: return dec.decode(self._tok2bytes[tid]) if tid is not None else dec.decode(b'', final=True)
-    return _decode
-  def role(self, role:str):
-    if self.preset == 'olmo': return self.encode("<|" + role + "|>\n")  # OLMoE Instruct format
-    if self.preset == 'kimi-k2': return self.encode("<|im_" + role + "|>" + role + "<|im_middle|>")
-    if self.preset == 'qwen2': return self.encode("<|im_start|>" + role + "\n")
-    if self.preset == 'glm4': return self.encode("<|" + role + "|>")
-    if self.preset == 'tekken':
-      if role == 'user': return self.encode("[INST]")
-      if role == 'assistant': return []
-      raise ValueError(f"Unsupported role '{role}' for tokenizer preset '{self.preset}'")
-    return self.encode("<|start_header_id|>" + role + "<|end_header_id|>\n\n")
-  def end_turn(self):
-    if self.preset == 'olmo': return self.encode("\n")
-    if self.preset == 'kimi-k2': return [self.eos_id]
-    if self.preset == 'qwen2': return [self.eos_id] + self.encode("\n")
-    if self.preset == 'glm4': return []
-    if self.preset == 'tekken': return self.encode("[/INST]")
-    return [self.eos_id]
-  def prefix(self) -> list[int]:
-    return ([] if self.bos_id is None else [self.bos_id]) + (self.encode("<sop>") if self.preset == 'glm4' else [])
-  def is_end(self, token_id:int) -> bool: return token_id in (self.eos_id, self.eot_id)
 
 def rotate_half(x):
     x1 = x[..., : x.shape[-1] // 2]
     x2 = x[..., x.shape[-1] // 2 :]
     ret = Tensor.cat(-x2, x1, dim=-1)
     return ret
-
-
-def sample(logits, temp: float, k: int, p: float, af: float, ap: float):
-  assert logits.ndim == 1, "only works on 1d tensors"
-  assert 0 <= p <= 1, "p must be between 0 and 1"
-  assert 0 <= k <= logits.numel(), "k must be between 0 and numel"
-
-  # if temperature is very low just use argmax
-  if temp < 1e-6: return logits.argmax()
-
-  # alpha sampling
-  if af or ap:
-    if not hasattr(sample, "alpha_counter"):
-      setattr(sample, "alpha_counter", Tensor.zeros_like(logits, dtype=dtypes.int32).contiguous())
-    logits = logits - (sample.alpha_counter * af + (sample.alpha_counter > 0) * ap)
-
-  # replace NaNs with -inf
-  logits = (logits != logits).where(-float("inf"), logits)
-
-  # softmax
-  t = (logits / temp).softmax()
-
-  counter, counter2 = Tensor.arange(t.numel(), device=logits.device).contiguous(), Tensor.arange(t.numel() - 1, -1, -1, device=logits.device).contiguous()
-  # top k
-  if k:
-    output, output_indices = Tensor.zeros(k, device=logits.device).contiguous(), Tensor.zeros(k, device=logits.device, dtype=dtypes.int32).contiguous()
-    for i in range(k):
-      t_argmax = (t.numel() - ((t == (t_max := t.max())) * counter2).max() - 1).cast(dtypes.default_int)
-      output = output + t_max.unsqueeze(0).pad(((i, k - i - 1),))
-      output_indices = output_indices + t_argmax.unsqueeze(0).pad(((i, k - i - 1),))
-      t = (counter == t_argmax).where(0, t)
-
-    # approximate top p
-    # because we are already limited to top k elements we can do top p "without sorting"
-    output_cumsum = output[::-1].cumsum()[::-1] + t.sum()
-    output = (output_cumsum >= (1 - p)) * output
-    output_indices = (output_cumsum >= (1 - p)) * output_indices
-
-    # sample
-    output_idx = output.multinomial()
-    output_token = output_indices[output_idx]
-  else:
-    output_token = t.multinomial()
-
-  # increase alpha counter
-  if af or ap:
-    sample.alpha_counter = (counter == output_token).where(sample.alpha_counter + 1, sample.alpha_counter)
-
-  return output_token
 
 class Qwen3VL():
   def __init__(self, size="2B"):
@@ -188,8 +61,6 @@ class Qwen3VL():
       token = self.lang.prefill_jit(tokens=tokens[:, :Variable("len",1,self.max_context).bind(prompt_len)], start_pos=Variable("pos",1,self.max_context).bind(self.start_pos), temperature=Tensor(0.7).clone())[0]
       self.start_pos += prompt_len
     toks_out = []
-    decoded = ""
-
     while True:
       ts = time.time()
       if toks_out:
@@ -199,12 +70,8 @@ class Qwen3VL():
       next_token_tensor = Tensor([[next_token]])
       if next_token == 151645: break
       toks_out.append(next_token)
-      new_text = self.tok.decode([next_token])
-      decoded += new_text
-      tok_s = f" ({1/(time.time()-ts):.1f} tok/s)"
-      print(new_text + tok_s, end="", flush=True)
-      print("\b" * len(tok_s), end="", flush=True)
-    print("\n")
+      print(self.tok.decode(toks_out))
+      print(f"TOK/S = {1 / (time.time() - ts):.2f}")
     return self.tok.decode(toks_out)
 
   @TinyJit
@@ -476,17 +343,3 @@ class Qwen3VisBlock():
     x = Tensor.gelu(x)
     norm = self.ffn_down(x)
     return hidden_states + norm
-  
-if __name__ == "__main__":
-  import argparse
-  parser = argparse.ArgumentParser()
-  parser.add_argument("--size", default="2B", help="Model size (default: 2B)")
-  args = parser.parse_args()
-  image = cv2.cvtColor(cv2.imread("images/micra.jpg"), cv2.COLOR_BGR2RGB)
-  qwen = Qwen3VL(size=args.size)
-  prompt = input(">")
-  prompt = f"<|im_start|>user\n<|vision_start|><|image_pad|><|vision_end|>\n{prompt}<|im_end|>\n<|im_start|>assistant\n"
-  qwen.generate(prompt=prompt, image=image)
-  while True:
-    prompt = input(">")
-    qwen.generate(prompt=f"<|im_start|>user\n<|vision_start|><|image_pad|><|vision_end|>\n{prompt}<|im_end|>\n<|im_start|>assistant\n")
