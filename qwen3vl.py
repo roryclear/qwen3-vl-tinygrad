@@ -252,6 +252,7 @@ class Qwen3VLVis():
     kv, state_dict = gguf_load(fetch(f"https://huggingface.co/Qwen/Qwen3-VL-{size}-Instruct-GGUF/resolve/main/mmproj-Qwen3VL-{size}-Instruct-F16.gguf"))
     self.merge_size = kv["clip.vision.spatial_merge_size"]
     self.patch_size = kv["clip.vision.patch_size"]
+    self.temporal_patch_size = 2
     self.v = Qwen3VisBlocks(kv=kv, weights=state_dict)
     self.mm = [nn.Linear(*state_dict["mm.0.weight"].shape[::-1], bias=True), None, nn.Linear(*state_dict["mm.2.weight"].shape[::-1], bias=True)]
     state_dict["v.patch_embd.weight1"] = state_dict["v.patch_embd.weight.1"]
@@ -352,7 +353,6 @@ class Qwen3VLVis():
   @TinyJit
   def preprocess_img(self, image):
     image = image.permute(2, 0, 1)
-    temporal_patch_size = 2
     height, width = image.shape[-2:]
     resized_height, resized_width = smart_resize(
         height,
@@ -365,7 +365,7 @@ class Qwen3VLVis():
     image = image.interpolate(size=(resized_height, resized_width))
     resized_height, resized_width = image.shape[-2:]
     patches = (image - 127.5) / 127.5
-    batch_size, channel = patches.shape[:2]
+    batch_size, channel = 1, 3
     grid_h, grid_w = resized_height // self.patch_size, resized_width // self.patch_size
     patches = patches.reshape(
         batch_size,
@@ -380,11 +380,11 @@ class Qwen3VLVis():
     patches = patches.permute(0, 2, 5, 3, 6, 1, 4, 7)
     pixel_values = (
         patches.unsqueeze(6)
-        .expand(-1, -1, -1, -1, -1, -1, temporal_patch_size, -1, -1)
+        .expand(-1, -1, -1, -1, -1, -1, self.temporal_patch_size, -1, -1)
         .reshape(
             batch_size,
             grid_h * grid_w,
-            channel * temporal_patch_size * self.patch_size * self.patch_size,
+            channel * self.temporal_patch_size * self.patch_size * self.patch_size, # 1536
         )
     )[0]
     return pixel_values.cast(dtypes.bfloat16), Tensor([1, grid_h, grid_w])
