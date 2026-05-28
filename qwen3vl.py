@@ -485,6 +485,8 @@ if __name__ == "__main__":
   args = parser.parse_args()
   data = urllib.request.urlopen(args.image).read() if args.image.startswith("http") else args.image
   image = cv2.cvtColor(cv2.imdecode(np.frombuffer(data, np.uint8), cv2.IMREAD_COLOR) if isinstance(data, bytes) else cv2.imread(data), cv2.COLOR_BGR2RGB)
+  # resize to 1000px for now
+  image = image if max(image.shape[:2]) <= 1000 else cv2.resize(image, (int(image.shape[1]*1000/max(image.shape[:2])), int(image.shape[0]*1000/max(image.shape[:2]))))
   qwen = Qwen3VL(size=args.size)
   prompt = input(">")
   prompt = f"<|im_start|>user\n<|vision_start|><|image_pad|><|vision_end|>\n{prompt}<|im_end|>\n<|im_start|>assistant\n"
