@@ -232,9 +232,7 @@ class Qwen3VL():
         hidden_states = deepstack_process(hidden_states=hidden_states, visual_pos_masks=image_mask.squeeze(0), visual_embeds=(deepstack_feature_lists[self.vis.v.deepstack_idx.index(i)])).unsqueeze(0)
 
     hidden_states = self.lang.output_norm(hidden_states)
-    outputs = hidden_states[:, -1:, :] @ self.lang.token_embd.weight.T
-
-    next_token_logits = outputs[:, -1, :]
+    next_token_logits = hidden_states[:, -1, :] @ self.lang.token_embd.weight.T
     scores = next_token_logits / TEMP
     token = sample(scores[0], temp=TEMP, k=TOP_K, p=TOP_P, af=None, ap=None)
     return token
@@ -484,9 +482,14 @@ if __name__ == "__main__":
   args = parser.parse_args()
   data = urllib.request.urlopen(args.image).read() if args.image.startswith("http") else args.image
   image = cv2.cvtColor(cv2.imdecode(np.frombuffer(data, np.uint8), cv2.IMREAD_COLOR) if isinstance(data, bytes) else cv2.imread(data), cv2.COLOR_BGR2RGB)
-  # resize to 1000px for now
-  image = image if max(image.shape[:2]) <= 1000 else cv2.resize(image, (int(image.shape[1]*1000/max(image.shape[:2])), int(image.shape[0]*1000/max(image.shape[:2]))))
+  # resize to 600x600 for now
+  s=600/max(image.shape[:2])
+  r=cv2.resize(image,(int(image.shape[1]*s),int(image.shape[0]*s)))
+  image=cv2.copyMakeBorder(r,(600-r.shape[0])//2,600-r.shape[0]-(600-r.shape[0])//2,(600-r.shape[1])//2,600-r.shape[1]-(600-r.shape[1])//2,cv2.BORDER_CONSTANT,value=0)
   qwen = Qwen3VL(size=args.size)
+  print("prewarming")
+  qwen.prewarm(res=(600,600,3), prompt=f"<|im_start|>user\n<|vision_start|><|image_pad|><|vision_end|>\nwhat is this object?<|im_end|>\n<|im_start|>assistant\n")
+  print("done")
   prompt = input(">")
   prompt = f"<|im_start|>user\n<|vision_start|><|image_pad|><|vision_end|>\n{prompt}<|im_end|>\n<|im_start|>assistant\n"
   qwen.generate(prompt=prompt, image=image)
