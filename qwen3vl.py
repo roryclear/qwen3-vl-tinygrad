@@ -231,8 +231,8 @@ class Qwen3VL():
       if i in self.vis.v.deepstack_idx:
         hidden_states = deepstack_process(hidden_states=hidden_states, visual_pos_masks=image_mask.squeeze(0), visual_embeds=(deepstack_feature_lists[self.vis.v.deepstack_idx.index(i)])).unsqueeze(0)
 
-    hidden_states = self.lang.output_norm(hidden_states)
-    next_token_logits = hidden_states[:, -1, :] @ self.lang.token_embd.weight.T
+    hidden_states = self.lang.output_norm(hidden_states[:, -1, :])
+    next_token_logits = hidden_states @ self.lang.token_embd.weight.T
     scores = next_token_logits / TEMP
     token = sample(scores[0], temp=TEMP, k=TOP_K, p=TOP_P, af=None, ap=None)
     return token
