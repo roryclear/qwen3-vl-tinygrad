@@ -487,9 +487,9 @@ if __name__ == "__main__":
   r=cv2.resize(image,(int(image.shape[1]*s),int(image.shape[0]*s)))
   image=cv2.copyMakeBorder(r,(600-r.shape[0])//2,600-r.shape[0]-(600-r.shape[0])//2,(600-r.shape[1])//2,600-r.shape[1]-(600-r.shape[1])//2,cv2.BORDER_CONSTANT,value=0)
   qwen = Qwen3VL(size=args.size)
-  print("prewarming")
-  qwen.prewarm(res=(600,600,3), prompt=f"<|im_start|>user\n<|vision_start|><|image_pad|><|vision_end|>\nwhat is this object?<|im_end|>\n<|im_start|>assistant\n")
-  print("done")
+  #print("prewarming") dont prewarm until prompt shape is fixed
+  #qwen.prewarm(res=(600,600,3), prompt=f"<|im_start|>user\n<|vision_start|><|image_pad|><|vision_end|>\nwhat is this object?<|im_end|>\n<|im_start|>assistant\n")
+  #print("done")
   prompt = input(">")
   prompt = f"<|im_start|>user\n<|vision_start|><|image_pad|><|vision_end|>\n{prompt}<|im_end|>\n<|im_start|>assistant\n"
   qwen.generate(prompt=prompt, image=image)
