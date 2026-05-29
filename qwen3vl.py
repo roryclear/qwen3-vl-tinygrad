@@ -259,25 +259,7 @@ class Qwen3VLVis():
     load_state_dict(self, state_dict)
     self.inv_freq = 1.0 / (10000.0 ** (Tensor.arange(0, 32, 2, dtype=dtypes.float) / 32))
 
-  def __call__(self, pixel_values, image_grid_thw):
-    hidden_states = pixel_values.view(-1, 3, 2, 16, 16)
-    B, C, D, H, W = hidden_states.shape
-    x = hidden_states.reshape(B, C * D, H, W)
-    w = Tensor.stack(self.v.patch_embd.weight, self.v.patch_embd.weight1, dim=2)
-    out_C, in_C, kD, kH, kW = w.shape
-    w2d = w.reshape(out_C, in_C * kD, kH, kW)
-
-    hidden_states = x.conv2d(
-        weight=w2d,
-        bias=self.v.patch_embd.bias,
-        stride=(16, 16),
-        padding=(0, 0),
-        dilation=(1, 1),
-        groups=1
-    )
-
-    hidden_states = hidden_states.view(-1, 1024)
-        
+  def __call__(self, pixel_values, image_grid_thw):        
     grid_ts = image_grid_thw[0]
     grid_hs = image_grid_thw[1]
     grid_ws = image_grid_thw[2]
@@ -319,7 +301,6 @@ class Qwen3VLVis():
     merge_size = 2
     pos_embeds = patch_pos_embeds.repeat(grid_ts, 1)
     pos_embeds = (pos_embeds.view(grid_ts, grid_hs // merge_size, merge_size, grid_ws // merge_size, merge_size, -1).permute(0, 1, 3, 2, 4, 5).flatten(0, 4))
-    hidden_states = hidden_states + pos_embeds
     
     hpos_ids = Tensor.arange(image_grid_thw[1]).unsqueeze(1).expand(-1, image_grid_thw[2])
     hpos_ids = hpos_ids.reshape(image_grid_thw[1] // merge_size, merge_size, image_grid_thw[2] // merge_size, merge_size).transpose(1, 2).flatten()
@@ -330,6 +311,24 @@ class Qwen3VLVis():
     pos_ids = Tensor.stack(hpos_ids, wpos_ids, dim=-1).repeat(image_grid_thw[0], 1)
 
     rotary_pos_emb = (pos_ids.unsqueeze(-1) * self.inv_freq).flatten(1)
+
+    hidden_states = pixel_values.view(-1, 3, 2, 16, 16)
+    hidden_states = hidden_states.flatten(1, 2)
+    w = Tensor.stack(self.v.patch_embd.weight, self.v.patch_embd.weight1, dim=2)
+    out_C, in_C, kD, kH, kW = w.shape
+    w2d = w.reshape(out_C, in_C * kD, kH, kW)
+
+    hidden_states = hidden_states.conv2d(
+        weight=w2d,
+        bias=self.v.patch_embd.bias,
+        stride=(16, 16),
+        padding=(0, 0),
+        dilation=(1, 1),
+        groups=1
+    )
+
+    hidden_states = hidden_states.view(-1, 1024)
+    hidden_states = hidden_states + pos_embeds
 
     sqlen, _ = hidden_states.size()
     hidden_states = hidden_states.reshape(sqlen, -1)
