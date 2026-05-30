@@ -153,6 +153,7 @@ class Qwen3VL():
     self.lang, kv = Transformer.from_gguf(fetch(f"https://huggingface.co/Qwen/Qwen3-VL-{size}-Instruct-GGUF/resolve/main/Qwen3VL-{size}-Instruct-F16.gguf"), self.max_context) # max context
     self.tok = SimpleTokenizer.from_gguf_kv(kv)
     self.start_pos = 0
+    self.first = True # todo, different format for first text after img, is it needed?
 
   def preprocess(self, image, prompt):
     pixel_values, image_grid_thw = self.vis.preprocess_img(image=Tensor(image))
@@ -166,7 +167,8 @@ class Qwen3VL():
     input_ids = Tensor([text_inputs])
     return pixel_values, input_ids, seq_len, image_grid_thw
 
-  def prewarm(self, res, prompt):
+  def prewarm(self, res):
+    prompt = f"<|im_start|>user\n<|vision_start|><|image_pad|><|vision_end|>\n"
     pixel_values, input_ids, seq_len, image_grid_thw = self.preprocess(image=np.random.randint(0, 256, size=res, dtype=np.uint8), prompt=prompt)
     for _ in range(2):
       self.vis.preprocess_img(image=Tensor.rand(res).cast(dtypes.uint8))
@@ -175,18 +177,23 @@ class Qwen3VL():
       self.lang.prefill_jit(tokens=Tensor([[42]*self.max_context]).clone()[:, :Variable("len",1,self.max_context).bind(42)], \
       start_pos=Variable("pos",1,self.max_context).bind(42), temperature=Tensor(0.7).clone())
 
-  def generate(self, prompt, image=None):
+  def generate(self, prompt=None, image=None):
     if image is not None:
-      pixel_values, input_ids, seq_len, image_grid_thw = self.preprocess(image=image, prompt=prompt)
+      img_prompt = "<|im_start|>user\n<|vision_start|><|image_pad|><|vision_end|>\n"
+      pixel_values, input_ids, seq_len, image_grid_thw = self.preprocess(image=image, prompt=img_prompt)
       self.start_pos = seq_len
       token = self.prefill(pixel_values=pixel_values, input_ids=input_ids, image_grid_thw=image_grid_thw)
-    else:
-      prompt = self.tok.encode(prompt)
-      prompt_len = len(prompt)
-      prompt = prompt + [0] * (self.max_context - prompt_len)
-      tokens = Tensor(prompt).unsqueeze(0)
-      token = self.lang.prefill_jit(tokens=tokens[:, :Variable("len",1,self.max_context).bind(prompt_len)], start_pos=Variable("pos",1,self.max_context).bind(self.start_pos), temperature=Tensor(0.7).clone())[0]
-      self.start_pos += prompt_len
+      self.first = True
+    if prompt is None: return
+    prompt = f"{prompt}<|im_end|>\n<|im_start|>assistant\n"
+    if not self.first: prompt = "<|im_start|>user\n<|vision_start|><|image_pad|><|vision_end|>\n" + prompt
+    self.first = False
+    prompt = self.tok.encode(prompt)
+    prompt_len = len(prompt)
+    prompt = prompt + [0] * (self.max_context - prompt_len)
+    tokens = Tensor(prompt).unsqueeze(0)
+    token = self.lang.prefill_jit(tokens=tokens[:, :Variable("len",1,self.max_context).bind(prompt_len)], start_pos=Variable("pos",1,self.max_context).bind(self.start_pos), temperature=Tensor(0.7).clone())[0]
+    self.start_pos += prompt_len
     toks_out = []
     decoded = ""
 
@@ -487,12 +494,7 @@ if __name__ == "__main__":
   r=cv2.resize(image,(int(image.shape[1]*s),int(image.shape[0]*s)))
   image=cv2.copyMakeBorder(r,(600-r.shape[0])//2,600-r.shape[0]-(600-r.shape[0])//2,(600-r.shape[1])//2,600-r.shape[1]-(600-r.shape[1])//2,cv2.BORDER_CONSTANT,value=0)
   qwen = Qwen3VL(size=args.size)
-  #print("prewarming") dont prewarm until prompt shape is fixed
-  #qwen.prewarm(res=(600,600,3), prompt=f"<|im_start|>user\n<|vision_start|><|image_pad|><|vision_end|>\nwhat is this object?<|im_end|>\n<|im_start|>assistant\n")
-  #print("done")
-  prompt = input(">")
-  prompt = f"<|im_start|>user\n<|vision_start|><|image_pad|><|vision_end|>\n{prompt}<|im_end|>\n<|im_start|>assistant\n"
-  qwen.generate(prompt=prompt, image=image)
-  while True:
-    prompt = input(">")
-    qwen.generate(prompt=f"<|im_start|>user\n<|vision_start|><|image_pad|><|vision_end|>\n{prompt}<|im_end|>\n<|im_start|>assistant\n")
+  print("prewarming") #dont prewarm until prompt shape is fixed
+  qwen.prewarm(res=(600,600,3))
+  qwen.generate(image=image)
+  while True: qwen.generate(prompt=input(">"))
