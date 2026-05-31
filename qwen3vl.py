@@ -166,10 +166,9 @@ class Qwen3VL():
 
   def generate(self, prompt=None, image=None):
     if image is not None:
-      img_prompt = "<|im_start|>user\n<|vision_start|><|image_pad|><|vision_end|>\n"
       pixel_values, input_ids, seq_len, image_grid_thw = self.vis.preprocess(image=image)
       self.start_pos = seq_len
-      token = self.prefill(pixel_values=pixel_values, input_ids=input_ids, image_grid_thw=image_grid_thw)
+      self.prefill(pixel_values=pixel_values, input_ids=input_ids, image_grid_thw=image_grid_thw)
       self.first = True
     if prompt is None: return
     prompt = f"{prompt}<|im_end|>\n<|im_start|>assistant\n"
