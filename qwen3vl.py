@@ -203,12 +203,11 @@ class Qwen3VL():
   @TinyJit
   def prefill(self, pixel_values, input_ids, image_grid_thw):
     image_embeds, hidden_states, deepstack_feature_lists = self.vis(pixel_values, image_grid_thw)
-    image_mask = input_ids == 151655
-
+    size = image_embeds.shape[1]
     inputs_embeds = self.lang.token_embd(input_ids)
-    image_mask = image_mask.unsqueeze(-1).expand(inputs_embeds.shape)
     image_embeds = image_embeds.view(-1)
-    flat_mask = image_mask.view(-1)
+    flat_mask = Tensor([False]*4*size + [True]*64*size + [False]*2*size)
+
     idx = (flat_mask.cumsum(0) - 1).clamp(0)
     expanded = image_embeds[idx] * flat_mask
     flat_inputs = inputs_embeds.view(-1)
