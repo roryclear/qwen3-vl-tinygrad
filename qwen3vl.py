@@ -155,21 +155,8 @@ class Qwen3VL():
     self.start_pos = 0
     self.first = True # todo, different format for first text after img, is it needed?
 
-  def preprocess(self, image, prompt):
-    pixel_values, image_grid_thw = self.vis.preprocess_img(image=Tensor(image))
-    image_grid_thw = image_grid_thw.numpy().tolist()
-    text_inputs = self.tok.encode(prompt)
-    image_token_id = 151655
-    image_token_positions = [i for i, tid in enumerate(text_inputs) if tid == image_token_id]
-    num_image_tokens = ((image_grid_thw[0]*image_grid_thw[1]*image_grid_thw[2]) / 4)
-    for pos in reversed(image_token_positions): text_inputs[pos:pos+1] = [image_token_id] * int(num_image_tokens)
-    seq_len=len(text_inputs)
-    input_ids = Tensor([text_inputs])
-    return pixel_values, input_ids, seq_len, image_grid_thw
-
   def prewarm(self, res):
-    prompt = f"<|im_start|>user\n<|vision_start|><|image_pad|><|vision_end|>\n"
-    pixel_values, input_ids, seq_len, image_grid_thw = self.preprocess(image=np.random.randint(0, 256, size=res, dtype=np.uint8), prompt=prompt)
+    pixel_values, input_ids, seq_len, image_grid_thw = self.vis.preprocess(image=np.random.randint(0, 256, size=res, dtype=np.uint8))
     for _ in range(2):
       self.vis.preprocess_img(image=Tensor.rand(res).cast(dtypes.uint8))
       self.prefill(pixel_values=pixel_values, input_ids=input_ids, image_grid_thw=image_grid_thw)
@@ -180,7 +167,7 @@ class Qwen3VL():
   def generate(self, prompt=None, image=None):
     if image is not None:
       img_prompt = "<|im_start|>user\n<|vision_start|><|image_pad|><|vision_end|>\n"
-      pixel_values, input_ids, seq_len, image_grid_thw = self.preprocess(image=image, prompt=img_prompt)
+      pixel_values, input_ids, seq_len, image_grid_thw = self.vis.preprocess(image=image)
       self.start_pos = seq_len
       token = self.prefill(pixel_values=pixel_values, input_ids=input_ids, image_grid_thw=image_grid_thw)
       self.first = True
@@ -353,6 +340,19 @@ class Qwen3VLVis():
     image_embeds = Tensor.gelu(image_embeds)
     image_embeds = self.mm[2](image_embeds)
     return image_embeds, hidden_states, deepstack_feature_lists
+
+  def preprocess(self, image):
+    pixel_values, image_grid_thw = self.preprocess_img(image=Tensor(image))
+    image_grid_thw = image_grid_thw.numpy().tolist()
+    # todo encoded: f"<|im_start|>user\n<|vision_start|><|image_pad|><|vision_end|>\n"
+    text_inputs = [151644, 872, 198, 151652, 151655, 151653, 198]
+    image_token_id = 151655
+    image_token_positions = [i for i, tid in enumerate(text_inputs) if tid == image_token_id]
+    num_image_tokens = ((image_grid_thw[0]*image_grid_thw[1]*image_grid_thw[2]) / 4)
+    for pos in reversed(image_token_positions): text_inputs[pos:pos+1] = [image_token_id] * int(num_image_tokens)
+    seq_len=len(text_inputs)
+    input_ids = Tensor([text_inputs])
+    return pixel_values, input_ids, seq_len, image_grid_thw
 
   @TinyJit
   def preprocess_img(self, image):
