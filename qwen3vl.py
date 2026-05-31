@@ -207,9 +207,9 @@ class Qwen3VL():
     inputs_embeds = self.lang.token_embd(input_ids)
     image_embeds = image_embeds.view(-1)
     flat_mask = Tensor([False]*4*size + [True]*64*size + [False]*2*size)
+    
+    expanded = image_embeds.pad(((4*size, 2*size),))
 
-    idx = (flat_mask.cumsum(0) - 1).clamp(0)
-    expanded = image_embeds[idx] * flat_mask
     flat_inputs = inputs_embeds.view(-1)
     flat_inputs = flat_inputs * (~flat_mask) + expanded
     hidden_states = flat_inputs.view(inputs_embeds.shape)
