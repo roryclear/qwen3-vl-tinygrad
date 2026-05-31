@@ -222,21 +222,14 @@ class Qwen3VL():
       hidden_states = self.lang.blk[i](hidden_states, start_pos=0)
       # https://github.com/huggingface/transformers/blob/08692e3c31654e4825b4c078a3c70b86efa70a46/src/transformers/models/qwen3_vl/modeling_qwen3_vl.py#L692
       if i in self.vis.v.deepstack_idx:
-        hidden_states = deepstack_process(hidden_states=hidden_states, visual_pos_masks=image_mask.squeeze(0), visual_embeds=(deepstack_feature_lists[self.vis.v.deepstack_idx.index(i)])).unsqueeze(0)
+        # 4 to -2 because of <|im_start|>user\n<|vision_start|><|image_pad|><|vision_end|>\n tokens before and after image_pad
+        hidden_states[:, 4:-2, :] += deepstack_feature_lists[self.vis.v.deepstack_idx.index(i)]
 
     hidden_states = self.lang.output_norm(hidden_states[:, -1, :])
     next_token_logits = hidden_states @ self.lang.token_embd.weight.T
     scores = next_token_logits / TEMP
     token = sample(scores[0], temp=TEMP, k=TOP_K, p=TOP_P, af=None, ap=None)
     return token
-
-def deepstack_process(hidden_states, visual_pos_masks, visual_embeds):
-  mask_float = visual_pos_masks.any(axis=1)
-  positions = mask_float.cumsum(axis=0) - 1
-  positions = positions.clamp(0)
-  expanded = visual_embeds[positions]
-  expanded = expanded * mask_float.unsqueeze(-1)
-  return hidden_states[0] + expanded
 
 class Qwen3VLVis():
   def __init__(self, size="2B"):
