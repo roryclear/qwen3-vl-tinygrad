@@ -202,17 +202,14 @@ class Qwen3VL():
 
   @TinyJit
   def prefill(self, pixel_values, input_ids, image_grid_thw):
+    # todo, just return hidden states?
     image_embeds, hidden_states, deepstack_feature_lists = self.vis(pixel_values, image_grid_thw)
-    size = image_embeds.shape[1]
-    inputs_embeds = self.lang.token_embd(input_ids)
-    image_embeds = image_embeds.view(-1)
-    flat_mask = Tensor([False]*4*size + [True]*64*size + [False]*2*size)
-    
-    expanded = image_embeds.pad(((4*size, 2*size),))
 
-    flat_inputs = inputs_embeds.view(-1)
-    flat_inputs = flat_inputs * (~flat_mask) + expanded
-    hidden_states = flat_inputs.view(inputs_embeds.shape)
+    inputs_embeds = self.lang.token_embd(input_ids)
+    image_embeds = image_embeds.unsqueeze(0)
+    hidden_states = inputs_embeds.cast(dtypes.float32)
+    # 4 to -2 because of <|im_start|>user\n<|vision_start|><|image_pad|><|vision_end|>\n tokens before and after image_pad
+    hidden_states[:, 4:-2, :] = image_embeds
     
     # https://github.com/huggingface/transformers/blob/08692e3c31654e4825b4c078a3c70b86efa70a46/src/transformers/models/qwen3_vl/modular_qwen3_vl.py#L626
     # https://github.com/huggingface/transformers/blob/08692e3c31654e4825b4c078a3c70b86efa70a46/src/transformers/models/qwen3_vl/modular_qwen3_vl.py#L543
