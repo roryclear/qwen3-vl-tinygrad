@@ -157,19 +157,15 @@ class Qwen3VL():
 
   def prewarm(self, res):
     for _ in range(2):
-      pixel_values, input_ids, image_grid_thw = self.preprocess_img(image=Tensor.rand(res).cast(dtypes.uint8))
-      image_grid_thw = image_grid_thw.numpy().tolist()
-      self.prefill(pixel_values=pixel_values, input_ids=input_ids, image_grid_thw=image_grid_thw)
-      self.lang(tokens=Tensor([[42]]).clone(), start_pos=Variable("pos",1,self.max_context).bind(input_ids.shape[-1]), temperature=Tensor(0.7).clone())
+      self.prefill_img(image=Tensor.rand(res).cast(dtypes.uint8))
+      self.lang(tokens=Tensor([[42]]).clone(), start_pos=Variable("pos",1,self.max_context).bind(42), temperature=Tensor(0.7).clone())
       self.lang.prefill_jit(tokens=Tensor([[42]*self.max_context]).clone()[:, :Variable("len",1,self.max_context).bind(42)], \
       start_pos=Variable("pos",1,self.max_context).bind(42), temperature=Tensor(0.7).clone())
 
   def generate(self, prompt=None, image=None):
     if image is not None:
       self.start_pos = self.get_size(image)
-      pixel_values, input_ids, image_grid_thw = self.preprocess_img(image=Tensor(image))
-      image_grid_thw = image_grid_thw.numpy().tolist()
-      self.prefill(pixel_values=pixel_values, input_ids=input_ids, image_grid_thw=image_grid_thw)
+      self.prefill_img(image=Tensor(image))
       self.first = True
     if prompt is None: return
     prompt = f"{prompt}<|im_end|>\n<|im_start|>assistant\n"
@@ -213,7 +209,7 @@ class Qwen3VL():
     return int((resized_height // self.vis.patch_size) * (resized_width // self.vis.patch_size) // 4) + 6
 
   @TinyJit
-  def preprocess_img(self, image):
+  def prefill_img(self, image):
     image = image.permute(2, 0, 1)
     height, width = image.shape[-2:]
     resized_height, resized_width = smart_resize(
@@ -256,12 +252,9 @@ class Qwen3VL():
     num_image_tokens = int((grid_h*grid_w) / 4)
     input_ids = Tensor.cat(Tensor([151644, 872, 198, 151652]), Tensor.ones(num_image_tokens) * image_token_id, Tensor([151653, 198])).unsqueeze(0).cast(dtypes.int)
 
-    return pixel_values, input_ids, Tensor([1, grid_h, grid_w])
 
-  @TinyJit
-  def prefill(self, pixel_values, input_ids, image_grid_thw):
     # todo, just return hidden states?
-    image_embeds, hidden_states, deepstack_feature_lists = self.vis(pixel_values, image_grid_thw)
+    image_embeds, hidden_states, deepstack_feature_lists = self.vis(pixel_values, [1, grid_h, grid_w])
     hidden_states = self.lang.token_embd(input_ids).cast(dtypes.float)
     # 4 to -2 because of <|im_start|>user\n<|vision_start|><|image_pad|><|vision_end|>\n tokens before and after image_pad
     hidden_states[:, 4:-2, :] = image_embeds.unsqueeze(0)
