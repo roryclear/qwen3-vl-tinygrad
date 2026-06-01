@@ -156,18 +156,18 @@ class Qwen3VL():
     self.first = True # todo, different format for first text after img, is it needed?
 
   def prewarm(self, res):
-    pixel_values, input_ids, seq_len, image_grid_thw = self.vis.preprocess(image=np.random.randint(0, 256, size=res, dtype=np.uint8))
+    pixel_values, input_ids, image_grid_thw = self.vis.preprocess(image=np.random.randint(0, 256, size=res, dtype=np.uint8))
     for _ in range(2):
       self.vis.preprocess_img(image=Tensor.rand(res).cast(dtypes.uint8))
       self.prefill(pixel_values=pixel_values, input_ids=input_ids, image_grid_thw=image_grid_thw)
-      self.lang(tokens=Tensor([[42]]).clone(), start_pos=Variable("pos",1,self.max_context).bind(seq_len), temperature=Tensor(0.7).clone())
+      self.lang(tokens=Tensor([[42]]).clone(), start_pos=Variable("pos",1,self.max_context).bind(input_ids.shape[-1]), temperature=Tensor(0.7).clone())
       self.lang.prefill_jit(tokens=Tensor([[42]*self.max_context]).clone()[:, :Variable("len",1,self.max_context).bind(42)], \
       start_pos=Variable("pos",1,self.max_context).bind(42), temperature=Tensor(0.7).clone())
 
   def generate(self, prompt=None, image=None):
     if image is not None:
-      pixel_values, input_ids, seq_len, image_grid_thw = self.vis.preprocess(image=image)
-      self.start_pos = seq_len
+      pixel_values, input_ids, image_grid_thw = self.vis.preprocess(image=image)
+      self.start_pos = input_ids.shape[-1]
       self.prefill(pixel_values=pixel_values, input_ids=input_ids, image_grid_thw=image_grid_thw)
       self.first = True
     if prompt is None: return
@@ -332,12 +332,11 @@ class Qwen3VLVis():
     # todo encoded: f"<|im_start|>user\n<|vision_start|><|image_pad|><|vision_end|>\n"
     text_inputs = [151644, 872, 198, 151652, 151655, 151653, 198]
     image_token_id = 151655
-    image_token_positions = [i for i, tid in enumerate(text_inputs) if tid == image_token_id]
     num_image_tokens = ((image_grid_thw[0]*image_grid_thw[1]*image_grid_thw[2]) / 4)
-    for pos in reversed(image_token_positions): text_inputs[pos:pos+1] = [image_token_id] * int(num_image_tokens)
-    seq_len=len(text_inputs)
+    # where 151655 is always
+    text_inputs[4:5] = [image_token_id] * int(num_image_tokens)
     input_ids = Tensor([text_inputs])
-    return pixel_values, input_ids, seq_len, image_grid_thw
+    return pixel_values, input_ids, image_grid_thw
 
   @TinyJit
   def preprocess_img(self, image):
