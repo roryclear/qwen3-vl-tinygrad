@@ -166,9 +166,9 @@ class Qwen3VL():
 
   def generate(self, prompt=None, image=None):
     if image is not None:
+      self.start_pos = self.get_size(image)
       pixel_values, input_ids, image_grid_thw = self.preprocess_img(image=Tensor(image))
       image_grid_thw = image_grid_thw.numpy().tolist()
-      self.start_pos = input_ids.shape[-1]
       self.prefill(pixel_values=pixel_values, input_ids=input_ids, image_grid_thw=image_grid_thw)
       self.first = True
     if prompt is None: return
@@ -200,6 +200,17 @@ class Qwen3VL():
       print("\b" * len(tok_s), end="", flush=True)
     print("\n")
     return self.tok.decode(toks_out)
+
+  def get_size(self, image):
+    height, width = image.shape[:2]
+    resized_height, resized_width = smart_resize(
+        height,
+        width,
+        factor=self.vis.patch_size * self.vis.merge_size,
+        min_pixels=65536,
+        max_pixels=16777216,
+    )
+    return int((resized_height // self.vis.patch_size) * (resized_width // self.vis.patch_size) // 4) + 6
 
   @TinyJit
   def preprocess_img(self, image):
