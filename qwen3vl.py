@@ -204,12 +204,9 @@ class Qwen3VL():
   def prefill(self, pixel_values, input_ids, image_grid_thw):
     # todo, just return hidden states?
     image_embeds, hidden_states, deepstack_feature_lists = self.vis(pixel_values, image_grid_thw)
-
-    inputs_embeds = self.lang.token_embd(input_ids)
-    image_embeds = image_embeds.unsqueeze(0)
-    hidden_states = inputs_embeds.cast(dtypes.float32)
+    hidden_states = self.lang.token_embd(input_ids).cast(dtypes.float)
     # 4 to -2 because of <|im_start|>user\n<|vision_start|><|image_pad|><|vision_end|>\n tokens before and after image_pad
-    hidden_states[:, 4:-2, :] = image_embeds
+    hidden_states[:, 4:-2, :] = image_embeds.unsqueeze(0)
     
     # https://github.com/huggingface/transformers/blob/08692e3c31654e4825b4c078a3c70b86efa70a46/src/transformers/models/qwen3_vl/modular_qwen3_vl.py#L626
     # https://github.com/huggingface/transformers/blob/08692e3c31654e4825b4c078a3c70b86efa70a46/src/transformers/models/qwen3_vl/modular_qwen3_vl.py#L543
