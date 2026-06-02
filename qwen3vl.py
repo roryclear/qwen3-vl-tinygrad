@@ -117,11 +117,9 @@ class Qwen3VL():
     if image is not None:
       self.start_pos = self.get_size(image)
       prefill_img(vis=self.vis, lang=self.lang, image=Tensor(image))
-      self.first = True
     if prompt is None: return
-    prompt = f"{prompt}<|im_end|>\n<|im_start|>assistant\n"
-    if not self.first: prompt = "<|im_start|>user\n<|vision_start|><|image_pad|><|vision_end|>\n" + prompt
-    self.first = False
+    # todo, do we need the vision_start and end stuff?
+    prompt = "<|im_start|>user\n" + prompt + "<|im_end|>\n<|im_start|>assistant\n"
     prompt = self.tok.encode(prompt)
     prompt_len = len(prompt)
     prompt = prompt + [0] * (self.max_context - prompt_len)
@@ -198,17 +196,18 @@ def prefill_img(vis, lang, image):
   )[0]
   pixel_values = pixel_values.cast(dtypes.bfloat16)
 
-  # f"<|im_start|>user\n<|vision_start|><|image_pad|><|vision_end|>\n" fill size of img with image token
+  # f"<|im_start|>user\n<|vision_start|><|image_pad|><|vision_end|>\n<|im_end|>\n" fill size of img with image token
+  # <|im_end|>\n<|im_start|>assistant\n
   image_token_id = 151655
   num_image_tokens = int((grid_h*grid_w) / 4)
-  input_ids = Tensor.cat(Tensor([151644, 872, 198, 151652]), Tensor.ones(num_image_tokens) * image_token_id, Tensor([151653, 198])).unsqueeze(0).cast(dtypes.int)
+  input_ids = Tensor.cat(Tensor([151644, 872, 198, 151652]), Tensor.ones(num_image_tokens) * image_token_id, Tensor([151653, 198, 151645, 198])).unsqueeze(0).cast(dtypes.int)
 
 
   # todo, just return hidden states?
   image_embeds, hidden_states, deepstack_feature_lists = vis(pixel_values, [1, grid_h, grid_w])
   hidden_states = lang.token_embd(input_ids).cast(dtypes.float)
-  # 4 to -2 because of <|im_start|>user\n<|vision_start|><|image_pad|><|vision_end|>\n tokens before and after image_pad
-  hidden_states[:, 4:-2, :] = image_embeds.unsqueeze(0)
+  # 4 to -4 because of <|im_start|>user\n<|vision_start|><|image_pad|><|vision_end|>\n<|im_end|>\n tokens before and after image_pad
+  hidden_states[:, 4:-4, :] = image_embeds.unsqueeze(0)
   
   # https://github.com/huggingface/transformers/blob/08692e3c31654e4825b4c078a3c70b86efa70a46/src/transformers/models/qwen3_vl/modular_qwen3_vl.py#L626
   # https://github.com/huggingface/transformers/blob/08692e3c31654e4825b4c078a3c70b86efa70a46/src/transformers/models/qwen3_vl/modular_qwen3_vl.py#L543
@@ -217,8 +216,8 @@ def prefill_img(vis, lang, image):
     hidden_states = lang.blk[i](hidden_states, start_pos=0)
     # https://github.com/huggingface/transformers/blob/08692e3c31654e4825b4c078a3c70b86efa70a46/src/transformers/models/qwen3_vl/modeling_qwen3_vl.py#L692
     if i in vis.v.deepstack_idx:
-      # 4 to -2 because of <|im_start|>user\n<|vision_start|><|image_pad|><|vision_end|>\n tokens before and after image_pad
-      hidden_states[:, 4:-2, :] += deepstack_feature_lists[vis.v.deepstack_idx.index(i)]
+      # 4 to -4 because of <|im_start|>user\n<|vision_start|><|image_pad|><|vision_end|>\n<|im_end|>\n tokens before and after image_pad
+      hidden_states[:, 4:-4, :] += deepstack_feature_lists[vis.v.deepstack_idx.index(i)]
   hidden_states.realize()
 
 class Qwen3VLVis():
@@ -428,3 +427,4 @@ if __name__ == "__main__":
   qwen.prewarm(res=(600,600,3))
   qwen.generate(image=image)
   while True: qwen.generate(prompt=input(">"))
+
