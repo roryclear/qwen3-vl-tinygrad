@@ -198,9 +198,8 @@ def prefill_img(vis, lang, image):
 
   # f"<|im_start|>user\n<|vision_start|><|image_pad|><|vision_end|>\n<|im_end|>\n" fill size of img with image token
   # <|im_end|>\n<|im_start|>assistant\n
-  image_token_id = 151655
   num_image_tokens = int((grid_h*grid_w) / 4)
-  input_ids = Tensor.cat(Tensor([151644, 872, 198, 151652]), Tensor.ones(num_image_tokens) * image_token_id, Tensor([151653, 198, 151645, 198])).unsqueeze(0).cast(dtypes.int)
+  input_ids = Tensor.cat(Tensor([151644, 872, 198, 151652]), Tensor.zeros(num_image_tokens), Tensor([151653, 198, 151645, 198])).unsqueeze(0).cast(dtypes.int)
 
 
   # todo, just return hidden states?
