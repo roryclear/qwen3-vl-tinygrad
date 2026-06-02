@@ -190,7 +190,6 @@ def prefill_img(vis, lang, image):
   # https://github.com/huggingface/transformers/blob/08692e3c31654e4825b4c078a3c70b86efa70a46/src/transformers/models/qwen3_vl/modular_qwen3_vl.py#L626
   # https://github.com/huggingface/transformers/blob/08692e3c31654e4825b4c078a3c70b86efa70a46/src/transformers/models/qwen3_vl/modular_qwen3_vl.py#L543
   for i in range(len(lang.blk)):
-    lang.blk[i]._init_state(Tensor.zeros(1, 1))
     hidden_states = lang.blk[i](hidden_states, start_pos=0)
     # https://github.com/huggingface/transformers/blob/08692e3c31654e4825b4c078a3c70b86efa70a46/src/transformers/models/qwen3_vl/modeling_qwen3_vl.py#L692
     if i in vis.v.deepstack_idx:
