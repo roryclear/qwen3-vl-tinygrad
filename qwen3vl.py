@@ -210,6 +210,7 @@ class Qwen3VLVis():
     load_state_dict(self, state_dict)
     self.inv_freq = 1.0 / (10000.0 ** (Tensor.arange(0, 32, 2, dtype=dtypes.float) / 32))
 
+  # https://github.com/huggingface/transformers/blob/15bb519bd4277f4ab5309154aedf3c231e8b4ca8/src/transformers/models/qwen3_vl/modeling_qwen3_vl.py#L679
   def __call__(self, pixel_values, image_grid_size):        
     grid_hs = image_grid_size[0]
     grid_ws = image_grid_size[1]
