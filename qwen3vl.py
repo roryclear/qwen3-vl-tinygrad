@@ -115,7 +115,7 @@ class Qwen3VL():
 
   def generate(self, prompt=None, image=None):
     if image is not None:
-      self.start_pos = self.get_size(image)
+      self.start_pos = ((image.shape[0] * image.shape[1]) // (32*32)) + 8
       prefill_img(vis=self.vis, lang=self.lang, image=Tensor(image))
     if prompt is None: return
     # todo, do we need the vision_start and end stuff?
@@ -145,31 +145,13 @@ class Qwen3VL():
       print("\b" * len(tok_s), end="", flush=True)
     print("\n")
     return self.tok.decode(toks_out)
-
-  def get_size(self, image):
-    height, width = image.shape[:2]
-    resized_height, resized_width = smart_resize(
-        height,
-        width,
-        factor=self.vis.patch_size * self.vis.merge_size,
-        min_pixels=65536,
-        max_pixels=16777216,
-    )
-    return int((resized_height // self.vis.patch_size) * (resized_width // self.vis.patch_size) // 4) + 8 # 4 tokens either side of img
   
 @TinyJit
 def prefill_img(vis, lang, image):
   image = image.permute(2, 0, 1)
   height, width = image.shape[-2:]
-  resized_height, resized_width = smart_resize(
-      height,
-      width,
-      factor=vis.patch_size * vis.merge_size,
-      min_pixels=65536,
-      max_pixels=16777216,
-  )
   image = image.unsqueeze(0).float()
-  image = image.interpolate(size=(resized_height, resized_width))
+  image = image.interpolate(size=(height, width))
   resized_height, resized_width = image.shape[-2:]
   patches = (image - 127.5) / 127.5
   batch_size, channel = 1, 3
@@ -321,20 +303,6 @@ class Qwen3VLVis():
     image_embeds = self.mm[2](image_embeds)
     return image_embeds, hidden_states, deepstack_feature_lists
 
-# https://github.com/huggingface/transformers/blob/90e3c4fa7200a9c8bb9756bf7bf43381d10850c0/src/transformers/models/qwen2_vl/image_processing_qwen2_vl.py#L62
-def smart_resize(height, width, factor, min_pixels, max_pixels):
-    h_bar = round(height / factor) * factor
-    w_bar = round(width / factor) * factor
-    if h_bar * w_bar > max_pixels:
-        beta = math.sqrt((height * width) / max_pixels)
-        h_bar = max(factor, math.floor(height / beta / factor) * factor)
-        w_bar = max(factor, math.floor(width / beta / factor) * factor)
-    elif h_bar * w_bar < min_pixels:
-        beta = math.sqrt(min_pixels / (height * width))
-        h_bar = math.ceil(height * beta / factor) * factor
-        w_bar = math.ceil(width * beta / factor) * factor
-    return h_bar, w_bar
-
 class Qwen3PatchEmbed():
   def __init__(self, kv=None):
     self.weight = Tensor.zeros(kv["clip.vision.embedding_length"], 3, 16, 16)
@@ -417,13 +385,13 @@ if __name__ == "__main__":
   args = parser.parse_args()
   data = urllib.request.urlopen(args.image).read() if args.image.startswith("http") else args.image
   image = cv2.cvtColor(cv2.imdecode(np.frombuffer(data, np.uint8), cv2.IMREAD_COLOR) if isinstance(data, bytes) else cv2.imread(data), cv2.COLOR_BGR2RGB)
-  # resize to 600x600 for now
-  s=600/max(image.shape[:2])
+  # resize to 640x640 for now, must be made of 32x32 blocks
+  s=640/max(image.shape[:2])
   r=cv2.resize(image,(int(image.shape[1]*s),int(image.shape[0]*s)))
-  image=cv2.copyMakeBorder(r,(600-r.shape[0])//2,600-r.shape[0]-(600-r.shape[0])//2,(600-r.shape[1])//2,600-r.shape[1]-(600-r.shape[1])//2,cv2.BORDER_CONSTANT,value=0)
+  image=cv2.copyMakeBorder(r,(640-r.shape[0])//2,640-r.shape[0]-(640-r.shape[0])//2,(640-r.shape[1])//2,640-r.shape[1]-(640-r.shape[1])//2,cv2.BORDER_CONSTANT,value=0)
   qwen = Qwen3VL(size=args.size)
   print("prewarming") #dont prewarm until prompt shape is fixed
-  qwen.prewarm(res=(600,600,3))
+  qwen.prewarm(res=(640,640,3))
   qwen.generate(image=image)
   while True: qwen.generate(prompt=input(">"))
 
