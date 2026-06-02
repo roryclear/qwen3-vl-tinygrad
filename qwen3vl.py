@@ -219,8 +219,7 @@ class Qwen3VL():
       if i in self.vis.v.deepstack_idx:
         # 4 to -2 because of <|im_start|>user\n<|vision_start|><|image_pad|><|vision_end|>\n tokens before and after image_pad
         hidden_states[:, 4:-2, :] += deepstack_feature_lists[self.vis.v.deepstack_idx.index(i)]
-
-    return hidden_states
+    hidden_states.realize()
 
 class Qwen3VLVis():
   def __init__(self, size="2B"):
