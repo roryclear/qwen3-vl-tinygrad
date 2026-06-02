@@ -227,7 +227,6 @@ class Qwen3VLVis():
     base_h = h_idxs_floor * self.v.num_grid_per_side
     base_h_ceil = h_idxs_ceil * self.v.num_grid_per_side
 
-
     idx_tensor = Tensor.stack(
         (base_h[None].T + w_idxs_floor[None]).flatten(),
         (base_h[None].T + w_idxs_ceil[None]).flatten(),
@@ -244,12 +243,9 @@ class Qwen3VLVis():
 
     pos_embeds = self.v.position_embd(idx_tensor)
     pos_embeds *= weight_tensor[:, :, None]
-    patch_pos_embeds = pos_embeds[0] + pos_embeds[1] + pos_embeds[2] + pos_embeds[3]
-
-    patch_pos_embeds = patch_pos_embeds[:grid_hs * grid_ws]
+    pos_embeds = pos_embeds[0] + pos_embeds[1] + pos_embeds[2] + pos_embeds[3]
 
     merge_size = 2
-    pos_embeds = patch_pos_embeds.repeat(1, 1)
     pos_embeds = (pos_embeds.view(1, grid_hs // merge_size, merge_size, grid_ws // merge_size, merge_size, -1).permute(0, 1, 3, 2, 4, 5).flatten(0, 4))
     
     hpos_ids = Tensor.arange(grid_hs).unsqueeze(1).expand(-1, grid_ws)
