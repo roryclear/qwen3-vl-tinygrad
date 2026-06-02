@@ -104,7 +104,6 @@ class Qwen3VL():
     self.lang, kv = Transformer.from_gguf(fetch(f"https://huggingface.co/Qwen/Qwen3-VL-{size}-Instruct-GGUF/resolve/main/Qwen3VL-{size}-Instruct-F16.gguf"), self.max_context) # max context
     self.tok = SimpleTokenizer.from_gguf_kv(kv)
     self.start_pos = 0
-    self.first = True # todo, different format for first text after img, is it needed?
 
   def prewarm(self, res):
     for _ in range(2):
@@ -118,7 +117,6 @@ class Qwen3VL():
       self.start_pos = ((image.shape[0] * image.shape[1]) // (32*32)) + 8
       prefill_img(vis=self.vis, lang=self.lang, image=Tensor(image))
     if prompt is None: return
-    # todo, do we need the vision_start and end stuff?
     prompt = "<|im_start|>user\n" + prompt + "<|im_end|>\n<|im_start|>assistant\n"
     prompt = self.tok.encode(prompt)
     prompt_len = len(prompt)
@@ -155,6 +153,7 @@ def prefill_img(vis, lang, image):
   resized_height, resized_width = image.shape[-2:]
   patches = (image - 127.5) / 127.5
   batch_size, channel = 1, 3
+  # https://github.com/huggingface/transformers/blob/4ae05b0fba41860adaaeb708774fc1f48c92c049/src/transformers/models/qwen2_vl/image_processing_qwen2_vl.py#L195
   grid_h, grid_w = resized_height // vis.patch_size, resized_width // vis.patch_size
   patches = patches.reshape(
       batch_size,
@@ -183,8 +182,6 @@ def prefill_img(vis, lang, image):
   num_image_tokens = int((grid_h*grid_w) / 4)
   input_ids = Tensor.cat(Tensor([151644, 872, 198, 151652]), Tensor.zeros(num_image_tokens), Tensor([151653, 198, 151645, 198])).unsqueeze(0).cast(dtypes.int)
 
-
-  # todo, just return hidden states?
   image_embeds, hidden_states, deepstack_feature_lists = vis(pixel_values, [1, grid_h, grid_w])
   hidden_states = lang.token_embd(input_ids).cast(dtypes.float)
   # 4 to -4 because of <|im_start|>user\n<|vision_start|><|image_pad|><|vision_end|>\n<|im_end|>\n tokens before and after image_pad
@@ -351,9 +348,8 @@ class Qwen3VisBlock():
     hidden_states_input = self.ln1(hidden_states)
     seq_length = hidden_states_input.shape[0]
     qkv = self.attn_qkv(hidden_states_input)
-    qkv_reshaped = qkv.reshape(seq_length, 3, 16, -1)
-    qkv_permuted = qkv_reshaped.permute(1, 0, 2, 3)
-    query, key, value = qkv_permuted.chunk(3, dim=0)
+    qkv = qkv.reshape(seq_length, 3, 16, -1).permute(1, 0, 2, 3)
+    query, key, value = qkv.chunk(3, dim=0)
     query = query.squeeze(0)
     key   = key.squeeze(0)
     value = value.squeeze(0)
@@ -361,10 +357,9 @@ class Qwen3VisBlock():
     key = (key * cos) + (rotate_half(key) * sin)
 
     query = query.transpose(0, 1).unsqueeze(0)
-    key = key.transpose(0, 1).unsqueeze(0)
     value = value.transpose(0, 1).unsqueeze(0)
 
-    attn_weight = query @ key.transpose(-2, -1) * 0.125
+    attn_weight = query @ key.transpose(0, 1).unsqueeze(0).transpose(-2, -1) * 0.125
     attn_weight = Tensor.softmax(attn_weight)
     attn_output = attn_weight @ value
     attn_output = attn_output.transpose(1, 2)
@@ -372,9 +367,8 @@ class Qwen3VisBlock():
     attn_output = self.attn_out(attn_output)
     hidden_states += attn_output
     norm = self.ln2(hidden_states)
-    x = self.ffn_up(norm)
-    x = Tensor.gelu(x)
-    norm = self.ffn_down(x)
+    norm = self.ffn_up(norm).gelu()
+    norm = self.ffn_down(norm)
     return hidden_states + norm
   
 if __name__ == "__main__":
