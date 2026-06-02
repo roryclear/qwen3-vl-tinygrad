@@ -155,7 +155,7 @@ class Qwen3VL():
         min_pixels=65536,
         max_pixels=16777216,
     )
-    return int((resized_height // self.vis.patch_size) * (resized_width // self.vis.patch_size) // 4) + 6
+    return int((resized_height // self.vis.patch_size) * (resized_width // self.vis.patch_size) // 4) + 8 # 4 tokens either side of img
   
 @TinyJit
 def prefill_img(vis, lang, image):
