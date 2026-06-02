@@ -1,7 +1,7 @@
 import unicodedata, re, math, typing, sys, cv2, time
 import numpy as np
 from tinygrad import Tensor, nn, TinyJit, Variable, dtypes
-Tensor.manual_seed(42)
+Tensor.manual_seed(420)
 from tinygrad.nn.state import safe_load, load_state_dict
 from tinygrad.helpers import partition, fetch
 from gguf import gguf_load
@@ -96,55 +96,6 @@ def rotate_half(x):
     x2 = x[..., x.shape[-1] // 2 :]
     ret = Tensor.cat(-x2, x1, dim=-1)
     return ret
-
-
-def sample(logits, temp: float, k: int, p: float, af: float, ap: float):
-  assert logits.ndim == 1, "only works on 1d tensors"
-  assert 0 <= p <= 1, "p must be between 0 and 1"
-  assert 0 <= k <= logits.numel(), "k must be between 0 and numel"
-
-  # if temperature is very low just use argmax
-  if temp < 1e-6: return logits.argmax()
-
-  # alpha sampling
-  if af or ap:
-    if not hasattr(sample, "alpha_counter"):
-      setattr(sample, "alpha_counter", Tensor.zeros_like(logits, dtype=dtypes.int32).contiguous())
-    logits = logits - (sample.alpha_counter * af + (sample.alpha_counter > 0) * ap)
-
-  # replace NaNs with -inf
-  logits = (logits != logits).where(-float("inf"), logits)
-
-  # softmax
-  t = (logits / temp).softmax()
-
-  counter, counter2 = Tensor.arange(t.numel(), device=logits.device).contiguous(), Tensor.arange(t.numel() - 1, -1, -1, device=logits.device).contiguous()
-  # top k
-  if k:
-    output, output_indices = Tensor.zeros(k, device=logits.device).contiguous(), Tensor.zeros(k, device=logits.device, dtype=dtypes.int32).contiguous()
-    for i in range(k):
-      t_argmax = (t.numel() - ((t == (t_max := t.max())) * counter2).max() - 1).cast(dtypes.default_int)
-      output = output + t_max.unsqueeze(0).pad(((i, k - i - 1),))
-      output_indices = output_indices + t_argmax.unsqueeze(0).pad(((i, k - i - 1),))
-      t = (counter == t_argmax).where(0, t)
-
-    # approximate top p
-    # because we are already limited to top k elements we can do top p "without sorting"
-    output_cumsum = output[::-1].cumsum()[::-1] + t.sum()
-    output = (output_cumsum >= (1 - p)) * output
-    output_indices = (output_cumsum >= (1 - p)) * output_indices
-
-    # sample
-    output_idx = output.multinomial()
-    output_token = output_indices[output_idx]
-  else:
-    output_token = t.multinomial()
-
-  # increase alpha counter
-  if af or ap:
-    sample.alpha_counter = (counter == output_token).where(sample.alpha_counter + 1, sample.alpha_counter)
-
-  return output_token
 
 class Qwen3VL():
   def __init__(self, size="2B"):
@@ -269,11 +220,7 @@ class Qwen3VL():
         # 4 to -2 because of <|im_start|>user\n<|vision_start|><|image_pad|><|vision_end|>\n tokens before and after image_pad
         hidden_states[:, 4:-2, :] += deepstack_feature_lists[self.vis.v.deepstack_idx.index(i)]
 
-    hidden_states = self.lang.output_norm(hidden_states[:, -1, :])
-    next_token_logits = hidden_states @ self.lang.token_embd.weight.T
-    scores = next_token_logits / TEMP
-    token = sample(scores[0], temp=TEMP, k=TOP_K, p=TOP_P, af=None, ap=None)
-    return token
+    return hidden_states
 
 class Qwen3VLVis():
   def __init__(self, size="2B"):

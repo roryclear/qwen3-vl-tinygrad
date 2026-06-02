@@ -13,9 +13,9 @@ if __name__ == "__main__":
       cv2.cvtColor(cv2.imread("images/96_notif.jpg"), cv2.COLOR_BGR2RGB)
   ]
 
-  expected_outputs = ["Based on the image provided, the car is a **Ferrari F40**.\n\n-   **Color:** The car is a vibrant **red**.\n\nThe F40 is a classic Ferrari model that was built between 1987 and 1990. It is a legendary sports car known for its sleek design, powerful engine, and iconic status in the automotive world. The photograph shows it parked on a cobblestone surface in front of a brick building, with some greenery in the background.",
-                      "Based on the image provided, the car is a **Nissan GT-R**.\n\nIt is a **red** color, with a glossy finish that reflects the studio lighting. The car is parked at an angle, showcasing its sleek design, aerodynamic body, and sporty features like a large rear wing and a prominent front splitter.",
-                      "Based on the image provided, the car is a **Bugatti Chiron**.\n\nIt is a **blue** sports car. The vehicle is captured in motion on a scenic road, with a backdrop of green hills and a partly cloudy sky, which highlights its sleek design and powerful presence.",
+  expected_outputs = ["Based on the image provided, the car is a **Ferrari F40**.\n\nIt is a **red** sports car. The vehicle is parked on a cobblestone surface, and the image captures it from a front three-quarter angle, highlighting its iconic design featuring a large rear wing and a distinctive front grille. The car is positioned in front of a brick building and some green foliage.",
+                      "Based on the image provided, the car is a **Nissan GT-R**.\n\nThe car is painted a vibrant **red**. It is a high-performance sports car, and the image appears to be a professional studio photograph, likely used for promotional or advertising purposes.",
+                      "This is a Bugatti Veyron, and it is blue.",
                       "This is a blue Nissan Micra, a compact car. It's a small, economical vehicle that was popular in the 1990s and early 2000s.",
                       "A person wearing a light green hoodie and light-colored pants is standing near a silver car with the driver's side door open."]
 
@@ -39,10 +39,10 @@ if __name__ == "__main__":
   print(output)
 
   output = qwen.generate(prompt=f"where was it made?")
-  assert output == "Based on the visual characteristics and the specific model, the car in the image is a **Ferrari F40**.\n\nThe Ferrari F40 was produced by **Ferrari, the Italian manufacturer**. It was manufactured in two main locations:\n\n-   **1982**: The first production of the F40 began in **Bologna, Italy**. This was the primary production site for the model.\n-   **1983**: The production of the F40 continued at the **Maserati plant in Modena, Italy**.\n\nThe F40 was manufactured in Italy, which is why it is so well-regarded and highly sought after by collectors and enthusiasts."
+  assert output == "The Ferrari F40 was made in **Italy**.\n\nSpecifically, it was manufactured by **Ferrari's factory in Maranello, Italy**, which is the company's primary production center. The F40 was produced from 1987 to 1992, and it was the first Ferrari to use the \"F40\" nameplate, which was also used for the F40 and F430 models. The F40 was designed and built with the aim of producing a car that was both fast and elegant, and it has since become a highly sought-after classic."
   output = qwen.generate(prompt=f"what is the capital city of there?")
-  assert output == "The capital city of Italy is **Rome**."
+  assert output == "The capital city of Italy is **Rome**.\n\nIt is the largest city in Italy and the political, cultural, and economic center of the country."
   output = qwen.generate(prompt=f"what is the best tourist attraction there? just give the number 1.")
-  assert output == "1. The best tourist attraction in Rome is the **Colosseum**."
+  assert output == "1. The Colosseum"
 
 
