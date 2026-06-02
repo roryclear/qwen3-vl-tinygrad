@@ -136,7 +136,7 @@ class Qwen3VL():
         self.start_pos += 1
       next_token = int(token.numpy()[0])
       next_token_tensor = Tensor([[next_token]])
-      if next_token == 151645: break
+      if next_token == self.tok.eos_id: break
       toks_out.append(next_token)
       new_text = self.tok.decode([next_token])
       decoded += new_text
