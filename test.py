@@ -13,9 +13,9 @@ if __name__ == "__main__":
       cv2.cvtColor(cv2.imread("images/96_notif.jpg"), cv2.COLOR_BGR2RGB)
   ]
 
-  expected_outputs = ["Based on the image provided, the car is a **Ferrari F40**.\n\nIt is a **red** sports car. The vehicle is parked on a cobblestone surface, and the image captures it from a front three-quarter angle, highlighting its iconic design featuring a large rear wing and a distinctive front grille. The car is positioned in front of a brick building and some green foliage.",
-                      "Based on the image provided, the car is a **Nissan GT-R**.\n\nThe car is painted a vibrant **red**. It is a high-performance sports car, and the image appears to be a professional studio photograph, likely used for promotional or advertising purposes.",
-                      "Based on the image provided, the car is a **Bugatti Chiron**.\n\nIt is a **blue** sports car. The vehicle is shown on a road with a scenic background of hills and a partly cloudy sky. The car's design, particularly its distinctive front grille, is characteristic of the Bugatti brand.",
+  expected_outputs = ["Based on the image provided, the car is a **Ferrari F40**.\n\nIt is a **red** color, with a glossy finish. The car is a classic model from the 1980s, known for its iconic design and performance.",
+                      "Based on the image provided, the car is a **Nissan GT-R**.\n\nIt is a **red** color, with a vibrant, glossy finish. The car is shown in a modern, high-performance style, and the image appears to be a studio photograph, as it is set against a plain gray background.",
+                      "The car in the image is a **Bugatti Chiron**.\n\nIt is a **blue** color, with a glossy finish. The vehicle is a high-performance supercar, known for its distinctive design and powerful engine, and is captured in a dynamic, motion-filled scene on a paved road under a bright blue sky.",
                       "This is a blue Nissan Micra, a compact car. It's a small, economical vehicle that was popular in the 1990s and early 2000s.",
                       "A person wearing a light green hoodie and light-colored pants is standing near a silver car with the driver's side door open."]
 
@@ -31,17 +31,16 @@ if __name__ == "__main__":
   for image, expected_output, prompt in zip(images, expected_outputs, prompts):
     z += 1
     if z > 3: continue
-    
     output = qwen.generate(prompt=prompt, image=image)
     assert output == expected_output
-
-  output = qwen.generate(prompt=prompts[0], image=images[0])
-
-  output = qwen.generate(prompt=f"where was it made?")
-  assert output == "The Ferrari F40 was made in **Italy**.\n\nMore specifically, it was produced at Ferrari's **Ferrarelle** plant in **Ferrara**, which was located in the **Marche** region of Italy. The F40 was built between 1987 and 1989 and is one of the most iconic and sought-after sports cars in automotive history."
+  
+  # test two images in prefill
+  qwen.generate(image=images[1], reset=True)
+  output = qwen.generate(prompt="What is the first car? is it better than the second one? be brief", image=images[2])
+  assert output == "The first car is a red Nissan GT-R, and the second is a blue Bugatti Chiron.\n\nThe Nissan GT-R is not better than the Bugatti Chiron. The Bugatti Chiron is a more expensive and faster vehicle, but it has a higher price tag and is not as reliable as the Nissan GT-R. The Nissan GT-R has a more powerful engine and is more reliable, but it is not as fast as the Bugatti Chiron."
+  output = qwen.generate(prompt=f"where was the first one made?")
+  assert output == "The red car in the image is a Nissan GT-R, and it was made in Japan."
   output = qwen.generate(prompt=f"what is the capital city of there?")
-  assert output == "The capital city of Italy is **Rome**.\n\nIt is located in the **Lazio** region of the country and has been the capital since 1871, when the Kingdom of Italy was formed."
+  assert output == "The capital city of Japan is Tokyo."
   output = qwen.generate(prompt=f"what is the best tourist attraction there? just give the number 1.")
-  assert output == "1. **The Colosseum**"
-
-
+  assert output == "1. Tokyo Tower"

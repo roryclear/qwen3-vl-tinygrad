@@ -1,7 +1,7 @@
 import unicodedata, re, math, typing, sys, cv2, time
 import numpy as np
 from tinygrad import Tensor, nn, TinyJit, Variable, dtypes
-Tensor.manual_seed(420)
+Tensor.manual_seed(42)
 from tinygrad.nn.state import safe_load, load_state_dict
 from tinygrad.helpers import partition, fetch
 from gguf import gguf_load
@@ -107,15 +107,16 @@ class Qwen3VL():
 
   def prewarm(self, res):
     for _ in range(2):
-      prefill_img(vis=self.vis, lang=self.lang, image=Tensor.rand(res).cast(dtypes.uint8))
+      prefill_img(vis=self.vis, lang=self.lang, image=Tensor.rand(res).cast(dtypes.uint8), start_pos=Variable("pos",0,self.max_context).bind(42))
       self.lang(tokens=Tensor([[42]]).clone(), start_pos=Variable("pos",1,self.max_context).bind(42), temperature=Tensor(0.7).clone())
       self.lang.prefill_jit(tokens=Tensor([[42]*self.max_context]).clone()[:, :Variable("len",1,self.max_context).bind(42)], \
       start_pos=Variable("pos",1,self.max_context).bind(42), temperature=Tensor(0.7).clone())
 
-  def generate(self, prompt=None, image=None):
+  def generate(self, prompt=None, image=None, reset=False): #todo, set start_pos to zero in clearcam
+    if reset: self.start_pos = 0
     if image is not None:
-      self.start_pos = ((image.shape[0] * image.shape[1]) // (32*32)) + 8
-      prefill_img(vis=self.vis, lang=self.lang, image=Tensor(image))
+      prefill_img(vis=self.vis, lang=self.lang, image=Tensor(image), start_pos=Variable("pos",0,self.max_context).bind(self.start_pos))
+      self.start_pos += ((image.shape[0] * image.shape[1]) // (32*32)) + 8
     if prompt is None: return
     prompt = "<|im_start|>user\n" + prompt + "<|im_end|>\n<|im_start|>assistant\n"
     prompt = self.tok.encode(prompt)
@@ -145,7 +146,7 @@ class Qwen3VL():
     return self.tok.decode(toks_out)
   
 @TinyJit
-def prefill_img(vis, lang, image):
+def prefill_img(vis, lang, image, start_pos):
   image = image.permute(2, 0, 1)
   height, width = image.shape[-2:]
   image = image.unsqueeze(0).float()
@@ -190,7 +191,7 @@ def prefill_img(vis, lang, image):
   # https://github.com/huggingface/transformers/blob/08692e3c31654e4825b4c078a3c70b86efa70a46/src/transformers/models/qwen3_vl/modular_qwen3_vl.py#L626
   # https://github.com/huggingface/transformers/blob/08692e3c31654e4825b4c078a3c70b86efa70a46/src/transformers/models/qwen3_vl/modular_qwen3_vl.py#L543
   for i in range(len(lang.blk)):
-    hidden_states = lang.blk[i](hidden_states, start_pos=0)
+    hidden_states = lang.blk[i](hidden_states, start_pos=start_pos)
     # https://github.com/huggingface/transformers/blob/08692e3c31654e4825b4c078a3c70b86efa70a46/src/transformers/models/qwen3_vl/modeling_qwen3_vl.py#L692
     if i in vis.v.deepstack_idx:
       # 4 to -4 because of <|im_start|>user\n<|vision_start|><|image_pad|><|vision_end|>\n<|im_end|>\n tokens before and after image_pad
