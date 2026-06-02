@@ -182,7 +182,7 @@ def prefill_img(vis, lang, image):
   num_image_tokens = int((grid_h*grid_w) / 4)
   input_ids = Tensor.cat(Tensor([151644, 872, 198, 151652]), Tensor.zeros(num_image_tokens), Tensor([151653, 198, 151645, 198])).unsqueeze(0).cast(dtypes.int)
 
-  image_embeds, hidden_states, deepstack_feature_lists = vis(pixel_values, [1, grid_h, grid_w])
+  image_embeds, hidden_states, deepstack_feature_lists = vis(pixel_values, [grid_h, grid_w])
   hidden_states = lang.token_embd(input_ids).cast(dtypes.float)
   # 4 to -4 because of <|im_start|>user\n<|vision_start|><|image_pad|><|vision_end|>\n<|im_end|>\n tokens before and after image_pad
   hidden_states[:, 4:-4, :] = image_embeds.unsqueeze(0)
@@ -210,10 +210,9 @@ class Qwen3VLVis():
     load_state_dict(self, state_dict)
     self.inv_freq = 1.0 / (10000.0 ** (Tensor.arange(0, 32, 2, dtype=dtypes.float) / 32))
 
-  def __call__(self, pixel_values, image_grid_thw):        
-    grid_ts = image_grid_thw[0]
-    grid_hs = image_grid_thw[1]
-    grid_ws = image_grid_thw[2]
+  def __call__(self, pixel_values, image_grid_size):        
+    grid_hs = image_grid_size[0]
+    grid_ws = image_grid_size[1]
 
     h_idxs = Tensor.linspace(0, self.v.num_grid_per_side - 1, grid_hs)
     w_idxs = Tensor.linspace(0, self.v.num_grid_per_side - 1, grid_ws)
@@ -250,16 +249,16 @@ class Qwen3VLVis():
     patch_pos_embeds = patch_pos_embeds[:grid_hs * grid_ws]
 
     merge_size = 2
-    pos_embeds = patch_pos_embeds.repeat(grid_ts, 1)
-    pos_embeds = (pos_embeds.view(grid_ts, grid_hs // merge_size, merge_size, grid_ws // merge_size, merge_size, -1).permute(0, 1, 3, 2, 4, 5).flatten(0, 4))
+    pos_embeds = patch_pos_embeds.repeat(1, 1)
+    pos_embeds = (pos_embeds.view(1, grid_hs // merge_size, merge_size, grid_ws // merge_size, merge_size, -1).permute(0, 1, 3, 2, 4, 5).flatten(0, 4))
     
-    hpos_ids = Tensor.arange(image_grid_thw[1]).unsqueeze(1).expand(-1, image_grid_thw[2])
-    hpos_ids = hpos_ids.reshape(image_grid_thw[1] // merge_size, merge_size, image_grid_thw[2] // merge_size, merge_size).transpose(1, 2).flatten()
+    hpos_ids = Tensor.arange(grid_hs).unsqueeze(1).expand(-1, grid_ws)
+    hpos_ids = hpos_ids.reshape(grid_hs // merge_size, merge_size, grid_ws // merge_size, merge_size).transpose(1, 2).flatten()
 
-    wpos_ids = Tensor.arange(image_grid_thw[2]).unsqueeze(0).expand(image_grid_thw[1], -1)
-    wpos_ids = wpos_ids.reshape(image_grid_thw[1] // merge_size, merge_size, image_grid_thw[2] // merge_size, merge_size).transpose(1, 2).flatten()
+    wpos_ids = Tensor.arange(grid_ws).unsqueeze(0).expand(grid_hs, -1)
+    wpos_ids = wpos_ids.reshape(grid_hs // merge_size, merge_size, grid_ws // merge_size, merge_size).transpose(1, 2).flatten()
 
-    pos_ids = Tensor.stack(hpos_ids, wpos_ids, dim=-1).repeat(image_grid_thw[0], 1)
+    pos_ids = Tensor.stack(hpos_ids, wpos_ids, dim=-1).repeat(1, 1)
 
     rotary_pos_emb = (pos_ids.unsqueeze(-1) * self.inv_freq).flatten(1)
 
@@ -311,7 +310,7 @@ class Qwen3VisBlocks():
     self.blk = []
     for _ in range(kv["clip.vision.block_count"]): self.blk.append(Qwen3VisBlock(kv, weights=weights))
     self.patch_embd = Qwen3PatchEmbed(kv=kv)
-    self.num_grid_per_side = 48
+    self.num_grid_per_side = 48 # todo unhardcode
     self.deepstack_layers = kv["clip.vision.is_deepstack_layers"]
     self.deepstack_idx = [i for i, val in enumerate(self.deepstack_layers) if val]
     self.deepstack = []
