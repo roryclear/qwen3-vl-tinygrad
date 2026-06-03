@@ -98,7 +98,7 @@ def rotate_half(x):
     return ret
 
 class Qwen3VL():
-  def __init__(self, size="2B", res=(640, 640)):
+  def __init__(self, size="2B", res=(640, 640)): # (height, width) res
     self.res = res
     self.max_context = 2000
     self.vis = Qwen3VLVis(size=size)

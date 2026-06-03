@@ -1,6 +1,5 @@
 from qwen3vl import Qwen3VL
 import cv2
-from tinygrad import Tensor, Variable
 if __name__ == "__main__":
   qwen = Qwen3VL(size="2B", res=(256, 256))
 
@@ -38,9 +37,17 @@ if __name__ == "__main__":
   qwen.generate(image=images[1], reset=True)
   output = qwen.generate(prompt="What is the first car? is it better than the second one? be brief", image=images[2])
   assert output == "The first car is a red Nissan GT-R, and the second is a blue Bugatti Chiron.\n\nThe Nissan GT-R is not better than the Bugatti Chiron. The Bugatti Chiron is a more expensive and faster vehicle, but it has a higher price tag and is not as reliable as the Nissan GT-R. The Nissan GT-R has a more powerful engine and is more reliable, but it is not as fast as the Bugatti Chiron."
+
+  # test image, prompt, image, prompt (about both)
+  qwen.generate(image=images[1], prompt="what is this car?", reset=True)
+  output = qwen.generate(image=images[2], prompt="what is this car? is it faster than the first one? be brief")
+
+  assert output == "The car in the image is a **Bugatti Chiron**.\n\nYes, it is faster than the Nissan GT-R shown in the first image. The Bugatti Chiron is a supercar with a top speed of around 400 km/h (248 mph), while the Nissan GT-R is capable of reaching speeds of around 380 km/h (236 mph). However, the Chiron's 0-100 km/h acceleration time of just 2.3 seconds is faster than the GT-R's 2.5 seconds."
+
+  # many prompts with context
   output = qwen.generate(prompt=f"where was the first one made?")
-  assert output == "The red car in the image is a Nissan GT-R, and it was made in Japan."
+  assert output == "The first Nissan GT-R was made in **Japan**.\n\nThe production of the Nissan GT-R has been primarily handled by Nissan's plant in **Kanagawa Prefecture, Japan**. This plant, known as Nissan Motor Co., Ltd. (specifically the Nissan GT-R Production Center), has been responsible for building the GT-R since its launch in 1993. The company's Japanese origins provide the foundation for its global production and engineering expertise."
   output = qwen.generate(prompt=f"what is the capital city of there?")
-  assert output == "The capital city of Japan is Tokyo."
+  assert output == "The capital city of Japan is **Tokyo**."
   output = qwen.generate(prompt=f"what is the best tourist attraction there? just give the number 1.")
   assert output == "1. Tokyo Tower"
