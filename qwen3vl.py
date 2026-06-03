@@ -376,9 +376,10 @@ if __name__ == "__main__":
   data = urllib.request.urlopen(args.image).read() if args.image.startswith("http") else args.image
   image = cv2.cvtColor(cv2.imdecode(np.frombuffer(data, np.uint8), cv2.IMREAD_COLOR) if isinstance(data, bytes) else cv2.imread(data), cv2.COLOR_BGR2RGB)
   # resize to 640x640 for now, must be made of 32x32 blocks
-  s=640/max(image.shape[:2])
-  r=cv2.resize(image,(int(image.shape[1]*s),int(image.shape[0]*s)))
-  image=cv2.copyMakeBorder(r,(640-r.shape[0])//2,640-r.shape[0]-(640-r.shape[0])//2,(640-r.shape[1])//2,640-r.shape[1]-(640-r.shape[1])//2,cv2.BORDER_CONSTANT,value=0)
+  target_w, target_h = 640, 640
+  s = min(target_w / image.shape[1], target_h / image.shape[0])
+  r = cv2.resize(image, (int(image.shape[1] * s), int(image.shape[0] * s)))
+  image = cv2.copyMakeBorder(r, (target_h - r.shape[0]) // 2, target_h - r.shape[0] - (target_h - r.shape[0]) // 2, (target_w - r.shape[1]) // 2, target_w - r.shape[1] - (target_w - r.shape[1]) // 2, cv2.BORDER_CONSTANT, value=0)
   qwen = Qwen3VL(size=args.size)
   print("prewarming") #dont prewarm until prompt shape is fixed
   qwen.prewarm(res=(640,640,3))
