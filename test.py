@@ -3,7 +3,7 @@ import cv2
 if __name__ == "__main__":
   qwen = Qwen3VL(size="2B", res=(256, 256))
 
-  # first four are all 256x256
+  # first three are all 256x256
   images = [
       cv2.cvtColor(cv2.imread("images/f40.jpeg"), cv2.COLOR_BGR2RGB),
       cv2.cvtColor(cv2.imread("images/gtr.jpg"), cv2.COLOR_BGR2RGB),
