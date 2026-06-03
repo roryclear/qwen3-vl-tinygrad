@@ -2,7 +2,7 @@ from qwen3vl import Qwen3VL
 import cv2
 from tinygrad import Tensor, Variable
 if __name__ == "__main__":
-  qwen = Qwen3VL(size="2B")
+  qwen = Qwen3VL(size="2B", res=(256, 256))
 
   # first four are all 256x256
   images = [
@@ -27,7 +27,7 @@ if __name__ == "__main__":
           ""]
 
   z = 0
-  qwen.prewarm(images[0].shape)
+  qwen.prewarm()
   for image, expected_output, prompt in zip(images, expected_outputs, prompts):
     z += 1
     if z > 3: continue
