@@ -230,21 +230,19 @@ class Qwen3VLVis():
   # https://github.com/huggingface/transformers/blob/15bb519bd4277f4ab5309154aedf3c231e8b4ca8/src/transformers/models/qwen3_vl/modeling_qwen3_vl.py#L679
   def __call__(self, pixel_values, image_grid_size):        
     grid_hs, grid_ws = image_grid_size
-    n = self.v.num_grid_per_side
-    
-    h, w = Tensor.linspace(0, n - 1, grid_hs).cast(dtypes.bfloat16), Tensor.linspace(0, n - 1, grid_ws).cast(dtypes.bfloat16)
+    h, w = Tensor.linspace(0, self.v.num_grid_per_side - 1, grid_hs).cast(dtypes.bfloat16), Tensor.linspace(0, self.v.num_grid_per_side - 1, grid_ws).cast(dtypes.bfloat16)
     h_floor, w_floor = h.cast(dtypes.int32), w.cast(dtypes.int32)
-    h_ceil, w_ceil = (h_floor + 1).clip(n - 1), (w_floor + 1).clip(n - 1)
+    h_ceil, w_ceil = (h_floor + 1).clip(self.v.num_grid_per_side - 1), (w_floor + 1).clip(self.v.num_grid_per_side - 1)
     dh, dw = h - h_floor, w - w_floor
     
     h_vals, w_vals = meshgrid(h_floor, w_floor)
     h_vals_ceil, w_vals_ceil = meshgrid(h_ceil, w_ceil)
     
     idx_tensor = Tensor.stack(
-        (h_vals * n + w_vals).flatten(),
-        (h_vals * n + w_vals_ceil).flatten(),
-        (h_vals_ceil * n + w_vals).flatten(),
-        (h_vals_ceil * n + w_vals_ceil).flatten(),
+        (h_vals * self.v.num_grid_per_side + w_vals).flatten(),
+        (h_vals * self.v.num_grid_per_side + w_vals_ceil).flatten(),
+        (h_vals_ceil * self.v.num_grid_per_side + w_vals).flatten(),
+        (h_vals_ceil * self.v.num_grid_per_side + w_vals_ceil).flatten(),
     ).cast(dtypes.int32)
     dh_grid, dw_grid = meshgrid(dh, dw)
     weight_tensor = Tensor.stack(
