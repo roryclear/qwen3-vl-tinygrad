@@ -93,10 +93,10 @@ class SimpleTokenizer:
 
 #https://github.com/huggingface/transformers/blob/1316cd76c0ce328228e08d55dc257484961b074c/src/transformers/models/qwen3_vl/modeling_qwen3_vl.py#L129
 def rotate_half(x):
-    x1 = x[..., : x.shape[-1] // 2]
-    x2 = x[..., x.shape[-1] // 2 :]
-    ret = Tensor.cat(-x2, x1, dim=-1)
-    return ret
+  x1 = x[..., : x.shape[-1] // 2]
+  x2 = x[..., x.shape[-1] // 2 :]
+  ret = Tensor.cat(-x2, x1, dim=-1)
+  return ret
 
 class Qwen3VL():
   def __init__(self, size="2B", res=(640, 640)): # (height, width) res
@@ -276,12 +276,12 @@ class Qwen3VLVis():
     w2d = w.reshape(out_C, in_C * kD, kH, kW)
 
     hidden_states = hidden_states.conv2d(
-        weight=w2d,
-        bias=self.v.patch_embd.bias,
-        stride=(16, 16),
-        padding=(0, 0),
-        dilation=(1, 1),
-        groups=1
+      weight=w2d,
+      bias=self.v.patch_embd.bias,
+      stride=(16, 16),
+      padding=(0, 0),
+      dilation=(1, 1),
+      groups=1
     )
 
     hidden_states = hidden_states.view(-1, 1024)
@@ -335,8 +335,8 @@ class DeepstackLayer:
 
   #https://github.com/huggingface/transformers/blob/027d1a97025295a1346c2eb5c361259e69eedfe7/src/transformers/models/qwen3_vl/modeling_qwen3_vl.py#L112
   def __call__(self, hidden_states):
-      deepstack_feature = (hidden_states.view(-1, self.hidden_size)).view(-1, self.hidden_size)
-      return self.fc2(Tensor.gelu(self.fc1(deepstack_feature)))
+    deepstack_feature = (hidden_states.view(-1, self.hidden_size)).view(-1, self.hidden_size)
+    return self.fc2(Tensor.gelu(self.fc1(deepstack_feature)))
 
 class Qwen3VisBlock():
   def __init__(self, kv=None, weights=None):
