@@ -98,6 +98,8 @@ def rotate_half(x):
   ret = Tensor.cat(-x2, x1, dim=-1)
   return ret
 
+def apply_rotary_pos_emb_vision(query, key, cos, sin): return (query * cos) + (rotate_half(query) * sin), (key * cos) + (rotate_half(key) * sin)
+
 class Qwen3VL():
   def __init__(self, size="2B", res=(640, 640)): # (height, width) res
     self.res = res
@@ -183,7 +185,7 @@ def prefill(vis, lang, image, start_pos):
       .reshape(
           batch_size,
           grid_h * grid_w,
-          channel * vis.temporal_patch_size * vis.patch_size * vis.patch_size, # 1536
+          channel * vis.temporal_patch_size * vis.patch_size * vis.patch_size,
       )
   )[0]
   pixel_values = pixel_values.cast(dtypes.bfloat16)
@@ -349,9 +351,7 @@ class Qwen3VisBlock():
     # https://github.com/huggingface/transformers/blob/1316cd76c0ce328228e08d55dc257484961b074c/src/transformers/models/qwen3_vl/modeling_qwen3_vl.py#L186
     qkv = qkv.reshape(qkv.shape[0], 3, 16, -1).permute(1, 0, 2, 3)
     query, key, value = qkv[0], qkv[1], qkv[2]
-    query = (query * cos) + (rotate_half(query) * sin)
-    key = (key * cos) + (rotate_half(key) * sin)
-
+    query, key = apply_rotary_pos_emb_vision(query, key, cos, sin)
     query = query.transpose(0, 1).unsqueeze(0)
     value = value.transpose(0, 1).unsqueeze(0)
     key = key.transpose(0, 1).unsqueeze(0)
