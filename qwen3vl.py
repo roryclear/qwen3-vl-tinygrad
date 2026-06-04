@@ -350,6 +350,8 @@ class Qwen3VisBlock():
     hidden_states_input = self.ln1(hidden_states)
     seq_length = hidden_states_input.shape[0]
     qkv = self.attn_qkv(hidden_states_input)
+
+    # https://github.com/huggingface/transformers/blob/1316cd76c0ce328228e08d55dc257484961b074c/src/transformers/models/qwen3_vl/modeling_qwen3_vl.py#L186
     qkv = qkv.reshape(seq_length, 3, 16, -1).permute(1, 0, 2, 3)
     query, key, value = qkv.chunk(3, dim=0)
     query = query.squeeze(0)
@@ -367,6 +369,8 @@ class Qwen3VisBlock():
     attn_output = attn_output.transpose(1, 2)
     attn_output = attn_output.reshape(seq_length, -1)
     attn_output = self.attn_out(attn_output)
+
+
     hidden_states += attn_output
     norm = self.ln2(hidden_states)
     norm = self.ffn_up(norm).gelu()
