@@ -91,6 +91,7 @@ class SimpleTokenizer:
     return ([] if self.bos_id is None else [self.bos_id]) + (self.encode("<sop>") if self.preset == 'glm4' else [])
   def is_end(self, token_id:int) -> bool: return token_id in (self.eos_id, self.eot_id)
 
+#https://github.com/huggingface/transformers/blob/1316cd76c0ce328228e08d55dc257484961b074c/src/transformers/models/qwen3_vl/modeling_qwen3_vl.py#L129
 def rotate_half(x):
     x1 = x[..., : x.shape[-1] // 2]
     x2 = x[..., x.shape[-1] // 2 :]
@@ -362,14 +363,13 @@ class Qwen3VisBlock():
 
     query = query.transpose(0, 1).unsqueeze(0)
     value = value.transpose(0, 1).unsqueeze(0)
+    key = key.transpose(0, 1).unsqueeze(0)
 
-    attn_weight = query @ key.transpose(0, 1).unsqueeze(0).transpose(-2, -1) * 0.125
-    attn_weight = Tensor.softmax(attn_weight)
-    attn_output = attn_weight @ value
+    attn_output = query.scaled_dot_product_attention(key, value)
+
     attn_output = attn_output.transpose(1, 2)
     attn_output = attn_output.reshape(seq_length, -1)
     attn_output = self.attn_out(attn_output)
-
 
     hidden_states += attn_output
     norm = self.ln2(hidden_states)
