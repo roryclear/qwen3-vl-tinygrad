@@ -232,7 +232,7 @@ class Qwen3VLVis():
     grid_hs, grid_ws = image_grid_size
     n = self.v.num_grid_per_side
     
-    h, w = Tensor.linspace(0, n - 1, grid_hs), Tensor.linspace(0, n - 1, grid_ws)
+    h, w = Tensor.linspace(0, n - 1, grid_hs).cast(dtypes.bfloat16), Tensor.linspace(0, n - 1, grid_ws).cast(dtypes.bfloat16)
     h_floor, w_floor = h.cast(dtypes.int32), w.cast(dtypes.int32)
     h_ceil, w_ceil = (h_floor + 1).clip(n - 1), (w_floor + 1).clip(n - 1)
     dh, dw = h - h_floor, w - w_floor
@@ -246,14 +246,13 @@ class Qwen3VLVis():
         (h_vals_ceil * n + w_vals).flatten(),
         (h_vals_ceil * n + w_vals_ceil).flatten(),
     ).cast(dtypes.int32)
-    
     dh_grid, dw_grid = meshgrid(dh, dw)
     weight_tensor = Tensor.stack(
         ((1 - dh_grid) * (1 - dw_grid)).flatten(),
         ((1 - dh_grid) * dw_grid).flatten(),
         (dh_grid * (1 - dw_grid)).flatten(),
         (dh_grid * dw_grid).flatten(),
-    ).cast(dtypes.bfloat16)
+    )
 
     pos_embeds = self.v.position_embd(idx_tensor)
     pos_embeds *= weight_tensor[:, :, None]

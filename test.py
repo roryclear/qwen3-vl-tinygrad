@@ -12,9 +12,9 @@ if __name__ == "__main__":
       cv2.cvtColor(cv2.imread("images/96_notif.jpg"), cv2.COLOR_BGR2RGB)
   ]
 
-  expected_outputs = ["Based on the image provided, the car is a **Ferrari F40**.\n\nIt is a **red** color, with a glossy finish. The car is a classic model from the 1980s, known for its iconic design and performance.",
-                      "Based on the image provided, the car is a **Nissan GT-R**.\n\nIt is a **red** color, with a vibrant, glossy finish. The car is shown in a modern, high-performance style, and the image appears to be a studio photograph, as it is set against a plain gray background.",
-                      "The car in the image is a **Bugatti Chiron**.\n\nIt is a **blue** color, with a glossy finish. The vehicle is a high-performance supercar, known for its distinctive design and powerful engine, and is captured in a dynamic, motion-filled scene on a paved road under a bright blue sky.",
+  expected_outputs = ["Based on the image provided, the car is a **Ferrari F40**.\n\nIt is a **red** color, and it's shown in a partial view, with the front portion of the car visible. The vehicle is parked on a cobblestone street in front of a brick building.",
+                      "Based on the image provided, the car is a **Nissan GT-R**.\n\nIt is a **red** color. The car is shown in a studio setting with a gray background, and it appears to be a modified version of the GT-R, possibly a \"R35\" or a similar model with aftermarket enhancements to the rear spoiler.",
+                      "Based on the image provided, the car is a **Bugatti Chiron**.\n\nIt is a **blue** color. The car is shown in motion on a road, with a scenic landscape in the background under a partly cloudy sky.",
                       "This is a blue Nissan Micra, a compact car. It's a small, economical vehicle that was popular in the 1990s and early 2000s.",
                       "A person wearing a light green hoodie and light-colored pants is standing near a silver car with the driver's side door open."]
 
@@ -36,18 +36,17 @@ if __name__ == "__main__":
   # test two images in prefill
   qwen.generate(image=images[1], reset=True)
   output = qwen.generate(prompt="What is the first car? is it better than the second one? be brief", image=images[2])
-  assert output == "The first car is a red Nissan GT-R, and the second is a blue Bugatti Chiron.\n\nThe Nissan GT-R is not better than the Bugatti Chiron. The Bugatti Chiron is a more expensive and faster vehicle, but it has a higher price tag and is not as reliable as the Nissan GT-R. The Nissan GT-R has a more powerful engine and is more reliable, but it is not as fast as the Bugatti Chiron."
+  assert output == "The first car is a red Nissan GT-R, and the second is a blue Bugatti Chiron.\n\nThe second car is generally considered better because it is a hypercar with a higher performance and more advanced technology. However, the first car is a high-performance sports car with a strong reputation and is often considered one of the best in its class."
 
   # test image, prompt, image, prompt (about both)
   qwen.generate(image=images[1], prompt="what is this car?", reset=True)
   output = qwen.generate(image=images[2], prompt="what is this car? is it faster than the first one? be brief")
-
-  assert output == "The car in the image is a **Bugatti Chiron**.\n\nYes, it is faster than the Nissan GT-R shown in the first image. The Bugatti Chiron is a supercar with a top speed of around 400 km/h (248 mph), while the Nissan GT-R is capable of reaching speeds of around 380 km/h (236 mph). However, the Chiron's 0-100 km/h acceleration time of just 2.3 seconds is faster than the GT-R's 2.5 seconds."
+  assert output == "This is a **Bugatti Chiron**, a supercar known for its exceptional speed and luxury. The Chiron is indeed faster than the Nissan GT-R Nismo, with a top speed of around **320 km/h** (199 mph), compared to the GT-R Nismo's top speed of approximately **305 km/h** (190 mph)."
 
   # many prompts with context
   output = qwen.generate(prompt=f"where was the first one made?")
-  assert output == "The first Nissan GT-R was made in **Japan**.\n\nThe production of the Nissan GT-R has been primarily handled by Nissan's plant in **Kanagawa Prefecture, Japan**. This plant, known as Nissan Motor Co., Ltd. (specifically the Nissan GT-R Production Center), has been responsible for building the GT-R since its launch in 1993. The company's Japanese origins provide the foundation for its global production and engineering expertise."
+  assert output == "The **Nissan GT-R Nismo** was made in **Japan**."
   output = qwen.generate(prompt=f"what is the capital city of there?")
   assert output == "The capital city of Japan is **Tokyo**."
   output = qwen.generate(prompt=f"what is the best tourist attraction there? just give the number 1.")
-  assert output == "1. Tokyo Tower"
+  assert output == "1. **Tokyo Tower**"
