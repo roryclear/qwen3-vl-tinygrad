@@ -345,11 +345,9 @@ class Qwen3VisBlock():
   
   def __call__(self, hidden_states, cos, sin):
     hidden_states_input = self.ln1(hidden_states)
-    seq_length = hidden_states_input.shape[0]
-
     qkv = self.attn_qkv(hidden_states_input)
     # https://github.com/huggingface/transformers/blob/1316cd76c0ce328228e08d55dc257484961b074c/src/transformers/models/qwen3_vl/modeling_qwen3_vl.py#L186
-    qkv = qkv.reshape(seq_length, 3, 16, -1).permute(1, 0, 2, 3)
+    qkv = qkv.reshape(qkv.shape[0], 3, 16, -1).permute(1, 0, 2, 3)
     query, key, value = qkv[0], qkv[1], qkv[2]
     query = (query * cos) + (rotate_half(query) * sin)
     key = (key * cos) + (rotate_half(key) * sin)
@@ -361,7 +359,7 @@ class Qwen3VisBlock():
     attn_output = query.scaled_dot_product_attention(key, value)
 
     attn_output = attn_output.transpose(1, 2)
-    attn_output = attn_output.reshape(seq_length, -1)
+    attn_output = attn_output.reshape(attn_output.shape[1], -1)
     attn_output = self.attn_out(attn_output)
 
     hidden_states += attn_output
