@@ -286,9 +286,6 @@ class Qwen3VLVis():
     hidden_states = hidden_states.view(-1, 1024)
     hidden_states = hidden_states + pos_embeds
 
-    sqlen, _ = hidden_states.size()
-    hidden_states = hidden_states.reshape(sqlen, -1)
-    rotary_pos_emb = rotary_pos_emb.reshape(sqlen, -1)
     emb = Tensor.cat(rotary_pos_emb, rotary_pos_emb, dim=-1)
     cos, sin = emb.cos(), emb.sin()
     cos, sin = cos.unsqueeze(-2), sin.unsqueeze(-2)
