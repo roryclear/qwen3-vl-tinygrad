@@ -278,8 +278,7 @@ class Qwen3VLVis():
       dilation=(1, 1),
       groups=1
     )
-
-    hidden_states = hidden_states.view(-1, 1024)
+    hidden_states = hidden_states.view(hidden_states.shape[0], -1)
     hidden_states = hidden_states + pos_embeds
 
     emb = Tensor.cat(rotary_pos_emb, rotary_pos_emb, dim=-1)
