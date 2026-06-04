@@ -208,6 +208,11 @@ def prefill(vis, lang, image, start_pos):
       hidden_states[:, 4:-4, :] += deepstack_feature_lists[vis.v.deepstack_idx.index(i)]
   hidden_states.realize()
 
+def meshgrid(x, y):
+  grid_x = Tensor.cat(*[x[idx:idx+1].expand(y.shape).unsqueeze(0) for idx in range(x.shape[0])])
+  grid_y = Tensor.cat(*[y.unsqueeze(0)]*x.shape[0])
+  return grid_x.reshape(-1, 1), grid_y.reshape(-1, 1)
+
 class Qwen3VLVis():
   def __init__(self, size="2B"):
     kv, state_dict = gguf_load(fetch(f"https://huggingface.co/Qwen/Qwen3-VL-{size}-Instruct-GGUF/resolve/main/mmproj-Qwen3VL-{size}-Instruct-F16.gguf"))
@@ -222,34 +227,30 @@ class Qwen3VLVis():
 
   # https://github.com/huggingface/transformers/blob/15bb519bd4277f4ab5309154aedf3c231e8b4ca8/src/transformers/models/qwen3_vl/modeling_qwen3_vl.py#L679
   def __call__(self, pixel_values, image_grid_size):        
-    grid_hs = image_grid_size[0]
-    grid_ws = image_grid_size[1]
-
-    h_idxs = Tensor.linspace(0, self.v.num_grid_per_side - 1, grid_hs)
-    w_idxs = Tensor.linspace(0, self.v.num_grid_per_side - 1, grid_ws)
-
-    h_idxs_floor = h_idxs.cast(dtypes.int32)
-    w_idxs_floor = w_idxs.cast(dtypes.int32)
-    h_idxs_ceil = (h_idxs_floor.int() + 1).clip(self.v.num_grid_per_side - 1)
-    w_idxs_ceil = (w_idxs_floor.int() + 1).clip(self.v.num_grid_per_side - 1)
-    dh = h_idxs - h_idxs_floor
-    dw = w_idxs - w_idxs_floor
-
-    base_h = h_idxs_floor * self.v.num_grid_per_side
-    base_h_ceil = h_idxs_ceil * self.v.num_grid_per_side
-
+    grid_hs, grid_ws = image_grid_size
+    n = self.v.num_grid_per_side
+    
+    h, w = Tensor.linspace(0, n - 1, grid_hs), Tensor.linspace(0, n - 1, grid_ws)
+    h_floor, w_floor = h.cast(dtypes.int32), w.cast(dtypes.int32)
+    h_ceil, w_ceil = (h_floor + 1).clip(n - 1), (w_floor + 1).clip(n - 1)
+    dh, dw = h - h_floor, w - w_floor
+    
+    h_vals, w_vals = meshgrid(h_floor, w_floor)
+    h_vals_ceil, w_vals_ceil = meshgrid(h_ceil, w_ceil)
+    
     idx_tensor = Tensor.stack(
-        (base_h[None].T + w_idxs_floor[None]).flatten(),
-        (base_h[None].T + w_idxs_ceil[None]).flatten(),
-        (base_h_ceil[None].T + w_idxs_floor[None]).flatten(),
-        (base_h_ceil[None].T + w_idxs_ceil[None]).flatten(),
+        (h_vals * n + w_vals).flatten(),
+        (h_vals * n + w_vals_ceil).flatten(),
+        (h_vals_ceil * n + w_vals).flatten(),
+        (h_vals_ceil * n + w_vals_ceil).flatten(),
     ).cast(dtypes.int32)
-
+    
+    dh_grid, dw_grid = meshgrid(dh, dw)
     weight_tensor = Tensor.stack(
-        ((1 - dh)[None].T * (1 - dw)[None]).flatten(),
-        ((1 - dh)[None].T * dw[None]).flatten(),
-        (dh[None].T * (1 - dw)[None]).flatten(),
-        (dh[None].T * dw[None]).flatten(),
+        ((1 - dh_grid) * (1 - dw_grid)).flatten(),
+        ((1 - dh_grid) * dw_grid).flatten(),
+        (dh_grid * (1 - dw_grid)).flatten(),
+        (dh_grid * dw_grid).flatten(),
     ).cast(dtypes.bfloat16)
 
     pos_embeds = self.v.position_embd(idx_tensor)
