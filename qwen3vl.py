@@ -1,7 +1,7 @@
 import unicodedata, re, math, typing, sys, cv2, time
 import numpy as np
 from tinygrad import Tensor, nn, TinyJit, Variable, dtypes
-Tensor.manual_seed(1)
+Tensor.manual_seed(420)
 from tinygrad.nn.state import safe_load, load_state_dict
 from tinygrad.helpers import partition, fetch
 from gguf import gguf_load
@@ -283,7 +283,6 @@ class Qwen3VLVis():
     pos_ids = get_vision_position_ids(h=grid_hs, w=grid_ws, merge_size=self.merge_size)
 
     pos_embeds = (self.v.position_embd(idx_tensor) * weight_tensor[:, :, None]).sum(axis=0)
-    pos_embeds = (pos_embeds.view(1, grid_hs // self.merge_size, self.merge_size, grid_ws // self.merge_size, self.merge_size, -1).permute(0, 1, 3, 2, 4, 5).flatten(0, 4))
 
     w = Tensor.stack(self.v.patch_embd.weight, self.v.patch_embd.weight1, dim=2)
     out_C, in_C, kD, kH, kW = w.shape

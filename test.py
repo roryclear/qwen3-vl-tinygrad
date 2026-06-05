@@ -12,9 +12,9 @@ if __name__ == "__main__":
       cv2.cvtColor(cv2.imread("images/96_notif.jpg"), cv2.COLOR_BGR2RGB)
   ]
 
-  expected_outputs = ["Based on the image provided, the car is a **Ferrari F40**.\n\nIt is a **red** car. The vibrant red color is a signature of the Ferrari F40, a legendary sports car that was produced in the 1980s. The vehicle is a high-performance, mid-engine sports car known for its sleek design and exceptional handling, with the iconic \"ferrari\" badge visible on the front grille.",
-                      "Based on the image provided, the car is a **Nissan GT-R** (specifically, the 2018 model with a \"GT-R\" badge, which is a common style for the Nissan GT-R in that era).\n\nIt is a **red** car. The vibrant red paint job is a signature of the Nissan GT-R, a high-performance sports car known for its powerful engine and agile handling. The vehicle is presented in a studio setting, which highlights its sleek design and aerodynamic features.",
-                      "Based on the image provided, the car is a **Bugatti Chiron**.\n\nIt is a **blue** car. The vibrant blue color is a signature of the Bugatti Chiron, a high-performance hypercar known for its exceptional speed and luxurious design. The vehicle is captured in a dynamic pose, emphasizing its sleek lines and powerful presence on a scenic road.",
+  expected_outputs = ["Based on the image provided, the car is a **Ferrari F40**.\n\nIt is a **red** sports car. The vehicle is a classic 1987 model, known for its sleek design and powerful performance, and is one of the most iconic cars in automotive history. The car is shown parked on a cobblestone street in front of a brick building.",
+                      "The car in the image is a **Nissan GT-R**.\n\nIt is a **red** sports car. The vehicle is a high-performance model from Nissan, known for its powerful engine and sleek design. The car is shown in a studio setting with a plain gray background, highlighting its vibrant red color.",
+                      "The car in the image is a **Bugatti Chiron**.\n\nIt is a **blue** sports car. The vehicle is a high-performance luxury hypercar known for its exceptional speed and advanced engineering. The car is shown on a road with a scenic landscape in the background under a partly cloudy sky.",
                       "This is a blue Nissan Micra, a compact car. It's a small, economical vehicle that was popular in the 1990s and early 2000s.",
                       "A person wearing a light green hoodie and light-colored pants is standing near a silver car with the driver's side door open."]
 
@@ -36,17 +36,16 @@ if __name__ == "__main__":
   # test two images in prefill
   qwen.generate(image=images[1], reset=True)
   output = qwen.generate(prompt="What is the first car? is it better than the second one? be brief", image=images[2])
-  print("output =",output)
-  assert output == "The first car shown is a red Nissan GT-R, and the second is a blue Bugatti Chiron. The Nissan GT-R is a high-performance sports car known for its powerful engine and handling, while the Bugatti Chiron is a high-end, luxury supercar with advanced technology and speed. The GT-R is generally considered to be more powerful and faster than the Chiron, but the Chiron is more expensive and has a more luxurious interior. So, it depends on what you value most."
+  assert output == "The first car is a red Nissan GT-R, and the second is a blue Bugatti Chiron.\n\nThe Bugatti Chiron is generally considered to be better than the Nissan GT-R due to its superior performance, with a significantly higher top speed and more powerful engine."
 
   # test image, prompt, image, prompt (about both)
   qwen.generate(image=images[1], prompt="what is this car?", reset=True)
   output = qwen.generate(image=images[2], prompt="what is this car? is it faster than the first one? be brief")
-  assert output == "This car is a **2024 Bugatti Chiron**, which is significantly faster than the first Nissan GT-R Nismo shown in the first image.\n\nThe Bugatti Chiron is a hypercar known for its incredible speed and performance, with a 0-60 mph time of just 2.3 seconds, while the Nissan GT-R Nismo has a 0-60 mph time of around 3.5 seconds. The Chiron is also faster and more powerful than the first car."
+  assert output == "This is a Bugatti Chiron, a supercar known for its incredible speed and luxury. It is one of the fastest production vehicles in the world, with a top speed of over 200 mph. While the first Nissan GT-R is a high-performance sports car, the Bugatti Chiron is much faster, with a top speed exceeding 200 mph, making it significantly faster than the Nissan GT-R."
 
   # many prompts with context
   output = qwen.generate(prompt=f"where was the first one made?")
-  assert output == "The first car shown in the image, the **Nissan GT-R Nismo**, was made in **Japan**.\n\nNissan is a Japanese manufacturer, and the GT-R Nismo is a model produced by Nissan's Japanese operations. It is also notable that the GT-R Nismo was launched in 2012 and is known for its high-performance capabilities and aggressive styling."
+  assert output == "The first Nissan GT-R was made in **Japan**."
   output = qwen.generate(prompt=f"what is the capital city of there?")
   assert output == "The capital city of Japan is **Tokyo**."
   output = qwen.generate(prompt=f"what is the best tourist attraction there? just give the number 1.")
