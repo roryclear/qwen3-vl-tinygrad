@@ -307,13 +307,9 @@ def get_vision_bilinear_indices_and_weights2(
     h_floor = h_grid.cast(dtypes.int)
     w_floor = w_grid.cast(dtypes.int)
 
-    h_floor = to_torch(h_floor)
-    w_floor = to_torch(w_floor)
-    h_grid = to_torch(h_grid)
-    w_grid = to_torch(w_grid)
+    h_ceil = (h_floor + 1).clamp(max_=side - 1)
+    w_ceil = (w_floor + 1).clamp(max_=side - 1)
 
-    h_ceil = (h_floor + 1).clamp(max=side - 1)
-    w_ceil = (w_floor + 1).clamp(max=side - 1)
 
     h_frac = h_grid - h_floor
     w_frac = w_grid - w_floor
@@ -338,6 +334,8 @@ def get_vision_bilinear_indices_and_weights2(
     w_idx = Tensor.arange(w).view(w // merge_size, merge_size)
     reorder = (h_idx[:, :, None, None] * w + w_idx[None, None, :, :]).transpose(1, 2).flatten().repeat(t)
     reorder = to_torch(reorder)
+    corner_indices = to_torch(corner_indices)
+    corner_weights = to_torch(corner_weights)
 
     for i in range(4):
       idx_parts[i].append(corner_indices[i][reorder])
@@ -353,6 +351,10 @@ def get_vision_bilinear_indices_and_weights2(
 
 def to_tiny(x): return Tensor(x.detach().numpy())
 def to_torch(x):
+  if type(x) == list:
+    ret = []
+    for i in range(len(x)): ret.append(to_torch(x[i]))
+    return ret
   if x.dtype == dtypes.int: return torch.Tensor(x.detach().numpy()).to(torch.int32)
   return torch.Tensor(x.numpy())
 
