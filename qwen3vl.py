@@ -276,8 +276,7 @@ class Qwen3VLVis():
 
   # https://github.com/huggingface/transformers/blob/15bb519bd4277f4ab5309154aedf3c231e8b4ca8/src/transformers/models/qwen3_vl/modeling_qwen3_vl.py#L679
   def __call__(self, pixel_values, image_grid_size):
-    hidden_states = pixel_values.view(-1, 3, 2, 16, 16)
-    hidden_states = hidden_states.flatten(1, 2)  
+    hidden_states = pixel_values.reshape(-1, 6, 16, 16)
     grid_hs, grid_ws = image_grid_size
     
     idx_tensor, weight_tensor = get_vision_bilinear_indices_and_weights(h=grid_hs, w=grid_ws, num_grid_per_side=self.v.num_grid_per_side, spatial_merge_size=self.merge_size)
