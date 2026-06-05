@@ -292,14 +292,11 @@ def get_vision_bilinear_indices_and_weights2(
     grid_thw: list,
     num_grid_per_side: int,
     spatial_merge_size: int
-) -> tuple[torch.Tensor, torch.Tensor]:
+) -> tuple[Tensor, Tensor]:
     side = num_grid_per_side
     merge_size = spatial_merge_size
 
-    idx_parts: list[[]] = [[] for _ in range(4)]
-    weight_parts: list[[]] = [[] for _ in range(4)]
-
-    t, h, w = grid_thw
+    _, h, w = grid_thw
 
     h_grid = Tensor.linspace(0, side - 1, h)
     w_grid = Tensor.linspace(0, side - 1, w)
@@ -317,35 +314,25 @@ def get_vision_bilinear_indices_and_weights2(
     h_floor_offset = h_floor * side
     h_ceil_offset = h_ceil * side
 
-    corner_indices = [
+    corner_indices = Tensor.stack(
       (h_floor_offset[:, None] + w_floor[None, :]).flatten(),
       (h_floor_offset[:, None] + w_ceil[None, :]).flatten(),
       (h_ceil_offset[:, None] + w_floor[None, :]).flatten(),
       (h_ceil_offset[:, None] + w_ceil[None, :]).flatten(),
-    ]
-    corner_weights = [
+    )
+    corner_weights = Tensor.stack(
       ((1 - h_frac)[:, None] * (1 - w_frac)[None, :]).flatten(),
       ((1 - h_frac)[:, None] * w_frac[None, :]).flatten(),
       (h_frac[:, None] * (1 - w_frac)[None, :]).flatten(),
       (h_frac[:, None] * w_frac[None, :]).flatten(),
-    ]
+    )
 
     h_idx = Tensor.arange(h).view(h // merge_size, merge_size)
     w_idx = Tensor.arange(w).view(w // merge_size, merge_size)
-    reorder = (h_idx[:, :, None, None] * w + w_idx[None, None, :, :]).transpose(1, 2).flatten().repeat(t)
-
-    corner_indices = Tensor.stack(corner_indices)
-    corner_weights = Tensor.stack(corner_weights)
-
-    reorder = to_torch(reorder)
-    corner_indices = to_torch(corner_indices)
-    corner_weights = to_torch(corner_weights)
+    reorder = (h_idx[:, :, None, None] * w + w_idx[None, None, :, :]).transpose(1, 2).flatten()
 
     bilinear_indices = corner_indices[:, reorder].reshape(4, -1)
     bilinear_weights = corner_weights[:, reorder].reshape(4, -1)
-
-    bilinear_indices = to_tiny(bilinear_indices)
-    bilinear_weights = to_tiny(bilinear_weights)
 
     return bilinear_indices, bilinear_weights
 
