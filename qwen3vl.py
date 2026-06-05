@@ -276,9 +276,7 @@ class Qwen3VLVis():
 
   # https://github.com/huggingface/transformers/blob/15bb519bd4277f4ab5309154aedf3c231e8b4ca8/src/transformers/models/qwen3_vl/modeling_qwen3_vl.py#L679
   def __call__(self, pixel_values, image_grid_size):
-    hidden_states = pixel_values.reshape(-1, 6, 16, 16)
-    grid_hs, grid_ws = image_grid_size
-    
+    grid_hs, grid_ws = image_grid_size    
     idx_tensor, weight_tensor = get_vision_bilinear_indices_and_weights(h=grid_hs, w=grid_ws, num_grid_per_side=self.v.num_grid_per_side, spatial_merge_size=self.merge_size)
     pos_ids = get_vision_position_ids(h=grid_hs, w=grid_ws, merge_size=self.merge_size)
 
@@ -286,14 +284,8 @@ class Qwen3VLVis():
 
     w = Tensor.stack(self.v.patch_embd.weight, self.v.patch_embd.weight1, dim=2)
     w = w.reshape(w.shape[0], w.shape[1] * w.shape[2], w.shape[3], w.shape[4])
-    hidden_states = hidden_states.conv2d(
-      weight=w,
-      bias=self.v.patch_embd.bias,
-      stride=(self.patch_size, self.patch_size),
-      padding=(0, 0),
-      dilation=(1, 1),
-      groups=1
-    )
+    hidden_states = pixel_values.reshape(-1, *w.shape[1:])
+    hidden_states = hidden_states.conv2d(weight=w, bias=self.v.patch_embd.bias, stride=(self.patch_size, self.patch_size), padding=(0, 0), dilation=(1, 1), groups=1)
     hidden_states = hidden_states.view(hidden_states.shape[0], -1)
     hidden_states += pos_embeds
 
