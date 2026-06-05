@@ -8,8 +8,6 @@ from gguf import gguf_load
 from model import Transformer
 
 TEMP = 0.7
-TOP_K = 20
-TOP_P = 0.8
 
 class SimpleTokenizer:
   def __init__(self, normal_tokens:dict[str, int], special_tokens:dict[str, int], preset:str="llama3",
@@ -112,22 +110,22 @@ class Qwen3VL():
   def prewarm(self):
     for _ in range(2):
       prefill(vis=self.vis, lang=self.lang, image=Tensor.rand(*self.res, 3).cast(dtypes.uint8), start_pos=Variable("pos",0,self.max_context).bind(42))
-      self.lang(tokens=Tensor([[42]]).clone(), start_pos=Variable("pos",1,self.max_context).bind(42), temperature=Tensor(0.7).clone())
+      self.lang(tokens=Tensor([[42]]).clone(), start_pos=Variable("pos",1,self.max_context).bind(42), temperature=Tensor(TEMP).clone())
       self.lang.prefill_jit(tokens=Tensor([[42]*self.max_context]).clone()[:, :Variable("len",1,self.max_context).bind(42)], \
-      start_pos=Variable("pos",1,self.max_context).bind(42), temperature=Tensor(0.7).clone())
+      start_pos=Variable("pos",1,self.max_context).bind(42), temperature=Tensor(TEMP).clone())
 
   def generate(self, prompt=None, image=None, reset=False):
     if reset: self.start_pos = 0
     if image is not None:
       prefill_img(vis=self.vis, lang=self.lang, image=image, start_pos=Variable("pos",0,self.max_context).bind(self.start_pos), res=self.res)
-      self.start_pos += ((self.res[0] * self.res[1]) // (32*32)) + 8
+      self.start_pos += ((self.res[0] * self.res[1]) // (32*32)) + 8 # todo unhardcode
     if prompt is None: return
     prompt = "<|im_start|>user\n" + prompt + "<|im_end|>\n<|im_start|>assistant\n"
     prompt = self.tok.encode(prompt)
     prompt_len = len(prompt)
     prompt = prompt + [0] * (self.max_context - prompt_len)
     tokens = Tensor(prompt).unsqueeze(0)
-    token = self.lang.prefill_jit(tokens=tokens[:, :Variable("len",1,self.max_context).bind(prompt_len)], start_pos=Variable("pos",1,self.max_context).bind(self.start_pos), temperature=Tensor(0.7).clone())[0]
+    token = self.lang.prefill_jit(tokens=tokens[:, :Variable("len",1,self.max_context).bind(prompt_len)], start_pos=Variable("pos",1,self.max_context).bind(self.start_pos), temperature=Tensor(TEMP).clone())[0]
     self.start_pos += prompt_len
     toks_out = []
     decoded = ""
@@ -135,7 +133,7 @@ class Qwen3VL():
     while True:
       ts = time.time()
       if toks_out:
-        token = self.lang(tokens=next_token_tensor.clone(), start_pos=Variable("pos",1,self.max_context).bind(self.start_pos), temperature=Tensor(0.7).clone())[0]
+        token = self.lang(tokens=next_token_tensor.clone(), start_pos=Variable("pos",1,self.max_context).bind(self.start_pos), temperature=Tensor(TEMP).clone())[0]
         self.start_pos += 1
       next_token = int(token.numpy()[0])
       next_token_tensor = Tensor([[next_token]])
@@ -164,7 +162,7 @@ def prefill(vis, lang, image, start_pos):
   image = image.unsqueeze(0).float()
   image = image.interpolate(size=(height, width))
   resized_height, resized_width = image.shape[-2:]
-  patches = (image - 127.5) / 127.5
+  patches = (image - 127.5) / 127.5 # todo use mean and std
   batch_size, channel = 1, 3
   # https://github.com/huggingface/transformers/blob/4ae05b0fba41860adaaeb708774fc1f48c92c049/src/transformers/models/qwen2_vl/image_processing_qwen2_vl.py#L195
   grid_h, grid_w = resized_height // vis.patch_size, resized_width // vis.patch_size
@@ -304,18 +302,19 @@ class Qwen3VLVis():
     image_embeds = self.mm[2](image_embeds)
     return image_embeds, hidden_states, deepstack_feature_lists
 
-class Qwen3PatchEmbed():
+class Qwen3PatchEmbed:
   def __init__(self, kv=None, weights=None):
     self.weight = Tensor.zeros(weights["v.patch_embd.weight"].shape)
     self.weight1 = Tensor.zeros(weights["v.patch_embd.weight.1"].shape)
     self.bias = Tensor.zeros(kv["clip.vision.embedding_length"])
     
-class Qwen3VisBlocks():
+class Qwen3VisBlocks:
   def __init__(self, kv=None, weights=None):
     self.blk = []
     for _ in range(kv["clip.vision.block_count"]): self.blk.append(Qwen3VisBlock(kv, weights=weights))
     self.patch_embd = Qwen3PatchEmbed(kv=kv, weights=weights)
-    self.num_grid_per_side = 48 # todo unhardcode
+    #https://github.com/huggingface/transformers/blob/effde20942e3f82a1b97449f60b3a48c5ff96145/src/transformers/models/qwen3_vl/modeling_qwen3_vl.py#L628
+    self.num_grid_per_side = int(weights["v.position_embd.weight"].shape[0]**0.5)
     self.deepstack_layers = kv["clip.vision.is_deepstack_layers"]
     self.deepstack_idx = [i for i, val in enumerate(self.deepstack_layers) if val]
     self.deepstack = []
@@ -339,7 +338,7 @@ class DeepstackLayer:
     deepstack_feature = (hidden_states.view(-1, self.hidden_size)).view(-1, self.hidden_size)
     return self.fc2(Tensor.gelu(self.fc1(deepstack_feature)))
 
-class Qwen3VisBlock():
+class Qwen3VisBlock:
   def __init__(self, kv=None, weights=None):
     self.num_heads = kv["clip.vision.attention.head_count"]
     self.ffn_up = nn.Linear(kv["clip.vision.embedding_length"], kv["clip.vision.feed_forward_length"])
