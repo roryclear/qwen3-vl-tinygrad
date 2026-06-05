@@ -316,25 +316,26 @@ def get_vision_bilinear_indices_and_weights2(
     h_ceil_offset = h_ceil * side
 
     corner_indices = [
-        (h_floor_offset[:, None] + w_floor[None, :]).flatten(),
-        (h_floor_offset[:, None] + w_ceil[None, :]).flatten(),
-        (h_ceil_offset[:, None] + w_floor[None, :]).flatten(),
-        (h_ceil_offset[:, None] + w_ceil[None, :]).flatten(),
+      (h_floor_offset[:, None] + w_floor[None, :]).flatten(),
+      (h_floor_offset[:, None] + w_ceil[None, :]).flatten(),
+      (h_ceil_offset[:, None] + w_floor[None, :]).flatten(),
+      (h_ceil_offset[:, None] + w_ceil[None, :]).flatten(),
     ]
     corner_weights = [
-        ((1 - h_frac)[:, None] * (1 - w_frac)[None, :]).flatten(),
-        ((1 - h_frac)[:, None] * w_frac[None, :]).flatten(),
-        (h_frac[:, None] * (1 - w_frac)[None, :]).flatten(),
-        (h_frac[:, None] * w_frac[None, :]).flatten(),
+      ((1 - h_frac)[:, None] * (1 - w_frac)[None, :]).flatten(),
+      ((1 - h_frac)[:, None] * w_frac[None, :]).flatten(),
+      (h_frac[:, None] * (1 - w_frac)[None, :]).flatten(),
+      (h_frac[:, None] * w_frac[None, :]).flatten(),
     ]
 
-    h_idx = torch.arange(h).view(h // merge_size, merge_size)
-    w_idx = torch.arange(w).view(w // merge_size, merge_size)
+    h_idx = Tensor.arange(h).view(h // merge_size, merge_size)
+    w_idx = Tensor.arange(w).view(w // merge_size, merge_size)
     reorder = (h_idx[:, :, None, None] * w + w_idx[None, None, :, :]).transpose(1, 2).flatten().repeat(t)
+    reorder = to_torch(reorder)
 
     for i in range(4):
-        idx_parts[i].append(corner_indices[i][reorder])
-        weight_parts[i].append(corner_weights[i][reorder])
+      idx_parts[i].append(corner_indices[i][reorder])
+      weight_parts[i].append(corner_weights[i][reorder])
 
     bilinear_indices = torch.stack([torch.cat(p) for p in idx_parts])
     bilinear_weights = torch.stack([torch.cat(p) for p in weight_parts])
@@ -345,7 +346,9 @@ def get_vision_bilinear_indices_and_weights2(
     return bilinear_indices, bilinear_weights
 
 def to_tiny(x): return Tensor(x.detach().numpy())
-def to_torch(x): return torch.Tensor(x.numpy())
+def to_torch(x):
+  if x.dtype == dtypes.int: return torch.Tensor(x.detach().numpy()).to(torch.int32)
+  return torch.Tensor(x.numpy())
 
 class Qwen3VLVis():
   def __init__(self, size="2B"):
