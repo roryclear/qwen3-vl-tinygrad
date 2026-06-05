@@ -351,6 +351,7 @@ class DeepstackLayer:
 
 class Qwen3VisBlock():
   def __init__(self, kv=None, weights=None):
+    self.num_heads = kv["clip.vision.attention.head_count"]
     self.ffn_up = nn.Linear(kv["clip.vision.embedding_length"], kv["clip.vision.feed_forward_length"])
     self.ffn_down = nn.Linear(kv["clip.vision.feed_forward_length"], kv["clip.vision.embedding_length"])
     self.ln1 = nn.LayerNorm(kv["clip.vision.embedding_length"], eps=1e-6, elementwise_affine=True)
@@ -362,7 +363,7 @@ class Qwen3VisBlock():
     hidden_states_input = self.ln1(hidden_states)
     qkv = self.attn_qkv(hidden_states_input)
     # https://github.com/huggingface/transformers/blob/1316cd76c0ce328228e08d55dc257484961b074c/src/transformers/models/qwen3_vl/modeling_qwen3_vl.py#L186
-    qkv = qkv.reshape(qkv.shape[0], 3, 16, -1).permute(1, 0, 2, 3)
+    qkv = qkv.reshape(qkv.shape[0], 3, self.num_heads, -1).permute(1, 0, 2, 3)
     query, key, value = qkv[0], qkv[1], qkv[2]
     query, key = apply_rotary_pos_emb_vision(query, key, cos, sin)
     query = query.transpose(0, 1).unsqueeze(0)
