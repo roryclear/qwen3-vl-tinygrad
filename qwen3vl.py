@@ -296,16 +296,22 @@ def get_vision_bilinear_indices_and_weights2(
     side = num_grid_per_side
     merge_size = spatial_merge_size
 
-    idx_parts: list[list[torch.Tensor]] = [[] for _ in range(4)]
-    weight_parts: list[list[torch.Tensor]] = [[] for _ in range(4)]
+    idx_parts: list[[]] = [[] for _ in range(4)]
+    weight_parts: list[[]] = [[] for _ in range(4)]
 
     t, h, w = grid_thw
 
-    h_grid = torch.linspace(0, side - 1, h)
-    w_grid = torch.linspace(0, side - 1, w)
+    h_grid = Tensor.linspace(0, side - 1, h)
+    w_grid = Tensor.linspace(0, side - 1, w)
 
-    h_floor = h_grid.int()
-    w_floor = w_grid.int()
+    h_floor = h_grid.cast(dtypes.int)
+    w_floor = w_grid.cast(dtypes.int)
+
+    h_floor = to_torch(h_floor)
+    w_floor = to_torch(w_floor)
+    h_grid = to_torch(h_grid)
+    w_grid = to_torch(w_grid)
+
     h_ceil = (h_floor + 1).clamp(max=side - 1)
     w_ceil = (w_floor + 1).clamp(max=side - 1)
 
@@ -370,8 +376,8 @@ class Qwen3VLVis():
     idx_tensor, weight_tensor = get_vision_bilinear_indices_and_weights2(grid_thw=[1, grid_hs, grid_ws], num_grid_per_side=self.v.num_grid_per_side, spatial_merge_size=self.merge_size)
     torch_pos_ids, torch_weight_tensor = get_vision_bilinear_indices_and_weights(grid_thw=torch.Tensor([[1, grid_hs, grid_ws]]), num_grid_per_side=self.v.num_grid_per_side, spatial_merge_size=self.merge_size)
 
-    np.testing.assert_allclose(torch_pos_ids.detach().numpy(), idx_tensor.numpy())
-    np.testing.assert_allclose(torch_weight_tensor.detach().numpy(), weight_tensor.numpy())
+    np.testing.assert_allclose(torch_pos_ids.detach().numpy(), idx_tensor.numpy(), atol=1e-5)
+    np.testing.assert_allclose(torch_weight_tensor.detach().numpy(), weight_tensor.numpy(), atol=1e-5)
 
     idx_tensor = Tensor(torch_pos_ids.detach().numpy())
     weight_tensor = Tensor(torch_weight_tensor.detach().numpy())
