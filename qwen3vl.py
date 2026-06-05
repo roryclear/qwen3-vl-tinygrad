@@ -181,11 +181,11 @@ def prefill(vis, lang, image, start_pos):
   patches = patches.permute(0, 2, 5, 3, 6, 1, 4, 7)
   pixel_values = (
       patches.unsqueeze(6)
-      .expand(-1, -1, -1, -1, -1, -1, vis.temporal_patch_size, -1, -1)
+      .expand(-1, -1, -1, -1, -1, -1, vis.merge_size, -1, -1)
       .reshape(
           batch_size,
           grid_h * grid_w,
-          channel * vis.temporal_patch_size * vis.patch_size * vis.patch_size,
+          channel * vis.merge_size * vis.patch_size * vis.patch_size,
       )
   )[0]
   pixel_values = pixel_values.cast(dtypes.bfloat16)
@@ -215,9 +215,8 @@ def meshgrid(x, y):
   grid_y = Tensor.cat(*[y.unsqueeze(0)]*x.shape[0])
   return grid_x.reshape(-1, 1), grid_y.reshape(-1, 1)
 
-def get_vision_bilinear_indices_and_weights(h: int, w: int, num_grid_per_side: int, spatial_merge_size: int ) -> tuple[Tensor, Tensor]:
+def get_vision_bilinear_indices_and_weights(h: int, w: int, num_grid_per_side: int, merge_size: int ) -> tuple[Tensor, Tensor]:
   side = num_grid_per_side
-  merge_size = spatial_merge_size
 
   h_grid = Tensor.linspace(0, side - 1, h)
   w_grid = Tensor.linspace(0, side - 1, w)
@@ -266,18 +265,17 @@ class Qwen3VLVis():
     kv, state_dict = gguf_load(fetch(f"https://huggingface.co/Qwen/Qwen3-VL-{size}-Instruct-GGUF/resolve/main/mmproj-Qwen3VL-{size}-Instruct-F16.gguf"))
     self.merge_size = kv["clip.vision.spatial_merge_size"]
     self.patch_size = kv["clip.vision.patch_size"]
-    self.temporal_patch_size = 2
     self.v = Qwen3VisBlocks(kv=kv, weights=state_dict)
     self.mm = [nn.Linear(*state_dict["mm.0.weight"].shape[::-1], bias=True), None, nn.Linear(*state_dict["mm.2.weight"].shape[::-1], bias=True)]
     state_dict["v.patch_embd.weight1"] = state_dict["v.patch_embd.weight.1"]
     load_state_dict(self, state_dict)
-    # todo https://github.com/huggingface/transformers/blob/15bb519bd4277f4ab5309154aedf3c231e8b4ca8/src/transformers/models/qwen3_vl/modeling_qwen3_vl.py#L98
+    #https://github.com/huggingface/transformers/blob/15bb519bd4277f4ab5309154aedf3c231e8b4ca8/src/transformers/models/qwen3_vl/modeling_qwen3_vl.py#L98
     self.inv_freq = 1.0 / (10000.0 ** (Tensor.arange(0, 32, 2, dtype=dtypes.float) / 32))
 
   # https://github.com/huggingface/transformers/blob/15bb519bd4277f4ab5309154aedf3c231e8b4ca8/src/transformers/models/qwen3_vl/modeling_qwen3_vl.py#L679
   def __call__(self, pixel_values, image_grid_size):
     grid_hs, grid_ws = image_grid_size    
-    idx_tensor, weight_tensor = get_vision_bilinear_indices_and_weights(h=grid_hs, w=grid_ws, num_grid_per_side=self.v.num_grid_per_side, spatial_merge_size=self.merge_size)
+    idx_tensor, weight_tensor = get_vision_bilinear_indices_and_weights(h=grid_hs, w=grid_ws, num_grid_per_side=self.v.num_grid_per_side, merge_size=self.merge_size)
     pos_ids = get_vision_position_ids(h=grid_hs, w=grid_ws, merge_size=self.merge_size)
 
     pos_embeds = (self.v.position_embd(idx_tensor) * weight_tensor[:, :, None]).sum(axis=0)
