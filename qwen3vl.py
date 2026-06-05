@@ -285,10 +285,9 @@ class Qwen3VLVis():
     pos_embeds = (self.v.position_embd(idx_tensor) * weight_tensor[:, :, None]).sum(axis=0)
 
     w = Tensor.stack(self.v.patch_embd.weight, self.v.patch_embd.weight1, dim=2)
-    out_C, in_C, kD, kH, kW = w.shape
-    w2d = w.reshape(out_C, in_C * kD, kH, kW)
+    w = w.reshape(w.shape[0], w.shape[1] * w.shape[2], w.shape[3], w.shape[4])
     hidden_states = hidden_states.conv2d(
-      weight=w2d,
+      weight=w,
       bias=self.v.patch_embd.bias,
       stride=(16, 16),
       padding=(0, 0),
