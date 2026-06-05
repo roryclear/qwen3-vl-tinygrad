@@ -1,7 +1,7 @@
 import unicodedata, re, math, typing, sys, cv2, time
 import numpy as np
 from tinygrad import Tensor, nn, TinyJit, Variable, dtypes
-Tensor.manual_seed(42)
+Tensor.manual_seed(420)
 from tinygrad.nn.state import safe_load, load_state_dict
 from tinygrad.helpers import partition, fetch
 from gguf import gguf_load
@@ -215,6 +215,79 @@ def meshgrid(x, y):
   grid_y = Tensor.cat(*[y.unsqueeze(0)]*x.shape[0])
   return grid_x.reshape(-1, 1), grid_y.reshape(-1, 1)
 
+import torch
+def get_vision_bilinear_indices_and_weights(
+    grid_thw: torch.Tensor,
+    num_grid_per_side: int,
+    spatial_merge_size: int,
+    kwargs: dict | None = None,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Get bilinear interpolation indices/weights, or pop `"bilinear_indices"`/`"bilinear_weights"` from `kwargs` if both precomputed.
+
+    Args:
+        grid_thw: `(num_images_or_videos, 3)`
+        num_grid_per_side: `int(num_position_embeddings ** 0.5)` from vision config.
+        spatial_merge_size: merge block size from vision config.
+        kwargs: optional caller kwargs — if it contains both `"bilinear_indices"` and `"bilinear_weights"` they are popped and returned.
+
+    Returns:
+        `bilinear_indices`: `(4, total_thw)` long — bilinear corner indices into pos_embed table.
+        `bilinear_weights`: `(4, total_thw)` float — interpolation weights.
+    """
+    if kwargs is not None:
+        bilinear_indices = kwargs.pop("bilinear_indices", None)
+        bilinear_weights = kwargs.pop("bilinear_weights", None)
+        if bilinear_indices is not None and bilinear_weights is not None:
+            return bilinear_indices, bilinear_weights
+    side = num_grid_per_side
+    merge_size = spatial_merge_size
+    device = grid_thw.device
+
+    idx_parts: list[list[torch.Tensor]] = [[] for _ in range(4)]
+    weight_parts: list[list[torch.Tensor]] = [[] for _ in range(4)]
+
+    for t, h, w in grid_thw.tolist():
+        t, h, w = int(t), int(h), int(w)
+
+        h_grid = torch.linspace(0, side - 1, h, device=device)
+        w_grid = torch.linspace(0, side - 1, w, device=device)
+
+        h_floor = h_grid.int()
+        w_floor = w_grid.int()
+        h_ceil = (h_floor + 1).clamp(max=side - 1)
+        w_ceil = (w_floor + 1).clamp(max=side - 1)
+
+        h_frac = h_grid - h_floor
+        w_frac = w_grid - w_floor
+
+        h_floor_offset = h_floor * side
+        h_ceil_offset = h_ceil * side
+
+        corner_indices = [
+            (h_floor_offset[:, None] + w_floor[None, :]).flatten(),
+            (h_floor_offset[:, None] + w_ceil[None, :]).flatten(),
+            (h_ceil_offset[:, None] + w_floor[None, :]).flatten(),
+            (h_ceil_offset[:, None] + w_ceil[None, :]).flatten(),
+        ]
+        corner_weights = [
+            ((1 - h_frac)[:, None] * (1 - w_frac)[None, :]).flatten(),
+            ((1 - h_frac)[:, None] * w_frac[None, :]).flatten(),
+            (h_frac[:, None] * (1 - w_frac)[None, :]).flatten(),
+            (h_frac[:, None] * w_frac[None, :]).flatten(),
+        ]
+
+        h_idx = torch.arange(h, device=device).view(h // merge_size, merge_size)
+        w_idx = torch.arange(w, device=device).view(w // merge_size, merge_size)
+        reorder = (h_idx[:, :, None, None] * w + w_idx[None, None, :, :]).transpose(1, 2).flatten().repeat(t)
+
+        for i in range(4):
+            idx_parts[i].append(corner_indices[i][reorder])
+            weight_parts[i].append(corner_weights[i][reorder])
+
+    bilinear_indices = torch.stack([torch.cat(p) for p in idx_parts])
+    bilinear_weights = torch.stack([torch.cat(p) for p in weight_parts])
+    return bilinear_indices, bilinear_weights
+
 class Qwen3VLVis():
   def __init__(self, size="2B"):
     kv, state_dict = gguf_load(fetch(f"https://huggingface.co/Qwen/Qwen3-VL-{size}-Instruct-GGUF/resolve/main/mmproj-Qwen3VL-{size}-Instruct-F16.gguf"))
@@ -254,6 +327,12 @@ class Qwen3VLVis():
         (dh_grid * dw_grid).flatten(),
     )
     
+
+    torch_pos_ids, torch_weight_tensor = get_vision_bilinear_indices_and_weights(grid_thw=torch.Tensor([[1, grid_hs, grid_ws]]), num_grid_per_side=self.v.num_grid_per_side, spatial_merge_size=self.merge_size)
+
+    idx_tensor = Tensor(torch_pos_ids.detach().numpy())
+    weight_tensor = Tensor(torch_weight_tensor.detach().numpy())
+
     hpos_ids = Tensor.arange(grid_hs).unsqueeze(1).expand(-1, grid_ws)
     hpos_ids = hpos_ids.reshape(grid_hs // self.merge_size, self.merge_size, grid_ws // self.merge_size, self.merge_size).transpose(1, 2).flatten()
     wpos_ids = Tensor.arange(grid_ws).unsqueeze(0).expand(grid_hs, -1)
