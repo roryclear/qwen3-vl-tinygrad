@@ -333,16 +333,16 @@ def get_vision_bilinear_indices_and_weights2(
     h_idx = Tensor.arange(h).view(h // merge_size, merge_size)
     w_idx = Tensor.arange(w).view(w // merge_size, merge_size)
     reorder = (h_idx[:, :, None, None] * w + w_idx[None, None, :, :]).transpose(1, 2).flatten().repeat(t)
+
+    corner_indices = Tensor.stack(corner_indices)
+    corner_weights = Tensor.stack(corner_weights)
+
     reorder = to_torch(reorder)
     corner_indices = to_torch(corner_indices)
     corner_weights = to_torch(corner_weights)
 
-    for i in range(4):
-      idx_parts[i].append(corner_indices[i][reorder])
-      weight_parts[i].append(corner_weights[i][reorder])
-
-    bilinear_indices = torch.stack([torch.cat(p) for p in idx_parts])
-    bilinear_weights = torch.stack([torch.cat(p) for p in weight_parts])
+    bilinear_indices = corner_indices[:, reorder].reshape(4, -1)
+    bilinear_weights = corner_weights[:, reorder].reshape(4, -1)
 
     bilinear_indices = to_tiny(bilinear_indices)
     bilinear_weights = to_tiny(bilinear_weights)
