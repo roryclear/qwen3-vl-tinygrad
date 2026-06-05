@@ -1,7 +1,7 @@
 import unicodedata, re, math, typing, sys, cv2, time
 import numpy as np
 from tinygrad import Tensor, nn, TinyJit, Variable, dtypes
-Tensor.manual_seed(42)
+Tensor.manual_seed(1)
 from tinygrad.nn.state import safe_load, load_state_dict
 from tinygrad.helpers import partition, fetch
 from gguf import gguf_load
@@ -215,6 +215,44 @@ def meshgrid(x, y):
   grid_y = Tensor.cat(*[y.unsqueeze(0)]*x.shape[0])
   return grid_x.reshape(-1, 1), grid_y.reshape(-1, 1)
 
+def get_vision_bilinear_indices_and_weights(h: int, w: int, num_grid_per_side: int, spatial_merge_size: int ) -> tuple[Tensor, Tensor]:
+  side = num_grid_per_side
+  merge_size = spatial_merge_size
+
+  h_grid = Tensor.linspace(0, side - 1, h)
+  w_grid = Tensor.linspace(0, side - 1, w)
+  h_floor = h_grid.cast(dtypes.int)
+  w_floor = w_grid.cast(dtypes.int)
+
+  h_ceil = (h_floor + 1).clamp(max_=side - 1)
+  w_ceil = (w_floor + 1).clamp(max_=side - 1)
+
+  h_frac = h_grid - h_floor
+  w_frac = w_grid - w_floor
+
+  h_floor_offset = h_floor * side
+  h_ceil_offset = h_ceil * side
+
+  corner_indices = Tensor.stack(
+    (h_floor_offset[:, None] + w_floor[None, :]).flatten(),
+    (h_floor_offset[:, None] + w_ceil[None, :]).flatten(),
+    (h_ceil_offset[:, None] + w_floor[None, :]).flatten(),
+    (h_ceil_offset[:, None] + w_ceil[None, :]).flatten(),
+  )
+  corner_weights = Tensor.stack(
+    ((1 - h_frac)[:, None] * (1 - w_frac)[None, :]).flatten(),
+    ((1 - h_frac)[:, None] * w_frac[None, :]).flatten(),
+    (h_frac[:, None] * (1 - w_frac)[None, :]).flatten(),
+    (h_frac[:, None] * w_frac[None, :]).flatten(),
+  )
+
+  h_idx = Tensor.arange(h).view(h // merge_size, merge_size)
+  w_idx = Tensor.arange(w).view(w // merge_size, merge_size)
+  reorder = (h_idx[:, :, None, None] * w + w_idx[None, None, :, :]).transpose(1, 2).flatten()
+  bilinear_indices = corner_indices[:, reorder].reshape(4, -1)
+  bilinear_weights = corner_weights[:, reorder].reshape(4, -1)
+  return bilinear_indices, bilinear_weights
+
 class Qwen3VLVis():
   def __init__(self, size="2B"):
     kv, state_dict = gguf_load(fetch(f"https://huggingface.co/Qwen/Qwen3-VL-{size}-Instruct-GGUF/resolve/main/mmproj-Qwen3VL-{size}-Instruct-F16.gguf"))
@@ -231,29 +269,9 @@ class Qwen3VLVis():
   # https://github.com/huggingface/transformers/blob/15bb519bd4277f4ab5309154aedf3c231e8b4ca8/src/transformers/models/qwen3_vl/modeling_qwen3_vl.py#L679
   def __call__(self, pixel_values, image_grid_size):        
     grid_hs, grid_ws = image_grid_size
-    h, w = Tensor.linspace(0, self.v.num_grid_per_side - 1, grid_hs).cast(dtypes.bfloat16), Tensor.linspace(0, self.v.num_grid_per_side - 1, grid_ws).cast(dtypes.bfloat16)
-    h_floor, w_floor = h.cast(dtypes.int32), w.cast(dtypes.int32)
-    h_ceil, w_ceil = (h_floor + 1).clip(self.v.num_grid_per_side - 1), (w_floor + 1).clip(self.v.num_grid_per_side - 1)
-    dh, dw = h - h_floor, w - w_floor
     
-    h_vals, w_vals = meshgrid(h_floor, w_floor)
-    h_vals_ceil, w_vals_ceil = meshgrid(h_ceil, w_ceil)
-    
-    idx_tensor = Tensor.stack(
-        (h_vals * self.v.num_grid_per_side + w_vals).flatten(),
-        (h_vals * self.v.num_grid_per_side + w_vals_ceil).flatten(),
-        (h_vals_ceil * self.v.num_grid_per_side + w_vals).flatten(),
-        (h_vals_ceil * self.v.num_grid_per_side + w_vals_ceil).flatten(),
-    ).cast(dtypes.int32)
-    
-    dh_grid, dw_grid = meshgrid(dh, dw)
-    weight_tensor = Tensor.stack(
-        ((1 - dh_grid) * (1 - dw_grid)).flatten(),
-        ((1 - dh_grid) * dw_grid).flatten(),
-        (dh_grid * (1 - dw_grid)).flatten(),
-        (dh_grid * dw_grid).flatten(),
-    )
-    
+    idx_tensor, weight_tensor = get_vision_bilinear_indices_and_weights(h=grid_hs, w=grid_ws, num_grid_per_side=self.v.num_grid_per_side, spatial_merge_size=self.merge_size)
+
     hpos_ids = Tensor.arange(grid_hs).unsqueeze(1).expand(-1, grid_ws)
     hpos_ids = hpos_ids.reshape(grid_hs // self.merge_size, self.merge_size, grid_ws // self.merge_size, self.merge_size).transpose(1, 2).flatten()
     wpos_ids = Tensor.arange(grid_ws).unsqueeze(0).expand(grid_hs, -1)
