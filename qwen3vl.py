@@ -315,16 +315,16 @@ class Qwen3VLVis():
     return image_embeds, hidden_states, deepstack_feature_lists
 
 class Qwen3PatchEmbed():
-  def __init__(self, kv=None):
-    self.weight = Tensor.zeros(kv["clip.vision.embedding_length"], 3, 16, 16)
-    self.weight1 = Tensor.zeros(kv["clip.vision.embedding_length"], 3, 16, 16)
+  def __init__(self, kv=None, weights=None):
+    self.weight = Tensor.zeros(weights["v.patch_embd.weight"].shape)
+    self.weight1 = Tensor.zeros(weights["v.patch_embd.weight.1"].shape)
     self.bias = Tensor.zeros(kv["clip.vision.embedding_length"])
     
 class Qwen3VisBlocks():
   def __init__(self, kv=None, weights=None):
     self.blk = []
     for _ in range(kv["clip.vision.block_count"]): self.blk.append(Qwen3VisBlock(kv, weights=weights))
-    self.patch_embd = Qwen3PatchEmbed(kv=kv)
+    self.patch_embd = Qwen3PatchEmbed(kv=kv, weights=weights)
     self.num_grid_per_side = 48 # todo unhardcode
     self.deepstack_layers = kv["clip.vision.is_deepstack_layers"]
     self.deepstack_idx = [i for i, val in enumerate(self.deepstack_layers) if val]
