@@ -225,6 +225,7 @@ class Qwen3VLVis():
     self.mm = [nn.Linear(*state_dict["mm.0.weight"].shape[::-1], bias=True), None, nn.Linear(*state_dict["mm.2.weight"].shape[::-1], bias=True)]
     state_dict["v.patch_embd.weight1"] = state_dict["v.patch_embd.weight.1"]
     load_state_dict(self, state_dict)
+    # todo https://github.com/huggingface/transformers/blob/15bb519bd4277f4ab5309154aedf3c231e8b4ca8/src/transformers/models/qwen3_vl/modeling_qwen3_vl.py#L98
     self.inv_freq = 1.0 / (10000.0 ** (Tensor.arange(0, 32, 2, dtype=dtypes.float) / 32))
 
   # https://github.com/huggingface/transformers/blob/15bb519bd4277f4ab5309154aedf3c231e8b4ca8/src/transformers/models/qwen3_vl/modeling_qwen3_vl.py#L679
@@ -244,6 +245,7 @@ class Qwen3VLVis():
         (h_vals_ceil * self.v.num_grid_per_side + w_vals).flatten(),
         (h_vals_ceil * self.v.num_grid_per_side + w_vals_ceil).flatten(),
     ).cast(dtypes.int32)
+    
     dh_grid, dw_grid = meshgrid(dh, dw)
     weight_tensor = Tensor.stack(
         ((1 - dh_grid) * (1 - dw_grid)).flatten(),
@@ -251,18 +253,18 @@ class Qwen3VLVis():
         (dh_grid * (1 - dw_grid)).flatten(),
         (dh_grid * dw_grid).flatten(),
     )
+    
+    hpos_ids = Tensor.arange(grid_hs).unsqueeze(1).expand(-1, grid_ws)
+    hpos_ids = hpos_ids.reshape(grid_hs // self.merge_size, self.merge_size, grid_ws // self.merge_size, self.merge_size).transpose(1, 2).flatten()
+    wpos_ids = Tensor.arange(grid_ws).unsqueeze(0).expand(grid_hs, -1)
+    wpos_ids = wpos_ids.reshape(grid_hs // self.merge_size, self.merge_size, grid_ws //self. merge_size, self.merge_size).transpose(1, 2).flatten()
+    pos_ids = Tensor.stack(hpos_ids, wpos_ids, dim=-1).repeat(1, 1)
 
     pos_embeds = self.v.position_embd(idx_tensor)
     pos_embeds *= weight_tensor[:, :, None]
     pos_embeds = pos_embeds.sum(axis=0)
 
     pos_embeds = (pos_embeds.view(1, grid_hs // self.merge_size, self.merge_size, grid_ws // self.merge_size, self.merge_size, -1).permute(0, 1, 3, 2, 4, 5).flatten(0, 4))
-    hpos_ids = Tensor.arange(grid_hs).unsqueeze(1).expand(-1, grid_ws)
-    hpos_ids = hpos_ids.reshape(grid_hs // self.merge_size, self.merge_size, grid_ws // self.merge_size, self.merge_size).transpose(1, 2).flatten()
-    wpos_ids = Tensor.arange(grid_ws).unsqueeze(0).expand(grid_hs, -1)
-    wpos_ids = wpos_ids.reshape(grid_hs // self.merge_size, self.merge_size, grid_ws //self. merge_size, self.merge_size).transpose(1, 2).flatten()
-    pos_ids = Tensor.stack(hpos_ids, wpos_ids, dim=-1).repeat(1, 1)
-    rotary_pos_emb = (pos_ids.unsqueeze(-1) * self.inv_freq).flatten(1)
 
     hidden_states = pixel_values.view(-1, 3, 2, 16, 16)
     hidden_states = hidden_states.flatten(1, 2)
@@ -281,6 +283,7 @@ class Qwen3VLVis():
     hidden_states = hidden_states.view(hidden_states.shape[0], -1)
     hidden_states = hidden_states + pos_embeds
 
+    rotary_pos_emb = (pos_ids.unsqueeze(-1) * self.inv_freq).flatten(1)
     emb = Tensor.cat(rotary_pos_emb, rotary_pos_emb, dim=-1)
     cos, sin = emb.cos(), emb.sin()
     cos, sin = cos.unsqueeze(-2), sin.unsqueeze(-2)
