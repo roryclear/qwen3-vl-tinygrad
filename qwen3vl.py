@@ -288,53 +288,47 @@ def get_vision_bilinear_indices_and_weights(
     bilinear_weights = torch.stack([torch.cat(p) for p in weight_parts])
     return bilinear_indices, bilinear_weights
 
-def get_vision_bilinear_indices_and_weights2(
-    grid_thw: list,
-    num_grid_per_side: int,
-    spatial_merge_size: int
-) -> tuple[Tensor, Tensor]:
-    side = num_grid_per_side
-    merge_size = spatial_merge_size
+def get_vision_bilinear_indices_and_weights2(h: int, w: int, num_grid_per_side: int, spatial_merge_size: int ) -> tuple[Tensor, Tensor]:
+  side = num_grid_per_side
+  merge_size = spatial_merge_size
 
-    _, h, w = grid_thw
+  h_grid = Tensor.linspace(0, side - 1, h)
+  w_grid = Tensor.linspace(0, side - 1, w)
 
-    h_grid = Tensor.linspace(0, side - 1, h)
-    w_grid = Tensor.linspace(0, side - 1, w)
+  h_floor = h_grid.cast(dtypes.int)
+  w_floor = w_grid.cast(dtypes.int)
 
-    h_floor = h_grid.cast(dtypes.int)
-    w_floor = w_grid.cast(dtypes.int)
-
-    h_ceil = (h_floor + 1).clamp(max_=side - 1)
-    w_ceil = (w_floor + 1).clamp(max_=side - 1)
+  h_ceil = (h_floor + 1).clamp(max_=side - 1)
+  w_ceil = (w_floor + 1).clamp(max_=side - 1)
 
 
-    h_frac = h_grid - h_floor
-    w_frac = w_grid - w_floor
+  h_frac = h_grid - h_floor
+  w_frac = w_grid - w_floor
 
-    h_floor_offset = h_floor * side
-    h_ceil_offset = h_ceil * side
+  h_floor_offset = h_floor * side
+  h_ceil_offset = h_ceil * side
 
-    corner_indices = Tensor.stack(
-      (h_floor_offset[:, None] + w_floor[None, :]).flatten(),
-      (h_floor_offset[:, None] + w_ceil[None, :]).flatten(),
-      (h_ceil_offset[:, None] + w_floor[None, :]).flatten(),
-      (h_ceil_offset[:, None] + w_ceil[None, :]).flatten(),
-    )
-    corner_weights = Tensor.stack(
-      ((1 - h_frac)[:, None] * (1 - w_frac)[None, :]).flatten(),
-      ((1 - h_frac)[:, None] * w_frac[None, :]).flatten(),
-      (h_frac[:, None] * (1 - w_frac)[None, :]).flatten(),
-      (h_frac[:, None] * w_frac[None, :]).flatten(),
-    )
+  corner_indices = Tensor.stack(
+    (h_floor_offset[:, None] + w_floor[None, :]).flatten(),
+    (h_floor_offset[:, None] + w_ceil[None, :]).flatten(),
+    (h_ceil_offset[:, None] + w_floor[None, :]).flatten(),
+    (h_ceil_offset[:, None] + w_ceil[None, :]).flatten(),
+  )
+  corner_weights = Tensor.stack(
+    ((1 - h_frac)[:, None] * (1 - w_frac)[None, :]).flatten(),
+    ((1 - h_frac)[:, None] * w_frac[None, :]).flatten(),
+    (h_frac[:, None] * (1 - w_frac)[None, :]).flatten(),
+    (h_frac[:, None] * w_frac[None, :]).flatten(),
+  )
 
-    h_idx = Tensor.arange(h).view(h // merge_size, merge_size)
-    w_idx = Tensor.arange(w).view(w // merge_size, merge_size)
-    reorder = (h_idx[:, :, None, None] * w + w_idx[None, None, :, :]).transpose(1, 2).flatten()
+  h_idx = Tensor.arange(h).view(h // merge_size, merge_size)
+  w_idx = Tensor.arange(w).view(w // merge_size, merge_size)
+  reorder = (h_idx[:, :, None, None] * w + w_idx[None, None, :, :]).transpose(1, 2).flatten()
 
-    bilinear_indices = corner_indices[:, reorder].reshape(4, -1)
-    bilinear_weights = corner_weights[:, reorder].reshape(4, -1)
+  bilinear_indices = corner_indices[:, reorder].reshape(4, -1)
+  bilinear_weights = corner_weights[:, reorder].reshape(4, -1)
 
-    return bilinear_indices, bilinear_weights
+  return bilinear_indices, bilinear_weights
 
 def to_tiny(x): return Tensor(x.detach().numpy())
 def to_torch(x):
@@ -362,7 +356,7 @@ class Qwen3VLVis():
   def __call__(self, pixel_values, image_grid_size):        
     grid_hs, grid_ws = image_grid_size
     
-    idx_tensor, weight_tensor = get_vision_bilinear_indices_and_weights2(grid_thw=[1, grid_hs, grid_ws], num_grid_per_side=self.v.num_grid_per_side, spatial_merge_size=self.merge_size)
+    idx_tensor, weight_tensor = get_vision_bilinear_indices_and_weights2(h=grid_hs, w=grid_ws, num_grid_per_side=self.v.num_grid_per_side, spatial_merge_size=self.merge_size)
     torch_pos_ids, torch_weight_tensor = get_vision_bilinear_indices_and_weights(grid_thw=torch.Tensor([[1, grid_hs, grid_ws]]), num_grid_per_side=self.v.num_grid_per_side, spatial_merge_size=self.merge_size)
 
     np.testing.assert_allclose(torch_pos_ids.detach().numpy(), idx_tensor.numpy(), atol=1e-5)
