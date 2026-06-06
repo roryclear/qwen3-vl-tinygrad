@@ -130,7 +130,7 @@ class Qwen3VL():
     toks_out = []
     decoded = ""
 
-    while True:
+    while True and self.start_pos < self.max_context:
       ts = time.time()
       if toks_out:
         token = self.lang(tokens=next_token_tensor.clone(), start_pos=Variable("pos",1,self.max_context).bind(self.start_pos), temperature=Tensor(TEMP).clone())[0]
