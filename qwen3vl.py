@@ -89,15 +89,6 @@ class SimpleTokenizer:
     return ([] if self.bos_id is None else [self.bos_id]) + (self.encode("<sop>") if self.preset == 'glm4' else [])
   def is_end(self, token_id:int) -> bool: return token_id in (self.eos_id, self.eot_id)
 
-#https://github.com/huggingface/transformers/blob/1316cd76c0ce328228e08d55dc257484961b074c/src/transformers/models/qwen3_vl/modeling_qwen3_vl.py#L129
-def rotate_half(x):
-  x1 = x[..., : x.shape[-1] // 2]
-  x2 = x[..., x.shape[-1] // 2 :]
-  ret = Tensor.cat(-x2, x1, dim=-1)
-  return ret
-
-def apply_rotary_pos_emb_vision(query, key, cos, sin): return (query * cos) + (rotate_half(query) * sin), (key * cos) + (rotate_half(key) * sin)
-
 class Qwen3VL():
   def __init__(self, size="2B", res=(640, 640)): # (height, width) res
     self.res = res
@@ -146,6 +137,15 @@ class Qwen3VL():
       print("\b" * len(tok_s), end="", flush=True)
     print("\n")
     return self.tok.decode(toks_out)
+  
+#https://github.com/huggingface/transformers/blob/1316cd76c0ce328228e08d55dc257484961b074c/src/transformers/models/qwen3_vl/modeling_qwen3_vl.py#L129
+def rotate_half(x):
+  x1 = x[..., : x.shape[-1] // 2]
+  x2 = x[..., x.shape[-1] // 2 :]
+  ret = Tensor.cat(-x2, x1, dim=-1)
+  return ret
+
+def apply_rotary_pos_emb_vision(query, key, cos, sin): return (query * cos) + (rotate_half(query) * sin), (key * cos) + (rotate_half(key) * sin)
   
 def prefill_img(vis, lang, image, start_pos, res=(640, 640)):
   if image.shape[:2] != res:
@@ -263,6 +263,7 @@ class Qwen3VLVis():
     kv, state_dict = gguf_load(fetch(f"https://huggingface.co/Qwen/Qwen3-VL-{size}-Instruct-GGUF/resolve/main/mmproj-Qwen3VL-{size}-Instruct-F16.gguf"))
     self.merge_size = kv["clip.vision.spatial_merge_size"]
     self.patch_size = kv["clip.vision.patch_size"]
+    self.feed_forward_length = kv["clip.vision.feed_forward_length"]
     self.v = Qwen3VisBlocks(kv=kv, weights=state_dict)
     self.mm = [nn.Linear(*state_dict["mm.0.weight"].shape[::-1], bias=True), None, nn.Linear(*state_dict["mm.2.weight"].shape[::-1], bias=True)]
     state_dict["v.patch_embd.weight1"] = state_dict["v.patch_embd.weight.1"]
@@ -296,7 +297,7 @@ class Qwen3VLVis():
       if i in self.v.deepstack_idx: deepstack_feature_lists.append(self.v.deepstack[i](hidden_states))
 
     image_embeds = self.v.post_ln(hidden_states)
-    image_embeds = image_embeds.view(-1, 4096)
+    image_embeds = image_embeds.view(-1, self.feed_forward_length)
     image_embeds = self.mm[0](image_embeds)
     image_embeds = Tensor.gelu(image_embeds)
     image_embeds = self.mm[2](image_embeds)
