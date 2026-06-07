@@ -93,7 +93,7 @@ class Qwen3VL():
   def __init__(self, size="2B", res=(640, 640)): # (height, width) res
     self.res = res
     self.max_context = 2000
-    self.vis = Qwen3VLVis(size=size)
+    self.vis = Qwen3VLVis(size=size, res=res)
     self.lang, kv = Transformer.from_gguf(fetch(f"https://huggingface.co/Qwen/Qwen3-VL-{size}-Instruct-GGUF/resolve/main/Qwen3VL-{size}-Instruct-F16.gguf"), self.max_context) # max context
     self.tok = SimpleTokenizer.from_gguf_kv(kv)
     self.start_pos = 0
@@ -108,7 +108,7 @@ class Qwen3VL():
   def generate(self, prompt=None, image=None, reset=False):
     if reset: self.start_pos = 0
     if image is not None:
-      prefill_img(vis=self.vis, lang=self.lang, image=image, start_pos=Variable("pos",0,self.max_context).bind(self.start_pos), res=self.res)
+      prefill_img(vis=self.vis, lang=self.lang, image=image, start_pos=Variable("pos",0,self.max_context).bind(self.start_pos))
       self.start_pos += ((self.res[0] * self.res[1]) // (32*32)) + 8 # todo unhardcode
     if prompt is None: return
     prompt = "<|im_start|>user\n" + prompt + "<|im_end|>\n<|im_start|>assistant\n"
@@ -147,9 +147,9 @@ def rotate_half(x):
 
 def apply_rotary_pos_emb_vision(query, key, cos, sin): return (query * cos) + (rotate_half(query) * sin), (key * cos) + (rotate_half(key) * sin)
   
-def prefill_img(vis, lang, image, start_pos, res=(640, 640)):
-  if image.shape[:2] != res:
-    target_h, target_w = res[:2]
+def prefill_img(vis, lang, image, start_pos):
+  if image.shape[:2] != vis.res:
+    target_h, target_w = vis.res[:2]
     s = min(target_w / image.shape[1], target_h / image.shape[0])
     r = cv2.resize(image, (int(image.shape[1] * s), int(image.shape[0] * s)))
     image = cv2.copyMakeBorder(r, (target_h - r.shape[0]) // 2, target_h - r.shape[0] - (target_h - r.shape[0]) // 2, (target_w - r.shape[1]) // 2, target_w - r.shape[1] - (target_w - r.shape[1]) // 2, cv2.BORDER_CONSTANT, value=0)
@@ -257,7 +257,9 @@ def get_vision_position_ids(h: int, w:int, merge_size: int):
   return pos_ids
 
 class Qwen3VLVis():
-  def __init__(self, size="2B"):
+  def __init__(self, size="2B", res=[640, 640]):
+    self.res = res
+    self.toks_per_img = (self.res[0] * self.res[1]) // (32*32) # 32x32 tokens per pixel https://www.alibabacloud.com/help/en/model-studio/vision
     kv, state_dict = gguf_load(fetch(f"https://huggingface.co/Qwen/Qwen3-VL-{size}-Instruct-GGUF/resolve/main/mmproj-Qwen3VL-{size}-Instruct-F16.gguf"))
     self.merge_size = kv["clip.vision.spatial_merge_size"]
     self.patch_size = kv["clip.vision.patch_size"]
