@@ -163,12 +163,11 @@ def prefill(vis, lang, image, start_pos):
   image = image.interpolate(size=(height, width))
   resized_height, resized_width = image.shape[-2:]
   patches = (image - 127.5) / 127.5 # todo use mean and std
-  batch_size, channel = 1, 3
+  channels = 3
   # https://github.com/huggingface/transformers/blob/4ae05b0fba41860adaaeb708774fc1f48c92c049/src/transformers/models/qwen2_vl/image_processing_qwen2_vl.py#L195
   grid_h, grid_w = resized_height // vis.patch_size, resized_width // vis.patch_size
   patches = patches.reshape(
-      batch_size,
-      channel,
+      channels,
       grid_h // vis.merge_size,
       vis.merge_size,
       vis.patch_size,
@@ -176,21 +175,20 @@ def prefill(vis, lang, image, start_pos):
       vis.merge_size,
       vis.patch_size,
   )
-  patches = patches.permute(0, 2, 5, 3, 6, 1, 4, 7)
+  patches = patches.permute(1, 4, 2, 5, 0, 3, 6)
   pixel_values = (
-      patches.unsqueeze(6)
-      .expand(-1, -1, -1, -1, -1, -1, vis.merge_size, -1, -1)
+      patches.unsqueeze(5)
+      .expand(-1, -1, -1, -1, -1, vis.merge_size, -1, -1)
       .reshape(
-          batch_size,
           grid_h * grid_w,
-          channel * vis.merge_size * vis.patch_size * vis.patch_size,
+          channels * vis.merge_size * vis.patch_size * vis.patch_size,
       )
-  )[0]
+  )
   pixel_values = pixel_values.cast(dtypes.bfloat16)
 
   # f"<|im_start|>user\n<|vision_start|><|image_pad|><|vision_end|>\n<|im_end|>\n" fill size of img with image token
   # <|im_end|>\n<|im_start|>assistant\n
-  num_image_tokens = int((grid_h*grid_w) / 4)
+  num_image_tokens = int((grid_h*grid_w) / 4) # todo clean
   input_ids = Tensor.cat(Tensor([151644, 872, 198, 151652]), Tensor.zeros(num_image_tokens), Tensor([151653, 198, 151645, 198])).unsqueeze(0).cast(dtypes.int)
 
   image_embeds, hidden_states, deepstack_feature_lists = vis(pixel_values, [grid_h, grid_w])
