@@ -93,9 +93,9 @@ class Qwen3VL():
   def __init__(self, size="2B", res=(640, 640)): # (height, width) res
     self.res = res
     self.max_context = 2000
-    self.vis = Qwen3VLVis(size=size, res=res)
     self.lang, kv = Transformer.from_gguf(fetch(f"https://huggingface.co/Qwen/Qwen3-VL-{size}-Instruct-GGUF/resolve/main/Qwen3VL-{size}-Instruct-F16.gguf"), self.max_context) # max context
     self.tok = SimpleTokenizer.from_gguf_kv(kv)
+    self.vis = Qwen3VLVis(size=size, res=res, tok=self.tok)
     self.start_pos = 0
 
   def prewarm(self):
@@ -189,21 +189,17 @@ def prefill(vis, lang, image, start_pos):
   # f"<|im_start|>user\n<|vision_start|><|image_pad|><|vision_end|>\n<|im_end|>\n" fill size of img with image token
   # <|im_end|>\n<|im_start|>assistant\n
   num_image_tokens = int((grid_h*grid_w) / 4) # todo clean
-  input_ids = Tensor.cat(Tensor([151644, 872, 198, 151652]), Tensor.zeros(num_image_tokens), Tensor([151653, 198, 151645, 198])).unsqueeze(0).cast(dtypes.int)
+  input_ids = Tensor.cat(vis.prefix, Tensor.zeros(num_image_tokens), vis.suffix).unsqueeze(0).cast(dtypes.int)
 
   image_embeds, hidden_states, deepstack_feature_lists = vis(pixel_values, [grid_h, grid_w])
   hidden_states = lang.token_embd(input_ids).cast(dtypes.float)
-  # 4 to -4 because of <|im_start|>user\n<|vision_start|><|image_pad|><|vision_end|>\n<|im_end|>\n tokens before and after image_pad
-  hidden_states[:, 4:-4, :] = image_embeds.unsqueeze(0)
+  hidden_states[:, vis.prefix.shape[0]:-vis.suffix.shape[0], :] = image_embeds.unsqueeze(0)
   
-  # https://github.com/huggingface/transformers/blob/08692e3c31654e4825b4c078a3c70b86efa70a46/src/transformers/models/qwen3_vl/modular_qwen3_vl.py#L626
   # https://github.com/huggingface/transformers/blob/08692e3c31654e4825b4c078a3c70b86efa70a46/src/transformers/models/qwen3_vl/modular_qwen3_vl.py#L543
   for i in range(len(lang.blk)):
     hidden_states = lang.blk[i](hidden_states, start_pos=start_pos)
-    # https://github.com/huggingface/transformers/blob/08692e3c31654e4825b4c078a3c70b86efa70a46/src/transformers/models/qwen3_vl/modeling_qwen3_vl.py#L692
     if i in vis.v.deepstack_idx:
-      # 4 to -4 because of <|im_start|>user\n<|vision_start|><|image_pad|><|vision_end|>\n<|im_end|>\n tokens before and after image_pad
-      hidden_states[:, 4:-4, :] += deepstack_feature_lists[vis.v.deepstack_idx.index(i)]
+      hidden_states[:, vis.prefix.shape[0]:-vis.suffix.shape[0], :] += deepstack_feature_lists[vis.v.deepstack_idx.index(i)]
   hidden_states.realize()
 
 def meshgrid(x, y):
@@ -257,7 +253,7 @@ def get_vision_position_ids(h: int, w:int, merge_size: int):
   return pos_ids
 
 class Qwen3VLVis():
-  def __init__(self, size="2B", res=[640, 640]):
+  def __init__(self, tok:SimpleTokenizer, size="2B", res=[640, 640]):
     self.res = res
     self.toks_per_img = (self.res[0] * self.res[1]) // (32*32) # 32x32 tokens per pixel https://www.alibabacloud.com/help/en/model-studio/vision
     kv, state_dict = gguf_load(fetch(f"https://huggingface.co/Qwen/Qwen3-VL-{size}-Instruct-GGUF/resolve/main/mmproj-Qwen3VL-{size}-Instruct-F16.gguf"))
@@ -270,6 +266,10 @@ class Qwen3VLVis():
     load_state_dict(self, state_dict)
     #https://github.com/huggingface/transformers/blob/15bb519bd4277f4ab5309154aedf3c231e8b4ca8/src/transformers/models/qwen3_vl/modeling_qwen3_vl.py#L98
     self.inv_freq = 1.0 / (10000.0 ** (Tensor.arange(0, 32, 2, dtype=dtypes.float) / 32))
+    
+    # format for images: #https://arxiv.org/pdf/2409.12191
+    self.prefix = Tensor(tok.encode("<|im_start|>user\n<|vision_start|>"))
+    self.suffix = Tensor(tok.encode("<|vision_end|>\n<|im_end|>\n"))
 
   # https://github.com/huggingface/transformers/blob/15bb519bd4277f4ab5309154aedf3c231e8b4ca8/src/transformers/models/qwen3_vl/modeling_qwen3_vl.py#L679
   def __call__(self, pixel_values, image_grid_size):
