@@ -248,6 +248,7 @@ class Qwen3VLVis():
     return image_embeds, hidden_states, deepstack_feature_lists
 
   def prefill_img(self, lang, image, start_pos):
+    if type(image) == bytes: image = cv2.cvtColor(cv2.imdecode(np.frombuffer(image, np.uint8), cv2.IMREAD_COLOR), cv2.COLOR_BGR2RGB)
     if image.shape[:2] != self.res:
       target_h, target_w = self.res[:2]
       s = min(target_w / image.shape[1], target_h / image.shape[0])
