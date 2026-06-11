@@ -108,7 +108,7 @@ class Qwen3VL():
   def generate(self, prompt=None, image=None, reset=False):
     if reset: self.start_pos = 0
     if image is not None:
-      self.vis.prefill_img(lang=self.lang, image=image, start_pos=Variable("pos",0,self.max_context).bind(self.start_pos))
+      self.vis(lang=self.lang, image=image, start_pos=Variable("pos",0,self.max_context).bind(self.start_pos))
       self.start_pos += ((self.res[0] * self.res[1]) // (32*32)) + 8 # todo unhardcode
     if prompt is None: return
     prompt = "<|im_start|>user\n" + prompt + "<|im_end|>\n<|im_start|>assistant\n"
@@ -218,7 +218,7 @@ class Qwen3VLVis():
     self.suffix = Tensor(tok.encode("<|vision_end|>\n<|im_end|>\n"))
 
   # https://github.com/huggingface/transformers/blob/15bb519bd4277f4ab5309154aedf3c231e8b4ca8/src/transformers/models/qwen3_vl/modeling_qwen3_vl.py#L679
-  def __call__(self, pixel_values, image_grid_size):
+  def forward(self, pixel_values, image_grid_size):
     grid_hs, grid_ws = image_grid_size    
     idx_tensor, weight_tensor = get_vision_bilinear_indices_and_weights(h=grid_hs, w=grid_ws, num_grid_per_side=self.v.num_grid_per_side, merge_size=self.merge_size)
     pos_ids = get_vision_position_ids(h=grid_hs, w=grid_ws, merge_size=self.merge_size)
@@ -249,7 +249,7 @@ class Qwen3VLVis():
     image_embeds = self.mm[2](image_embeds)
     return image_embeds, hidden_states, deepstack_feature_lists
 
-  def prefill_img(self, lang, image, start_pos):
+  def __call__(self, lang, image, start_pos):
     if type(image) == bytes: image = cv2.cvtColor(cv2.imdecode(np.frombuffer(image, np.uint8), cv2.IMREAD_COLOR), cv2.COLOR_BGR2RGB)
     if image.shape[:2] != self.res:
       target_h, target_w = self.res[:2]
@@ -261,10 +261,10 @@ class Qwen3VLVis():
   @TinyJit
   def prefill(self, lang, image, start_pos):
     image = image.permute(2, 0, 1)
-    height, width = image.shape[-2:]
     image = image.unsqueeze(0).float()
     image = ((image / 255) - Tensor(self.image_mean).view(1, 3, 1, 1)) / Tensor(self.image_std).view(1, 3, 1, 1)
     channels = 3
+    height, width = image.shape[-2:]
     # https://github.com/huggingface/transformers/blob/4ae05b0fba41860adaaeb708774fc1f48c92c049/src/transformers/models/qwen2_vl/image_processing_qwen2_vl.py#L195
     grid_h, grid_w = height // self.patch_size, width // self.patch_size
     image = image.reshape(
@@ -288,7 +288,7 @@ class Qwen3VLVis():
     pixel_values = pixel_values.cast(dtypes.bfloat16)
 
     input_ids = Tensor.cat(self.prefix, Tensor.zeros(self.toks_per_img), self.suffix).unsqueeze(0).cast(dtypes.int)
-    image_embeds, hidden_states, deepstack_feature_lists = self(pixel_values, [grid_h, grid_w])
+    image_embeds, hidden_states, deepstack_feature_lists = self.forward(pixel_values, [grid_h, grid_w])
     hidden_states = lang.token_embd(input_ids).cast(dtypes.float)
     hidden_states[:, self.prefix.shape[0]:-self.suffix.shape[0], :] = image_embeds.unsqueeze(0)
     
