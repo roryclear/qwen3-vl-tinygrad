@@ -109,7 +109,7 @@ class Qwen3VL():
     if reset: self.start_pos = 0
     if image is not None:
       self.vis(lang=self.lang, image=image, start_pos=Variable("pos",0,self.max_context).bind(self.start_pos))
-      self.start_pos += ((self.res[0] * self.res[1]) // (32*32)) + 8 # todo unhardcode
+      self.start_pos += self.vis.toks_per_img + self.vis.prefix.shape[0] + self.vis.suffix.shape[0] # todo unhardcode
     if prompt is None: return
     prompt = "<|im_start|>user\n" + prompt + "<|im_end|>\n<|im_start|>assistant\n"
     prompt = self.tok.encode(prompt)
